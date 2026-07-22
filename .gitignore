@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*token*.json
+*.pem
+*.key
+
+# Generated data
+/data/
+/backups/
+/out/
+review.html
+review.comments.html
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor junk
+Desktop.ini
+desktop.ini
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

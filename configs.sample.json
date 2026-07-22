@@ -1,0 +1,6 @@
+[
+  { "videoId":"vid001", "preset":"standard",    "color":"oxblood", "chartForm":"collapse",  "headline":"Der Markt *kippt.*",       "episode":"EP. 142", "position":"auto", "titleScale":"auto" },
+  { "videoId":"vid002", "preset":"livestream",  "color":"sage",    "chartForm":"expansion", "headline":"Ausbruch *bestätigt.*",     "date":"2026-06-07", "position":"auto", "titleScale":"auto" },
+  { "videoId":"vid003", "preset":"innercircle", "color":"brass",   "chartForm":"fractal",   "headline":"Wo stehen *wir?*",          "episode":"INNER CIRCLE #12", "date":"2026-06-04", "position":"auto", "titleScale":"auto" },
+  { "videoId":"vid004", "preset":"standard",    "color":"sage",    "chartForm":"expansion", "headline":"Der Schub *startet.*",      "episode":"EP. 143", "position":"bottom", "titleScale":"110" }
+]

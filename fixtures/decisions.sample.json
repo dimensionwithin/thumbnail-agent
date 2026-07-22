@@ -1,0 +1,31 @@
+{
+  "generatedAt": "2026-05-31T16:29:42.932Z",
+  "builtFrom": "2026-05-31T16:28:34.837Z",
+  "source": "P:\\Dimensionwithin Thumbnail System Automation\\data\\inventory.sample.json",
+  "count": 2,
+  "items": [
+    {
+      "videoId": "vid_bull_0001",
+      "preset": "standard",
+      "color": "sage",
+      "chartForm": "expansion",
+      "headline": "Bitcoin *explodiert*",
+      "episode": "EP. 142",
+      "date": "2026-05-25",
+      "position": "auto",
+      "titleScale": "auto",
+      "approved": true
+    },
+    {
+      "videoId": "vid_live_0004",
+      "preset": "livestream",
+      "color": "sage",
+      "chartForm": "expansion",
+      "headline": "Markt *bricht* aus",
+      "date": "2026-05-24",
+      "position": "auto",
+      "titleScale": "auto",
+      "approved": true
+    }
+  ]
+}

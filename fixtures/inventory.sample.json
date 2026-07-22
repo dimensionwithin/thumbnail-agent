@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-05-31T00:00:00.000Z",
+  "channelId": "UC_sample_dimensionwithin",
+  "channelTitle": "at dimension within",
+  "uploadsPlaylist": "UU_sample_uploads",
+  "innerCirclePlaylist": "PL_sample_innercircle",
+  "count": 6,
+  "items": [
+    {
+      "videoId": "vid_bull_0001",
+      "title": "EP. 142 — Bitcoin bricht aus: Warum die Rallye gerade erst beginnt",
+      "description": "Klare Aufwaertsstruktur, hoehere Hochs, der Ausbruch ueber 72k bestaetigt. Ich zeige, warum Long hier asymmetrisch ist und wo das naechste Ziel liegt. Bullische Markt-Analyse fuer die kommende Woche.",
+      "publishedAt": "2026-05-25T18:02:11Z",
+      "privacyStatus": "public",
+      "isLivestream": false,
+      "inInnerCircle": false,
+      "preset": "standard",
+      "episode": "EP. 142",
+      "date": "2026-05-25"
+    },
+    {
+      "videoId": "vid_bear_0002",
+      "title": "EP. 143 — Crash voraus? S&P verliert die Struktur",
+      "description": "Tiefere Tiefs, die Nachfrage bricht weg. Ich erklaere, warum ich kurzfristig baerisch bin und welche Unterstuetzung als naechstes faellt. Risk-Off-Szenario im Detail.",
+      "publishedAt": "2026-05-22T18:00:45Z",
+      "privacyStatus": "public",
+      "isLivestream": false,
+      "inInnerCircle": false,
+      "preset": "standard",
+      "episode": "EP. 143",
+      "date": "2026-05-22"
+    },
+    {
+      "videoId": "vid_neutral_0003",
+      "title": "EP. 144 — Seitwaerts: Der Markt wartet auf den FED-Entscheid",
+      "description": "Keine klare Richtung. Range gebunden zwischen Support und Resistance. Ich bleibe neutral, bis sich ein Ausbruch bestaetigt. Geduld statt erzwungener Trades.",
+      "publishedAt": "2026-05-18T18:01:30Z",
+      "privacyStatus": "public",
+      "isLivestream": false,
+      "inInnerCircle": false,
+      "preset": "standard",
+      "episode": "EP. 144",
+      "date": "2026-05-18"
+    },
+    {
+      "videoId": "vid_live_0004",
+      "title": "Sonntags-Livestream — Wochenausblick & eure Fragen live",
+      "description": "Der woechentliche oeffentliche Livestream. Wir gehen den Markt durch, ich beantworte Fragen aus dem Chat. Bullische Tendenz auf dem Wochenchart, aber wir bleiben datenabhaengig.",
+      "publishedAt": "2026-05-24T20:05:00Z",
+      "privacyStatus": "public",
+      "isLivestream": true,
+      "inInnerCircle": false,
+      "preset": "livestream",
+      "date": "2026-05-24"
+    },
+    {
+      "videoId": "vid_ic_0005",
+      "title": "INNER CIRCLE #37 — Mein genaues Setup fuer die naechste Woche",
+      "description": "Members-only. Konkrete Levels, Positionsgroessen, Invalidierung. Ich teile den exakten Plan. Leicht baerische Vorsicht kurzfristig, aber das groessere Bild bleibt konstruktiv.",
+      "publishedAt": "2026-05-21T18:00:00Z",
+      "privacyStatus": "public",
+      "isLivestream": false,
+      "inInnerCircle": true,
+      "preset": "innercircle",
+      "episode": "INNER CIRCLE #37",
+      "date": "2026-05-21"
+    },
+    {
+      "videoId": "vid_ambig_0006",
+      "title": "EP. 145 — Gold: zwischen Ausbruch und Falle",
+      "description": "Schwer zu sagen. Es gibt Argumente fuer beide Seiten — ein moeglicher Ausbruch, aber auch das Risiko einer Bullenfalle. Ich wiege ab, ohne mich festzulegen.",
+      "publishedAt": "2026-05-15T18:03:20Z",
+      "privacyStatus": "public",
+      "isLivestream": false,
+      "inInnerCircle": false,
+      "preset": "standard",
+      "episode": "EP. 145",
+      "date": "2026-05-15"
+    }
+  ]
+}

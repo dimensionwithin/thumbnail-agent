@@ -1,0 +1,28 @@
+{
+  "name": "adw-back-catalog-thumbnail-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Back-Catalog Thumbnail Agent fuer 'at dimension within' — YouTube-Metadaten -> Configs -> Render -> Review -> Publish.",
+  "scripts": {
+    "auth": "node src/youtube/auth.js",
+    "inventory": "node src/youtube/inventory.js",
+    "decide": "node src/decision/decide.js",
+    "render": "node render-harness.cjs data/proposals.json data/thumbnails",
+    "review": "node src/review/build-contact-sheet.js",
+    "reviews:fetch": "node src/reviews/fetch.js",
+    "reviews:rank": "node src/reviews/rank.js",
+    "reviews:board": "node src/reviews/board.js",
+    "reviews:export": "node src/reviews/export.js",
+    "backup": "node src/publish/backup.js",
+    "publish": "node src/publish/publish.js",
+    "restore": "node src/publish/restore.js",
+    "unlist-shorts": "node src/publish/unlist-shorts.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "dotenv": "^16.4.5",
+    "google-auth-library": "^9.14.1",
+    "googleapis": "^144.0.0",
+    "playwright": "^1.48.0"
+  }
+}

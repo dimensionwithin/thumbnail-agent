@@ -12,6 +12,12 @@
 /out/
 review.html
 review.comments.html
+review.*.html
+review-output/
+# NOTE: reviews.json IS tracked on purpose as an anonymized fixture.
+# `npm run reviews:export` regenerates it from real data locally — before
+# committing any change to reviews.json, double-check it still contains
+# only the example_viewer_* dummy entries, never real handles/quotes.
 
 # Node
 node_modules/

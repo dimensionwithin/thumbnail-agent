@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "count": 3,
+  "reviews": [
+    {
+      "quote": "This explanation really helped me understand the setup. Great breakdown!",
+      "author": "@example_viewer_1",
+      "authorAnonymized": "Example_viewer_1",
+      "likes": 12,
+      "videoTitle": "Example Video Title — Sample Analysis",
+      "videoUrl": "https://www.youtube.com/watch?v=EXAMPLE0001",
+      "date": "2026-01-01"
+    },
+    {
+      "quote": "Clear and concise, appreciate the effort you put into these videos.",
+      "author": "@example_viewer_2",
+      "authorAnonymized": "Example_viewer_2",
+      "likes": 4,
+      "videoTitle": "Example Video Title — Another Sample",
+      "videoUrl": "https://www.youtube.com/watch?v=EXAMPLE0002",
+      "date": "2026-01-02"
+    },
+    {
+      "quote": "Been following for a while, this format works really well.",
+      "author": "@example_viewer_3",
+      "authorAnonymized": "Example_viewer_3",
+      "likes": 7,
+      "videoTitle": "Example Video Title — Third Sample",
+      "videoUrl": "https://www.youtube.com/watch?v=EXAMPLE0003",
+      "date": "2026-01-03"
+    }
+  ]
+}

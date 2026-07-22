@@ -1,0 +1,5 @@
+# Große HTML-Compositor-Datei nicht als Projekt-Sprache zählen
+thumbnail-compositor.html linguist-vendored
+
+# Optional, falls weitere generierte/gerenderte HTML-Artefakte existieren:
+*.html linguist-detectable=false

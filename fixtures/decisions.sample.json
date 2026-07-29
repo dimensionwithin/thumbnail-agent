@@ -1,7 +1,7 @@
 {
   "generatedAt": "2026-05-31T16:29:42.932Z",
   "builtFrom": "2026-05-31T16:28:34.837Z",
-  "source": "P:\\Dimensionwithin Thumbnail System Automation\\data\\inventory.sample.json",
+  "source": "data/inventory.sample.json",
   "count": 2,
   "items": [
     {

@@ -57,4 +57,4 @@ publish/    → backup → publish → restore, only after approval
 
 ## License
 
-*(add license)*
+MIT — see [LICENSE](LICENSE).

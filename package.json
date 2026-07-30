@@ -2,6 +2,7 @@
   "name": "adw-back-catalog-thumbnail-agent",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Back-Catalog Thumbnail Agent fuer 'at dimension within' — YouTube-Metadaten -> Configs -> Render -> Review -> Publish.",
   "scripts": {
     "auth": "node src/youtube/auth.js",

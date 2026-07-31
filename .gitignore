@@ -23,6 +23,16 @@ review-output/
 node_modules/
 npm-debug.log*
 
+# Python (lokaler Thumbnail-Dienst)
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# Lokale Arbeitsordner des Dienstes, falls im Repo-Verzeichnis angelegt
+/thumbnail-source/
+/thumbnail-export/
+
 # OS / editor junk
 Desktop.ini
 desktop.ini

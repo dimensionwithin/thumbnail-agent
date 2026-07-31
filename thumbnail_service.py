@@ -26,6 +26,9 @@ import webbrowser
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+SOURCE_DIRECTORY_ENV = "THUMBNAIL_SOURCE_DIR"
+EXPORT_DIRECTORY_ENV = "THUMBNAIL_EXPORT_DIR"
+# Fallback ohne festen Rechnerpfad: Unterordner des Arbeitsverzeichnisses.
 SOURCE_DIRECTORY = Path("thumbnail-source")
 EXPORT_DIRECTORY = Path("thumbnail-export")
 HTML_FILE = Path(__file__).with_name("thumbnail-compositor.html")
@@ -971,6 +974,18 @@ def create_server(
     )
 
 
+def resolve_directory(
+    variable: str, override: Path | None, fallback: Path
+) -> Path:
+    """Löst ein Arbeitsverzeichnis auf: Argument vor Umgebung vor Fallback."""
+    if override is not None:
+        return Path(override).expanduser()
+    configured = os.environ.get(variable, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return fallback
+
+
 def run_server(
     port: int = DEFAULT_PORT,
     *,
@@ -978,6 +993,8 @@ def run_server(
     session_token: str | None = None,
     browser_opener: Callable[..., object] | None = None,
     browser_open_delay: float = BROWSER_OPEN_DELAY_SECONDS,
+    source_directory: Path | None = None,
+    export_directory: Path | None = None,
 ) -> int:
     instance_guard = SingleInstanceGuard(port)
     if not instance_guard.acquire():
@@ -1001,7 +1018,16 @@ def run_server(
     try:
         try:
             channel.create()
-            server = create_server(port=port, session_token=session_token)
+            server = create_server(
+                port=port,
+                session_token=session_token,
+                source_directory=resolve_directory(
+                    SOURCE_DIRECTORY_ENV, source_directory, SOURCE_DIRECTORY
+                ),
+                export_directory=resolve_directory(
+                    EXPORT_DIRECTORY_ENV, export_directory, EXPORT_DIRECTORY
+                ),
+            )
         except OSError as error:
             _startup_error(
                 "Der lokale Thumbnail-Dienst konnte nicht gestartet werden.\n\n"
@@ -1043,12 +1069,32 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--session-token", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Quellordner der Chart-Screenshots. Ohne Angabe gilt "
+            f"{SOURCE_DIRECTORY_ENV}, sonst ./{SOURCE_DIRECTORY}."
+        ),
+    )
+    parser.add_argument(
+        "--export-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Zielordner der fertigen Thumbnails. Ohne Angabe gilt "
+            f"{EXPORT_DIRECTORY_ENV}, sonst ./{EXPORT_DIRECTORY}."
+        ),
+    )
     args = parser.parse_args()
     raise SystemExit(
         run_server(
             args.port,
             open_browser=not args.no_browser,
             session_token=args.session_token,
+            source_directory=args.source_dir,
+            export_directory=args.export_dir,
         )
     )
 

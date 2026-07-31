@@ -69,16 +69,42 @@ berührt.
 
 ## Der Thumbnail-Compositor
 
-`thumbnail-compositor.html` — eine einzelne Datei, die im Browser ein Thumbnail aus einer
-Konfiguration rendert. Wird weiterhin täglich für neue Videos verwendet, unabhängig von
-der abgeschlossenen Migration.
+Eine lokale Anwendung aus zwei Teilen: `thumbnail_service.py`, ein Python-Dienst, der
+ausschließlich an `127.0.0.1` gebunden ist, und `thumbnail-compositor.html`, die der
+Dienst im Browser ausliefert und die das Thumbnail auf einem Canvas zusammensetzt. Wird
+weiterhin täglich für neue Videos verwendet, unabhängig von der abgeschlossenen Migration.
 
-- **Vollständig eigenständig.** Keine externe Anfrage: kein CDN, kein Webfont-Dienst,
-  keine Bild-URL. Die beiden Schriften (Newsreader, JetBrains Mono) liegen als
-  eingebettete WOFF2-Daten in der Datei, die Chartgrafik wird zur Laufzeit gezeichnet.
-  Das Render-Skript erzwingt das: der Browser läuft offline und blockt jede Anfrage,
-  die nicht `file:`, `data:` oder `blob:` ist — ein versehentlich eingeschleppter
-  CDN-Verweis fällt sofort auf.
+- **Nichts verlässt den Rechner.** Der Compositor lädt nichts aus dem Netz: kein CDN,
+  kein Webfont-Dienst, keine Bild-URL. Die beiden Schriften (Newsreader, JetBrains Mono)
+  liegen als eingebettete WOFF2-Daten in der Datei, die Chartgrafik wird zur Laufzeit
+  gezeichnet. Die einzigen Anfragen der Seite gehen an den lokalen Dienst auf
+  `127.0.0.1`, der an dieses Interface gebunden ist — es gibt keine Netzwerkanfrage,
+  die den Rechner verlässt.
+- **Chart-Import aus einem Quellordner.** Der Dienst wählt beim Start und auf Knopfdruck
+  den neuesten Screenshot aus dem Quellordner und reicht ihn an den Browser durch. Der
+  Quellordner wird ausschließlich gelesen; der Dienst schreibt dort nichts und löscht
+  dort nichts.
+- **Export in einen festen Zielordner.** Geschrieben wird atomar über eine temporäre
+  Datei im Zielordner mit anschließendem Umbenennen, sodass nie eine halbe Datei sichtbar
+  wird. Existiert der Name schon, wird kollisionssicher ein neuer vergeben — eine
+  bestehende Datei wird nicht überschrieben. Steht der Dienst nicht zur Verfügung, fällt
+  der Export auf die File-System-Access-API des Browsers und zuletzt auf einen normalen
+  Download zurück.
+- **Abgesichert gegen fremde Zugriffe.** Jeder Start erzeugt ein Sitzungstoken, das jede
+  Anfrage mitführen muss; dazu kommen Host- und Origin-Prüfung sowie ein Named Mutex, der
+  eine zweite Instanz verhindert und stattdessen das bestehende Fenster erneut öffnet.
+- **Läuft auch ohne den Dienst.** Dieselbe HTML-Datei funktioniert direkt über `file://`.
+  `localService.available` prüft Protokoll, Hostname und Tokenlänge; fällt die Prüfung
+  negativ aus, arbeitet der Compositor eigenständig weiter — nur ohne Auto-Import und
+  ohne Export in den Zielordner. Genau diesen Weg nutzt `render-harness.cjs` für den
+  Automatisierungslauf: Playwright lädt die Datei über `file://` und bricht jede Anfrage
+  ab, die nicht `file:`, `data:` oder `blob:` ist. Eine zweite Render-Implementierung gibt
+  es nicht — beide Wege gehen durch `window.adwRender(config)`.
+- **Ordner konfigurierbar.** Quell- und Zielordner über `--source-dir`/`--export-dir` oder
+  die Umgebungsvariablen `THUMBNAIL_SOURCE_DIR`/`THUMBNAIL_EXPORT_DIR`; ohne Angabe
+  `./thumbnail-source` und `./thumbnail-export` relativ zum Arbeitsverzeichnis. Start über
+  `START-THUMBNAIL-COMPOSITOR.vbs` (ohne Fenster) oder `START-THUMBNAIL-COMPOSITOR.cmd`
+  (sichtbar, zur Diagnose).
 - **Eine Schnittstelle.** `window.adwRender(config)` liefert das fertige Bild als
   Data-URL zurück. Deshalb ist dieselbe Datei sowohl manuelles Werkzeug im Browser als
   auch Renderer im Automatisierungslauf — es gibt keine zweite Implementierung, die
@@ -106,11 +132,16 @@ getrennt ausgespielt. Details in [src/reviews/README.md](src/reviews/README.md).
   damit der stabile Teil über einen ganzen Katalogdurchlauf nicht neu bezahlt wird
 - `googleapis` + `google-auth-library` für YouTube Data API v3 (OAuth-Desktop-Flow)
 - `playwright` (Chromium, headless) als Render-Antrieb
-- Der Compositor ist reines HTML/CSS/JS ohne Framework und ohne Abhängigkeiten
-- **Keine automatisierte Testsuite.** Es gibt drei einmalige Verifikationsskripte unter
-  `scripts/`, die die Sicherheitsgarantien nachweisen — kein Upload ohne `--execute`,
-  Backup-Pflicht, Manifest-Pflicht, Wiederaufnahme nach Abbruch. Sie sind nicht Teil
-  der Pipeline und laufen nicht in CI.
+- Der Compositor ist reines HTML/CSS/JS ohne Framework; der lokale Dienst ist reines
+  Python 3 ohne Fremdpakete
+- **Teststatus getrennt.** Die Migrationspipeline hat **keine automatisierte Testsuite** —
+  es gibt drei einmalige Verifikationsskripte unter `scripts/`, die die
+  Sicherheitsgarantien nachweisen (kein Upload ohne `--execute`, Backup-Pflicht,
+  Manifest-Pflicht, Wiederaufnahme nach Abbruch). Sie sind nicht Teil der Pipeline und
+  laufen nicht in CI. Der **Compositor-Dienst** hat **62 automatisierte Tests** unter
+  `unittest`, davon 26 End-to-End über HTTP gegen den laufenden Dienst. Lauf:
+  `python tests/test_thumbnail_service.py` aus dem Repo-Root. Ein Test wird ohne
+  Symlink-Recht unter Windows übersprungen.
 - Keine Typisierung (kein TypeScript, keine JSDoc-Typen)
 - Zugangsdaten ausschließlich über `.env`; `.env.example` liegt bei. Tokens und
   Schlüssel sind über `.gitignore` ausgeschlossen und waren nie im Repository.
@@ -120,3 +151,7 @@ Quellcode und Kommentare sind auf Deutsch.
 ## Lizenz
 
 MIT — siehe [LICENSE](LICENSE).
+
+Die in `thumbnail-compositor.html` eingebetteten Schriften stehen unter eigener Lizenz:
+Newsreader und JetBrains Mono jeweils unter der SIL Open Font License 1.1. Die MIT-Lizenz
+dieses Repositorys gilt für sie nicht.

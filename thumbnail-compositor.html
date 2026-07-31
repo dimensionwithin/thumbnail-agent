@@ -118,7 +118,7 @@
   .seg button:hover{border-color:var(--graphite-hi);color:var(--bone)}
   .seg button[aria-pressed=true]{background:rgba(169,130,70,.22);border-color:var(--brass);color:var(--bone);font-weight:600;box-shadow:inset 0 1px 0 rgba(236,232,224,.12)}
   .seg button[aria-pressed=true]:hover{background:rgba(169,130,70,.32);border-color:var(--brass);color:var(--bone)}
-  .seg button:focus-visible,.autobtn:focus-visible,.imageReset:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+  .seg button:focus-visible,.autobtn:focus-visible,.imageReset:focus-visible,.folderButton:focus-visible,.sourceButton:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
   .seg button:disabled,input[type=range]:disabled,.imageReset:disabled{cursor:not-allowed;opacity:.45}
 
   /* color swatches */
@@ -141,6 +141,15 @@
   .autobtn:hover{border-color:var(--graphite-hi);color:var(--bone)}
   .autobtn[aria-pressed=true]{background:rgba(169,130,70,.14);border-color:var(--brass);color:var(--brass)}
   .autobtn[aria-pressed=true]:hover{background:rgba(169,130,70,.22);border-color:var(--brass);color:var(--bone)}
+  .folderStatus{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--bone-dim);margin-bottom:9px;text-transform:uppercase}
+  .folderButton{width:100%;background:transparent;border:1px solid var(--graphite);color:var(--bone-dim);border-radius:6px;padding:9px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;transition:all .14s}
+  .folderButton:hover:not(:disabled){border-color:var(--brass);color:var(--bone)}
+  .folderButton:disabled{cursor:not-allowed;opacity:.45}
+  .sourceTools{margin-top:12px;padding-top:12px;border-top:1px solid var(--graphite)}
+  .sourceStatus{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--bone-dim);line-height:1.5;text-transform:uppercase;overflow-wrap:anywhere}
+  .sourceButton{width:100%;margin-top:8px;background:transparent;border:1px solid var(--graphite);color:var(--bone-dim);border-radius:6px;padding:9px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;transition:all .14s}
+  .sourceButton:hover:not(:disabled){border-color:var(--brass);color:var(--bone)}
+  .sourceButton:disabled{cursor:not-allowed;opacity:.45}
 
   .export{
     width:100%;margin-top:8px;background:var(--brass);color:var(--ink);
@@ -173,6 +182,10 @@
       </div>
       <input type="file" id="file" accept="image/*" hidden>
       <div class="hint" id="imgHint">Der Chart kommt unverändert rein — Farbe & Zeichnungen bestimmst du beim Export aus deinem Chart-Tool.</div>
+      <div class="sourceTools">
+        <div class="sourceStatus" id="sourceStatus" role="status">Quelle: Dienst nicht verfügbar</div>
+        <button class="sourceButton" id="sourceRefresh" type="button">Neuestes Chart laden</button>
+      </div>
     </div>
 
     <div class="field" id="imageTransform" aria-disabled="true">
@@ -224,6 +237,8 @@
         <button data-pos="bottom" aria-pressed="true">Unten</button>
         <button data-pos="left"   aria-pressed="false">Links</button>
         <button data-pos="right"  aria-pressed="false">Rechts</button>
+        <button data-pos="bottom-left"  aria-pressed="false">Links unten</button>
+        <button data-pos="bottom-right" aria-pressed="false">Rechts unten</button>
       </div>
     </div>
 
@@ -253,6 +268,12 @@
         <button data-export-format="png" aria-pressed="true">PNG</button>
         <button data-export-format="jpg" aria-pressed="false">JPG</button>
       </div>
+    </div>
+
+    <div class="field">
+      <label class="lbl">Export-Ordner</label>
+      <div class="folderStatus" id="folderStatus">Export-Ordner: wird geprüft</div>
+      <button class="folderButton" id="folderConnect" type="button">Ordner verbinden</button>
     </div>
 
     <div class="divider"></div>
@@ -292,6 +313,20 @@ const state = {
   imageOffsetX: 0,
   imageOffsetY: 0,
   hasManualImage: false,
+};
+const pageURL = new URL(window.location.href);
+const sessionToken = pageURL.searchParams.get('token') || '';
+const localService = {
+  available: (pageURL.protocol === 'http:' && pageURL.hostname === '127.0.0.1' && sessionToken.length >= 24),
+  token: sessionToken,
+};
+const sourceState = {
+  phase: localService.available ? 'idle' : 'unavailable',
+  identity: null,
+  filename: null,
+  mtimeNs: null,
+  requestGeneration: 0,
+  controller: null,
 };
 
 function todayISO(){
@@ -410,7 +445,7 @@ function fitHeadline(tokens, box){
     const lines = wrap(tokens, size, box.w).filter(l=>l.length);
     if (!lines.length) return {size, lines:[]};
     const lineStep = size * 1.0;
-    const totalH = (lines.length-1)*lineStep + size; // approx
+    const totalH = (lines.length-1)*lineStep + size*(box.bottomPad || 1);
     const widest = Math.max(...lines.map(l=>lineWidth(l,size)));
     if (lines.length <= maxLines && widest <= box.w && totalH <= box.h){
       return {size, lines, lineStep};
@@ -428,6 +463,8 @@ function boxFor(pos){
     case 'bottom': return {x:M, y:284, w:W-2*M, h:380, align:'left',  valign:'bottom', maxSize:194, minSize:62};
     case 'left':   return {x:M, y:120, w:700,   h:490, align:'left',  valign:'center', maxSize:192, minSize:62};
     case 'right':  return {x:W-M-700, y:120, w:700, h:490, align:'right', valign:'center', maxSize:192, minSize:62};
+    case 'bottom-left':  return {x:M, y:284, w:W-2*M, h:380, align:'left',  valign:'bottom', maxSize:194, minSize:62, bottomPad:1.04};
+    case 'bottom-right': return {x:M, y:284, w:W-2*M, h:380, align:'right', valign:'bottom', maxSize:194, minSize:62, bottomPad:1.04};
   }
 }
 
@@ -441,7 +478,7 @@ function drawHeadline(){
 
   ctx.letterSpacing = '0px';
   ctx.textBaseline = 'alphabetic';
-  const totalH = (lines.length-1)*lineStep + size;
+  const totalH = (lines.length-1)*lineStep + size*(box.bottomPad || 1);
   let topY;
   if (box.valign === 'top') topY = box.y;
   else if (box.valign === 'bottom') topY = box.y + box.h - totalH;
@@ -508,7 +545,7 @@ function drawScrim(){
     g = ctx.createLinearGradient(0,0,0,460);
     g.addColorStop(0,D); g.addColorStop(0.55,D2); g.addColorStop(1,T);
     ctx.fillStyle=g; ctx.fillRect(0,0,W,460);
-  } else if (state.pos === 'bottom'){
+  } else if (state.pos === 'bottom' || state.pos === 'bottom-left' || state.pos === 'bottom-right'){
     g = ctx.createLinearGradient(0,H,0,H-460);
     g.addColorStop(0,D); g.addColorStop(0.55,D2); g.addColorStop(1,T);
     ctx.fillStyle=g; ctx.fillRect(0,H-460,W,460);
@@ -634,6 +671,125 @@ const imageZoomEl = document.getElementById('imageZoom'), imageZoomVal = documen
 const imageOffsetXEl = document.getElementById('imageOffsetX'), imageOffsetXVal = document.getElementById('imageOffsetXVal');
 const imageOffsetYEl = document.getElementById('imageOffsetY'), imageOffsetYVal = document.getElementById('imageOffsetYVal');
 const imageTransformReset = document.getElementById('imageTransformReset');
+const sourceStatus = document.getElementById('sourceStatus');
+const sourceRefreshBtn = document.getElementById('sourceRefresh');
+const folderStatus = document.getElementById('folderStatus');
+const folderConnectBtn = document.getElementById('folderConnect');
+const EXPORT_DIRECTORY_DB = 'dimensionwithin-thumbnail-compositor';
+const EXPORT_DIRECTORY_STORE = 'directory-handles';
+const EXPORT_DIRECTORY_KEY = 'export-directory-v1';
+const exportDirectory = {
+  state: localService.available ? 'service' : (('showDirectoryPicker' in window) ? 'disconnected' : 'unsupported'),
+  handle: null,
+  busy: false,
+};
+
+function setExportDirectoryState(nextState){
+  exportDirectory.state = nextState;
+  const labels = {
+    service: 'EXPORT-ORDNER: THUMBNAILS · LOKALER DIENST',
+    unsupported: 'EXPORT-ORDNER: BROWSER NICHT UNTERSTÜTZT',
+    disconnected: 'EXPORT-ORDNER: NICHT VERBUNDEN',
+    'permission-prompt': 'EXPORT-ORDNER: THUMBNAILS · FREIGABE ERFORDERLICH',
+    connected: 'EXPORT-ORDNER: THUMBNAILS',
+    denied: 'EXPORT-ORDNER: THUMBNAILS · ZUGRIFF VERWEIGERT',
+    error: 'EXPORT-ORDNER: NICHT VERFÜGBAR',
+  };
+  folderStatus.textContent = labels[nextState] || labels.error;
+  folderConnectBtn.textContent = nextState === 'service' ? 'Über lokalen Dienst verbunden' : (exportDirectory.handle ? 'Ordner ändern' : 'Ordner verbinden');
+  folderConnectBtn.disabled = nextState === 'service' || nextState === 'unsupported' || exportDirectory.busy;
+}
+
+function openExportDirectoryDB(){
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(EXPORT_DIRECTORY_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(EXPORT_DIRECTORY_STORE)) db.createObjectStore(EXPORT_DIRECTORY_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB konnte nicht geöffnet werden.'));
+  });
+}
+
+async function readSavedExportDirectory(){
+  const db = await openExportDirectoryDB();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(EXPORT_DIRECTORY_STORE, 'readonly').objectStore(EXPORT_DIRECTORY_STORE).get(EXPORT_DIRECTORY_KEY);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error || new Error('Export-Ordner konnte nicht gelesen werden.'));
+    });
+  } finally { db.close(); }
+}
+
+async function saveExportDirectory(handle){
+  const db = await openExportDirectoryDB();
+  try {
+    await new Promise((resolve, reject) => {
+      const request = db.transaction(EXPORT_DIRECTORY_STORE, 'readwrite').objectStore(EXPORT_DIRECTORY_STORE).put(handle, EXPORT_DIRECTORY_KEY);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error || new Error('Export-Ordner konnte nicht gespeichert werden.'));
+    });
+  } finally { db.close(); }
+}
+
+async function refreshExportDirectoryPermission(){
+  if (!exportDirectory.handle){ setExportDirectoryState('disconnected'); return 'disconnected'; }
+  try {
+    const permission = await exportDirectory.handle.queryPermission({mode:'readwrite'});
+    const nextState = permission === 'granted' ? 'connected' : permission === 'denied' ? 'denied' : 'permission-prompt';
+    setExportDirectoryState(nextState);
+    return nextState;
+  } catch (error) {
+    console.error('Export directory permission check failed.', error);
+    setExportDirectoryState('error');
+    return 'error';
+  }
+}
+
+async function loadSavedExportDirectory(){
+  if (exportDirectory.state === 'service' || exportDirectory.state === 'unsupported') return;
+  try {
+    exportDirectory.handle = await readSavedExportDirectory();
+    await refreshExportDirectoryPermission();
+  } catch (error) {
+    console.error('Saved export directory could not be loaded.', error);
+    setExportDirectoryState('error');
+  }
+}
+
+function setSourcePhase(nextPhase, details){
+  sourceState.phase = nextPhase;
+  const labels = {
+    unavailable: 'QUELLE: DIENST NICHT VERFÜGBAR',
+    idle: 'QUELLE: BEREIT',
+    loading: 'QUELLE: SUCHE NEUESTES CHART',
+    loaded: 'QUELLE: ',
+    unchanged: 'QUELLE: BEREITS AKTUELL',
+    empty: 'QUELLE: KEIN BILD GEFUNDEN',
+    unstable: 'QUELLE: ROHDOWNLOAD NOCH NICHT FERTIG',
+    error: 'QUELLE: FEHLER',
+  };
+  sourceStatus.textContent = (labels[nextPhase] || labels.error) + (details || '');
+  sourceRefreshBtn.disabled = !localService.available || nextPhase === 'loading';
+  sourceRefreshBtn.textContent = sourceState.identity ? 'Chart aktualisieren' : 'Neuestes Chart laden';
+}
+
+function clearSourceIdentityForManualImport(){
+  sourceState.identity = null;
+  sourceState.filename = null;
+  sourceState.mtimeNs = null;
+  if (localService.available) setSourcePhase('idle', ' · MANUELLER IMPORT');
+}
+
+function cancelSourceRequestForManualImport(){
+  if (sourceState.phase !== 'loading') return;
+  sourceState.requestGeneration += 1;
+  if (sourceState.controller) sourceState.controller.abort();
+  sourceState.controller = null;
+  setSourcePhase('idle', ' · MANUELLER IMPORT');
+}
 
 function syncImageTransformUI(){
   const enabled = state.hasManualImage;
@@ -655,29 +811,157 @@ function resetImageTransform(){
   render();
 }
 
-function loadFile(f){
-  if (!f || !f.type.startsWith('image/')) return;
+function loadFile(f, options){
+  const settings = options || {};
+  if (!f || !f.type.startsWith('image/')) return Promise.resolve(false);
+  if (!settings.sourceImport) cancelSourceRequestForManualImport();
   const url = URL.createObjectURL(f);
-  const img = new Image();
-  img.onload = () => {
-    state.img = img;
-    state.hasManualImage = true;
-    resetImageTransform();
-    drop.classList.add('loaded');
-    document.getElementById('dropBig').textContent = f.name;
-    document.getElementById('dropSub').textContent = img.naturalWidth + ' × ' + img.naturalHeight + ' px';
-    exportBtn.disabled = false;
-    meta.textContent = 'Bereit. Export rendert in 2560×1440 (@2x).';
-    if (state.auto) applyAuto(); else render();
-    URL.revokeObjectURL(url);
-  };
-  img.onerror = () => {
-    state.hasManualImage = false;
-    syncImageTransformUI();
-    meta.textContent = 'Bild konnte nicht geladen werden.';
-    URL.revokeObjectURL(url);
-  };
-  img.src = url;
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      if (settings.sourceGeneration != null && settings.sourceGeneration !== sourceState.requestGeneration){
+        URL.revokeObjectURL(url);
+        resolve(false);
+        return;
+      }
+      state.img = img;
+      state.hasManualImage = true;
+      resetImageTransform();
+      if (!settings.sourceImport) clearSourceIdentityForManualImport();
+      drop.classList.add('loaded');
+      document.getElementById('dropBig').textContent = f.name;
+      document.getElementById('dropSub').textContent = img.naturalWidth + ' × ' + img.naturalHeight + ' px';
+      exportBtn.disabled = false;
+      meta.textContent = 'Bereit. Export rendert in 2560×1440 (@2x).';
+      if (state.auto) applyAuto(); else render();
+      URL.revokeObjectURL(url);
+      resolve(true);
+    };
+    img.onerror = () => {
+      meta.textContent = 'Bild konnte nicht geladen werden. Das bisherige Bild bleibt erhalten.';
+      URL.revokeObjectURL(url);
+      resolve(false);
+    };
+    img.src = url;
+  });
+}
+
+function sourceFailurePhase(code){
+  if (code === 'source_unstable') return 'unstable';
+  if (code === 'source_empty' || code === 'source_invalid' || code === 'source_missing') return 'empty';
+  if (code === 'invalid_token') return 'unavailable';
+  return 'error';
+}
+
+async function responseError(response){
+  try {
+    const payload = await response.json();
+    return {
+      code: payload && payload.code ? payload.code : 'source_http_error',
+      message: payload && payload.message ? payload.message : ('HTTP '+response.status),
+    };
+  } catch (error) {
+    return {code:'source_http_error', message:'HTTP '+response.status};
+  }
+}
+
+function decodeSourceMetadata(response){
+  const encodedFilename = response.headers.get('X-Source-Filename');
+  const mtimeNs = response.headers.get('X-Source-Mtime-Ns');
+  const sizeText = response.headers.get('X-Source-Size');
+  const identity = response.headers.get('X-Source-Identity');
+  if (!encodedFilename || !/^\d+$/.test(mtimeNs || '') || !/^\d+$/.test(sizeText || '') || !/^[a-f0-9]{64}$/.test(identity || '')){
+    throw new Error('Unvollständige oder ungültige Quellmetadaten.');
+  }
+  let filename;
+  try { filename = decodeURIComponent(encodedFilename); }
+  catch (error) { throw new Error('Der Quelldateiname ist nicht korrekt URL-kodiert.'); }
+  if (!filename || filename.includes('/') || filename.includes('\\')){
+    throw new Error('Der Quelldateiname ist ungültig.');
+  }
+  return {filename, mtimeNs, size:Number(sizeText), identity};
+}
+
+function sourceLocalTime(mtimeNs){
+  try {
+    return new Date(Number(BigInt(mtimeNs) / 1000000n)).toLocaleString('de-DE');
+  } catch (error) {
+    return '';
+  }
+}
+
+async function loadLatestSource(){
+  if (!localService.available){
+    setSourcePhase('unavailable');
+    return false;
+  }
+  if (sourceState.phase === 'loading') return false;
+
+  const generation = sourceState.requestGeneration + 1;
+  sourceState.requestGeneration = generation;
+  const controller = new AbortController();
+  sourceState.controller = controller;
+  setSourcePhase('loading');
+  try {
+    const response = await fetch('/api/source/latest', {
+      method: 'GET',
+      headers: {'X-Session-Token': localService.token, 'Accept': 'image/png'},
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+    if (generation !== sourceState.requestGeneration) return false;
+    if (!response.ok){
+      const failure = await responseError(response);
+      const error = new Error(failure.message);
+      error.sourceCode = failure.code;
+      throw error;
+    }
+    const responseType = (response.headers.get('Content-Type') || '').trim().toLowerCase();
+    if (responseType !== 'image/png'){
+      throw new Error('Unerwarteter MIME-Typ vom Quelldienst: '+(responseType || 'fehlt'));
+    }
+    const source = decodeSourceMetadata(response);
+    if (source.identity === sourceState.identity){
+      if (response.body) await response.body.cancel();
+      setSourcePhase('unchanged', sourceState.filename ? ' · '+sourceState.filename : '');
+      return true;
+    }
+    const blob = await response.blob();
+    if (generation !== sourceState.requestGeneration) return false;
+    if (blob.type.toLowerCase() !== 'image/png'){
+      throw new Error('Der gelesene Blob besitzt nicht den erwarteten MIME-Typ image/png.');
+    }
+    if (blob.size !== source.size){
+      throw new Error('Die gelesene PNG-Größe stimmt nicht mit den Quellmetadaten überein.');
+    }
+    const modifiedMillis = Number(BigInt(source.mtimeNs) / 1000000n);
+    const file = new File([blob], source.filename, {type:'image/png', lastModified:modifiedMillis});
+    const imported = await loadFile(file, {sourceImport:true, sourceGeneration:generation});
+    if (generation !== sourceState.requestGeneration) return false;
+    if (!imported) throw new Error('Das gültige PNG konnte vom Browser nicht dekodiert werden.');
+    sourceState.identity = source.identity;
+    sourceState.filename = source.filename;
+    sourceState.mtimeNs = source.mtimeNs;
+    const localTime = sourceLocalTime(source.mtimeNs);
+    setSourcePhase('loaded', source.filename + (localTime ? ' · '+localTime : ''));
+    return true;
+  } catch (error) {
+    if (error && error.name === 'AbortError') return false;
+    if (generation !== sourceState.requestGeneration) return false;
+    const phase = sourceFailurePhase(error && error.sourceCode);
+    setSourcePhase(phase);
+    console.error('TradingView source load failed.', {
+      code: error && error.sourceCode ? error.sourceCode : 'client_error',
+      message: error && error.message ? error.message : String(error),
+    });
+    return false;
+  } finally {
+    if (generation === sourceState.requestGeneration){
+      sourceState.controller = null;
+      sourceRefreshBtn.disabled = !localService.available;
+    }
+  }
 }
 
 drop.addEventListener('click', () => fileInput.click());
@@ -689,6 +973,7 @@ drop.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
 const stage = document.querySelector('.stage');
 ['dragenter','dragover'].forEach(ev => stage.addEventListener(ev, e => e.preventDefault()));
 stage.addEventListener('drop', e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]); });
+sourceRefreshBtn.addEventListener('click', () => { void loadLatestSource(); });
 
 document.getElementById('title').addEventListener('input', e => { state.title = e.target.value; render(); });
 
@@ -753,7 +1038,7 @@ function autoPlace(img){
     const fit = fitHeadline(tokens, box);
     if (!fit.lines.length) return null;
     const { size, lines, lineStep } = fit;
-    const totalH = (lines.length-1)*lineStep + size;
+    const totalH = (lines.length-1)*lineStep + size*(box.bottomPad || 1);
     const topY = box.valign==='top' ? box.y : box.valign==='bottom' ? box.y+box.h-totalH : box.y+(box.h-totalH)/2;
     let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
     lines.forEach((line,li)=>{
@@ -770,7 +1055,7 @@ function autoPlace(img){
   // Pick the position + size yielding the LARGEST title whose box (inflated by
   // SAFE) stays clear of content; tie-break by natural priority.
   const SAFE = 42, mx = SAFE/W, my = SAFE/H;
-  const order = ['bottom','top','left','right'];
+  const order = ['bottom','bottom-left','bottom-right','top','left','right'];
   let best = null;
   for (let oi=0; oi<order.length; oi++){
     const pos = order[oi];
@@ -843,23 +1128,142 @@ document.getElementById('exportFormatSeg').addEventListener('click', e => {
   syncExportFormatUI();
 });
 
+folderConnectBtn.addEventListener('click', async () => {
+  if (localService.available || exportDirectory.state === 'unsupported') return;
+  try {
+    const handle = await window.showDirectoryPicker({mode:'readwrite', id:'dimensionwithin-thumbnail-export'});
+    exportDirectory.handle = handle;
+    try {
+      await saveExportDirectory(handle);
+    } catch (error) {
+      console.error('Export directory handle could not be persisted.', error);
+      meta.textContent = 'Ordner verbunden, aber die Auswahl konnte nicht dauerhaft gespeichert werden.';
+    }
+    await refreshExportDirectoryPermission();
+    if (exportDirectory.state === 'connected') meta.textContent = 'Export-Ordner „'+handle.name+'“ verbunden.';
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      meta.textContent = 'Ordnerauswahl abgebrochen.';
+      return;
+    }
+    console.error('Export directory selection failed.', error);
+    setExportDirectoryState('error');
+    meta.textContent = 'Export-Ordner konnte nicht verbunden werden. Browserdownload bleibt verfügbar.';
+  }
+});
+
 // ---------- export ----------
+function canvasToBlob(type, quality){
+  return new Promise((resolve, reject) => {
+    cv.toBlob(blob => blob ? resolve(blob) : reject(new Error('Canvas konnte nicht exportiert werden.')), type, quality);
+  });
+}
+
+function exportFilename(extension){
+  const segs = (PRESETS[state.preset].tail(state.meta) || []).map(s => (s||'').trim()).filter(Boolean);
+  const slug = (state.preset + '-' + segs.join('-')).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  return 'adw-' + (slug || 'thumbnail') + '.' + extension;
+}
+
+function downloadExportBlob(blob, filename){
+  const a = document.createElement('a');
+  const href = URL.createObjectURL(blob);
+  a.href = href;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(href), 1000);
+}
+
+async function writeExportToLocalService(blob, filename){
+  if (!localService.available) return false;
+  try {
+    const response = await fetch('/api/export', {
+      method: 'POST',
+      headers: {
+        'X-Session-Token': localService.token,
+        'X-Export-Filename': encodeURIComponent(filename),
+        'Content-Type': blob.type,
+      },
+      body: blob,
+      cache: 'no-store',
+      credentials: 'same-origin',
+    });
+    if (!response.ok){
+      const failure = await responseError(response);
+      throw new Error(failure.message);
+    }
+    const result = await response.json();
+    const expectedExtension = blob.type === 'image/jpeg' ? '.jpg' : '.png';
+    if (!result || result.ok !== true || typeof result.filename !== 'string' ||
+        result.filename.includes('/') || result.filename.includes('\\') ||
+        !result.filename.toLowerCase().endsWith(expectedExtension)){
+      throw new Error('Der lokale Exportdienst hat keinen gültigen Zieldateinamen bestätigt.');
+    }
+    return result.filename;
+  } catch (error) {
+    console.error('Local export service failed for "'+filename+'".', error);
+    return false;
+  }
+}
+
+async function writeExportToDirectory(blob, filename){
+  if (!exportDirectory.handle) return false;
+  let permissionState = await refreshExportDirectoryPermission();
+  if (permissionState === 'permission-prompt' || permissionState === 'denied') {
+    try {
+      const permission = await exportDirectory.handle.requestPermission({mode:'readwrite'});
+      permissionState = permission === 'granted' ? 'connected' : permission === 'denied' ? 'denied' : 'permission-prompt';
+      setExportDirectoryState(permissionState);
+    } catch (error) {
+      console.error('Export directory permission request failed.', error);
+      setExportDirectoryState('error');
+      return false;
+    }
+  }
+  if (permissionState !== 'connected') return false;
+  try {
+    const fileHandle = await exportDirectory.handle.getFileHandle(filename, {create:true});
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
+  } catch (error) {
+    console.error('Direct export to directory failed for "'+filename+'".', error);
+    await refreshExportDirectoryPermission();
+    if (exportDirectory.state === 'connected') setExportDirectoryState('error');
+    return false;
+  }
+}
+
 exportBtn.addEventListener('click', async () => {
-  if (!state.img) return;
-  await ensureFonts();
-  render();
-  const isJpeg = state.exportFormat === 'jpg';
-  const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
-  const extension = isJpeg ? 'jpg' : 'png';
-  cv.toBlob(blob => {
-    const a = document.createElement('a');
-    const segs = (PRESETS[state.preset].tail(state.meta) || []).map(s => (s||'').trim()).filter(Boolean);
-    const slug = (state.preset + '-' + segs.join('-')).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'adw-' + (slug || 'thumbnail') + '.' + extension;
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-  }, mimeType, isJpeg ? 0.94 : undefined);
+  if (!state.img || exportDirectory.busy) return;
+  exportDirectory.busy = true;
+  exportBtn.disabled = true;
+  setExportDirectoryState(exportDirectory.state);
+  try {
+    await ensureFonts();
+    render();
+    const isJpeg = state.exportFormat === 'jpg';
+    const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
+    const filename = exportFilename(isJpeg ? 'jpg' : 'png');
+    const blob = await canvasToBlob(mimeType, isJpeg ? 0.94 : undefined);
+    const serviceFilename = await writeExportToLocalService(blob, filename);
+    if (serviceFilename) {
+      meta.textContent = 'Gespeichert im Export-Ordner: '+serviceFilename;
+    } else if (await writeExportToDirectory(blob, filename)) {
+      meta.textContent = 'Gespeichert im Export-Ordner: '+filename;
+    } else {
+      downloadExportBlob(blob, filename);
+      meta.textContent = 'Direktes Speichern nicht verfügbar – Browserdownload gestartet.';
+    }
+  } catch (error) {
+    console.error('Export failed.', error);
+    meta.textContent = 'Export fehlgeschlagen. Bitte erneut versuchen.';
+  } finally {
+    exportDirectory.busy = false;
+    exportBtn.disabled = !state.img;
+    setExportDirectoryState(exportDirectory.state);
+  }
 });
 
 // ---------- fonts ----------
@@ -979,6 +1383,9 @@ window.adwRender = async function(cfg){
 
 (async function init(){
   initMeta();
+  setSourcePhase(sourceState.phase);
+  setExportDirectoryState(exportDirectory.state);
+  await loadSavedExportDirectory();
   state.preset = defaultPresetForToday();
   renderMetaFields();
   syncPresetUI();
@@ -986,6 +1393,7 @@ window.adwRender = async function(cfg){
   syncImageTransformUI();
   await ensureFonts();
   render();
+  if (localService.available) await loadLatestSource();
 })();
 </script>
 </body>

@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-label="AIV Erkennungszeichen: Teufelskopf">
+  <style>
+    :root { --aiv-color: #8B1A1A; }
+    .ink { stroke: var(--aiv-color, currentColor); fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .ink-fill { fill: var(--aiv-color, currentColor); stroke: none; }
+  </style>
+
+  <defs>
+    <g id="hornL">
+      <path class="ink" stroke-width="9"
+        d="M438,234
+           C 392,168 332,116 258,90
+           C 280,118 288,146 278,172
+           C 320,168 366,190 404,228 Z" />
+      <path class="ink" stroke-width="5" d="M322,158 C 350,176 374,198 392,220" />
+    </g>
+
+    <g id="browL">
+      <path class="ink" stroke-width="13" d="M364,338 C 392,306 428,290 464,296" />
+    </g>
+
+    <g id="eyeL">
+      <path class="ink" stroke-width="8" d="M386,392 C 412,364 442,360 468,372" />
+      <path class="ink" stroke-width="6" d="M386,392 C 410,410 442,410 468,372" />
+      <circle class="ink-fill" cx="434" cy="386" r="9" />
+    </g>
+
+    <g id="hatchCheekL">
+      <path class="ink" stroke-width="5" d="M366,466 L 400,494" />
+      <path class="ink" stroke-width="5" d="M358,494 L 392,522" />
+      <path class="ink" stroke-width="5" d="M354,522 L 388,550" />
+      <path class="ink" stroke-width="5" d="M356,550 L 388,576" />
+    </g>
+  </defs>
+
+  <!-- Kopf-Silhouette (linke Haelfte + Spiegelung) -->
+  <g>
+    <path class="ink" stroke-width="10"
+      d="M500,208
+         C 452,206 412,222 388,258
+         C 366,292 358,332 366,372
+         C 350,410 344,452 356,492
+         C 344,538 352,584 380,620
+         C 372,662 386,704 418,732
+         C 432,762 460,796 500,842" />
+    <use href="#hornL" />
+    <use href="#browL" />
+    <use href="#eyeL" />
+    <use href="#hatchCheekL" />
+  </g>
+  <g transform="translate(1000,0) scale(-1,1)">
+    <path class="ink" stroke-width="10"
+      d="M500,208
+         C 452,206 412,222 388,258
+         C 366,292 358,332 366,372
+         C 350,410 344,452 356,492
+         C 344,538 352,584 380,620
+         C 372,662 386,704 418,732
+         C 432,762 460,796 500,842" />
+    <use href="#hornL" />
+    <use href="#browL" />
+    <use href="#eyeL" />
+    <use href="#hatchCheekL" />
+  </g>
+
+  <!-- Mitte: Nase, Mund, Kinn-Schatten (symmetrisch aus sich selbst) -->
+  <path class="ink" stroke-width="8" d="M500,356 L 500,486" />
+  <path class="ink" stroke-width="6" d="M500,486 C 478,500 466,514 470,528" />
+  <path class="ink" stroke-width="6" d="M500,486 C 522,500 534,514 530,528" />
+
+  <path class="ink" stroke-width="10" d="M420,606 C 456,624 544,624 580,606" />
+  <path class="ink" stroke-width="6" d="M420,606 C 410,596 406,588 410,580" />
+  <path class="ink" stroke-width="6" d="M580,606 C 590,596 594,588 590,580" />
+
+  <path class="ink" stroke-width="5" d="M462,668 L 480,690" />
+  <path class="ink" stroke-width="5" d="M500,676 L 500,700" />
+  <path class="ink" stroke-width="5" d="M538,668 L 520,690" />
+</svg>

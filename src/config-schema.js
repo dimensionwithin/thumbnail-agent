@@ -4,7 +4,7 @@
 // Spiegelt applyConfig() in thumbnail-compositor.html. Single source of truth.
 // Der Render-Kern wird NICHT geaendert — hier nur validieren/normalisieren.
 
-const PRESETS = ['standard', 'innercircle', 'livestream', 'nonchart'];
+const PRESETS = ['standard', 'innercircle', 'livestream', 'nonchart', 'aiv', 'memberlive'];
 const COLORS = ['brass', 'sage', 'oxblood'];
 const CHART_FORMS = ['collapse', 'expansion', 'fractal'];
 const POSITIONS = ['auto', 'top', 'bottom', 'left', 'right'];

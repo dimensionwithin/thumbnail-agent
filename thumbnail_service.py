@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import ctypes
+import datetime
 import hashlib
 import http.client
 import json
 import os
 from pathlib import Path
+import re
 import secrets
+import shutil
 import socket
 import stat
 import sys
@@ -32,6 +36,14 @@ EXPORT_DIRECTORY_ENV = "THUMBNAIL_EXPORT_DIR"
 SOURCE_DIRECTORY = Path("thumbnail-source")
 EXPORT_DIRECTORY = Path("thumbnail-export")
 HTML_FILE = Path(__file__).with_name("thumbnail-compositor.html")
+# T1: Persistente Folgennummerierung je Serie (innercircle|livestream|standard).
+# Nur lesend fuer die Anzeige
+# ("naechste freie Nummer"), aber vom Export-Endpunkt aus auch beschrieben --
+# siehe _record_series_registry_entry(). Beide Pfade sind relativ zum Skript,
+# nicht zum aktuellen Arbeitsverzeichnis (analog zu HTML_FILE).
+SERIES_REGISTRY_FILE = Path(__file__).with_name("data") / "series-registry.json"
+SERIES_REGISTRY_BACKUP_DIRECTORY = Path(__file__).with_name("backups")
+MAX_SERIES_REGISTRY_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 MAX_EXPORT_BYTES = 60 * 1024 * 1024
 MAX_CANDIDATE_ATTEMPTS = 8
@@ -595,6 +607,202 @@ def select_latest_png(
     )
 
 
+# V6 (2026-08-27): HARTE TRENNUNG DER SERIEN-ZAEHLER. Die Serie haengt am
+# PRESET, nicht am Feldnamen und nicht an der Reihenfolge. nonchart hat keine
+# Serie -- dort wird nie gelesen und nie geschrieben. Es gibt keinen gemeinsamen
+# Zaehler und keinen Fallback auf eine andere Serie, wenn die eigene leer ist.
+SERIES_FOR_PRESET = {
+    "aiv": "aiv",
+    "innercircle": "innercircle",
+    "livestream": "livestream",
+    "standard": "standard",
+    "nonchart": None,
+    # BJ6: Ad-hoc-Mitgliederstreams tragen bewusst keine Nummer und damit keine
+    # Serie. Ein eigenes Preset statt einer innercircle-Variante -- so kann es
+    # den Inner-Circle-Zaehler gar nicht erst erreichen.
+    "memberlive": None,
+}
+SERIES_NAMES = ("aiv", "innercircle", "livestream", "standard")
+# Die gedruckte Kopfzeile sieht je Serie anders aus ("INNER CIRCLE #71" vs.
+# "EP. 16"), deshalb je Serie ein eigenes Muster statt einem generischen.
+SERIES_NUMBER_PATTERN = {
+    "aiv": re.compile(r"#\s*(\d+)"),
+    "innercircle": re.compile(r"#\s*(\d+)"),
+    "livestream": re.compile(r"#\s*(\d+)"),
+    "standard": re.compile(r"(?:EP\.?\s*)?(\d+)"),
+}
+
+
+def series_for_preset(preset: str) -> str | None:
+    """Einzige Stelle, die Preset -> Serie aufloest. Unbekannte Presets bekommen
+    bewusst keine Serie (fail closed), statt auf innercircle zurueckzufallen."""
+    return SERIES_FOR_PRESET.get(preset)
+
+
+def normalized_last_assigned(registry: dict) -> dict:
+    """Migration V1 -> V2: frueher war lastAssigned EIN Wert {"number","at"} und
+    meinte immer Inner Circle. Jetzt ist es {serie: {"number","at"}}. Alte Dateien
+    werden beim Lesen transparent uebersetzt, damit ein alter Stand nicht als
+    Zaehler einer falschen Serie missverstanden wird."""
+    raw = registry.get("lastAssigned")
+    if not isinstance(raw, dict):
+        return {}
+    if "number" in raw:
+        return {"innercircle": {"number": raw.get("number"), "at": raw.get("at")}}
+    return {name: value for name, value in raw.items() if isinstance(value, dict)}
+
+
+def series_floor_number(registry: dict, series: str) -> int:
+    """Hoechste bereits vergebene Nummer DIESER Serie -- aus den vollen Eintraegen
+    und dem Zaehler, die auseinanderlaufen koennen (der Wochenlauf schreibt
+    Eintraege, der Creator den Zaehler). Nie serienuebergreifend."""
+    entries = registry.get(series)
+    numbers = []
+    if isinstance(entries, list):
+        numbers = [e.get("number") for e in entries if isinstance(e, dict)]
+    max_entry = max((n for n in numbers if isinstance(n, int)), default=0)
+    counter = normalized_last_assigned(registry).get(series) or {}
+    counter_number = counter.get("number")
+    return max(max_entry, counter_number if isinstance(counter_number, int) else 0)
+
+
+def series_fingerprint(registry: dict) -> dict:
+    """Vergleichsbild je Serie: (volle Eintraege, Zaehler). Basis der Selbstpruefung."""
+    counters = normalized_last_assigned(registry)
+    return {
+        name: (
+            json.dumps(registry.get(name) or [], sort_keys=True, ensure_ascii=False),
+            json.dumps(counters.get(name) or {}, sort_keys=True, ensure_ascii=False),
+        )
+        for name in SERIES_NAMES
+    }
+
+
+def verify_only_series_touched(before: dict, after: dict, series: str) -> str | None:
+    """V6-Selbstpruefung. Erlaubt ist GENAU eine Aenderung: der Zaehler von
+    `series`. Alles andere -- jede fremde Serie, jede Eintragsliste, auch die der
+    eigenen Serie -- muss identisch bleiben. Gibt bei Verletzung einen Klartext
+    zurueck, sonst None."""
+    fingerprint_before = series_fingerprint(before)
+    fingerprint_after = series_fingerprint(after)
+    for name in SERIES_NAMES:
+        entries_before, counter_before = fingerprint_before[name]
+        entries_after, counter_after = fingerprint_after[name]
+        if entries_before != entries_after:
+            return f"Die Eintraege der Serie '{name}' haben sich veraendert."
+        if name != series and counter_before != counter_after:
+            return f"Der Zaehler der fremden Serie '{name}' hat sich veraendert."
+    if fingerprint_before[series][1] == fingerprint_after[series][1]:
+        return f"Der Zaehler der Serie '{series}' wurde nicht fortgeschrieben."
+    return None
+
+
+def record_series_registry_export(
+    preset: str,
+    episode_raw: str,
+    *,
+    registry_path: Path,
+    backup_directory: Path,
+) -> str | None:
+    """U1 (2026-08-27): Beim Export wird NUR ein schlanker Zaehler fortgeschrieben
+    (registry["lastAssigned"][serie] = {"number", "at"}) -- KEIN voller Eintrag mit
+    videoId, denn die videoId ist beim Bau des Thumbnails noch nicht bekannt und
+    muesste spaeter muehsam nachgetragen werden. Die vollstaendige Zuordnung
+    videoId->Nummer entsteht stattdessen im Wochenlauf (siehe --assign-episode
+    in sync-livestream-archive.js), wo die videoId von Anfang an bekannt ist.
+
+    V6 (2026-08-27): Der Zaehler wird PRO SERIE gefuehrt und die Serie kommt
+    ausschliesslich aus dem Preset. Ein Standard-Export darf die Inner-Circle-
+    Zaehlung nicht verschieben -- das faellt sonst erst auf einem gedruckten
+    Thumbnail auf. Nach dem Schreiben wird aus der Datei zurueckgelesen und
+    verifiziert, dass wirklich nur die erwartete Serie beruehrt wurde; schlaegt
+    das fehl, wird das Backup zurueckgespielt.
+
+    "Bereits vergeben" heisst hier: die Nummer ist <= dem hoeheren der beiden
+    Werte max(entries[].number) und lastAssigned[serie].number DIESER Serie
+    (beide koennen auseinanderlaufen, z.B. wenn der Wochenlauf zwischenzeitlich
+    einen echten Eintrag hinzugefuegt hat) -- dann wird NICHTS ueberschrieben,
+    nur gewarnt. Vor jedem Schreiben wird die Registry nach backups/ kopiert.
+    Reine Funktion (kein self/HTTP) -- separat testbar.
+
+    Gibt bei Erfolg (oder wenn das Preset keine Serie hat / keine Nummer im Feld
+    steht) None zurueck, sonst einen Warntext fuer die UI.
+    """
+    series = series_for_preset(preset)
+    if series is None:
+        return None
+    match = SERIES_NUMBER_PATTERN[series].search(episode_raw)
+    if not match:
+        return None
+    number = int(match.group(1))
+
+    try:
+        raw = registry_path.read_text(encoding="utf-8")
+        registry = json.loads(raw)
+    except FileNotFoundError:
+        registry = {name: [] for name in SERIES_NAMES}
+    except (OSError, json.JSONDecodeError) as error:
+        return f"Registry konnte nicht gelesen werden ({error}) -- lastAssigned wurde NICHT geaendert."
+    if not isinstance(registry, dict):
+        return "Registry hat ein unerwartetes Format -- lastAssigned wurde NICHT geaendert."
+
+    floor_number = series_floor_number(registry, series)
+    if number <= floor_number:
+        return (
+            f"#{number} ist in der Serie '{series}' bereits vergeben oder veraltet "
+            f"(zuletzt: #{floor_number}) -- lastAssigned wurde NICHT geaendert."
+        )
+
+    before = copy.deepcopy(registry)
+    registry["lastAssigned"] = normalized_last_assigned(registry)
+    registry["lastAssigned"][series] = {
+        "number": number,
+        "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+    # Selbstpruefung VOR dem Schreiben: eine falsche Serie darf gar nicht erst
+    # auf die Platte kommen.
+    violation = verify_only_series_touched(before, registry, series)
+    if violation:
+        return f"Abbruch der Selbstpruefung: {violation} -- es wurde NICHTS geschrieben."
+
+    backup_path: Path | None = None
+    try:
+        backup_directory.mkdir(parents=True, exist_ok=True)
+        if registry_path.exists():
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+            backup_path = backup_directory / f"series-registry-{stamp}.json"
+            shutil.copy2(registry_path, backup_path)
+    except OSError as error:
+        return f"Backup der Registry fehlgeschlagen ({error}) -- lastAssigned wurde NICHT geaendert."
+
+    try:
+        registry_path.write_text(
+            json.dumps(registry, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    except OSError as error:
+        return f"Registry konnte nicht geschrieben werden ({error})."
+
+    # Selbstpruefung NACH dem Schreiben, gegen den tatsaechlichen Dateiinhalt.
+    try:
+        written = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        written = None
+        violation = f"Die geschriebene Registry ist nicht lesbar ({error})."
+    else:
+        violation = verify_only_series_touched(before, written, series)
+    if violation:
+        restored = "kein Backup vorhanden"
+        if backup_path is not None:
+            try:
+                shutil.copy2(backup_path, registry_path)
+                restored = f"Backup {backup_path.name} zurueckgespielt"
+            except OSError as error:
+                restored = f"Backup konnte NICHT zurueckgespielt werden ({error})"
+        return f"Selbstpruefung nach dem Schreiben fehlgeschlagen: {violation} -- {restored}."
+    return None
+
+
 class ThumbnailHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
@@ -726,7 +934,47 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 return
             self._serve_latest_source()
             return
+        if request.path == "/api/series-registry":
+            if self._reject_invalid_api_token():
+                return
+            if request.query:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    "unexpected_parameters",
+                    "Dieser Endpunkt akzeptiert keine Parameter.",
+                )
+                return
+            self._serve_series_registry()
+            return
         self._send_json(HTTPStatus.NOT_FOUND, "not_found", "Endpunkt nicht gefunden.")
+
+    def _serve_series_registry(self) -> None:
+        """Liest data/series-registry.json read-only fuer die Nummern-Anzeige."""
+        try:
+            data = SERIES_REGISTRY_FILE.read_bytes()
+        except FileNotFoundError:
+            self._send_json(
+                HTTPStatus.NOT_FOUND,
+                "registry_missing",
+                "data/series-registry.json wurde nicht gefunden.",
+            )
+            return
+        except OSError:
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "registry_unreadable",
+                "Die Registry konnte nicht gelesen werden.",
+            )
+            return
+        if len(data) > MAX_SERIES_REGISTRY_BYTES:
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "registry_too_large",
+                "Die Registry ist unerwartet gross.",
+            )
+            return
+        self._send_headers(HTTPStatus.OK, "application/json; charset=utf-8", len(data))
+        self.wfile.write(data)
 
     def _serve_health(self) -> None:
         payload = json.dumps(
@@ -762,6 +1010,15 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.METHOD_NOT_ALLOWED,
                 "method_not_allowed",
                 "Der TradingView-Quellendpunkt ist ausschließlich read-only per GET.",
+            )
+            return
+        if request.path == "/api/series-registry":
+            if self._reject_invalid_api_token():
+                return
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "Die Registry-Anzeige ist ausschließlich read-only per GET. Ein Registry-Eintrag entsteht ausschliesslich als Nebeneffekt von /api/export.",
             )
             return
         if request.path == "/api/export":
@@ -943,14 +1200,35 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
 
-        payload = json.dumps(
-            {"ok": True, "filename": actual_filename, "size": length},
-            ensure_ascii=False,
-        ).encode("utf-8")
+        # T1: Registry-Schreib-Moment ist ausschliesslich der Export. Ein Fehler
+        # hier darf den bereits erfolgreich gespeicherten Bild-Export NIE
+        # ungeschehen machen -- daher separat abgefangen, nie erneut geworfen.
+        registry_warning: str | None = None
+        try:
+            registry_warning = self._record_series_registry_export()
+        except Exception as error:  # pragma: no cover - defensive, Export bleibt gueltig
+            _console_print(f"Registry-Schreibversuch fehlgeschlagen (Export bleibt gueltig): {error!r}")
+            registry_warning = "Die Folgennummer konnte nicht in die Registry geschrieben werden (siehe Server-Log)."
+
+        result: dict[str, object] = {"ok": True, "filename": actual_filename, "size": length}
+        if registry_warning:
+            result["registry_warning"] = registry_warning
+        payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
         self._send_headers(
             HTTPStatus.OK, "application/json; charset=utf-8", len(payload)
         )
         self.wfile.write(payload)
+
+    def _record_series_registry_export(self) -> str | None:
+        """U1: liest die Export-Header und delegiert an die reine (testbare)
+        Funktion record_series_registry_export(). Nur ein duenner HTTP-Adapter."""
+        preset = self.headers.get("X-Export-Preset", "")
+        episode_raw = unquote(self.headers.get("X-Export-Episode", ""))
+        return record_series_registry_export(
+            preset, episode_raw,
+            registry_path=SERIES_REGISTRY_FILE,
+            backup_directory=SERIES_REGISTRY_BACKUP_DIRECTORY,
+        )
 
 
 def create_server(

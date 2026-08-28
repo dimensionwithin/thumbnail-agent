@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-label="AIV Erkennungszeichen: Teufelskopf, geometrische Variante">
+  <style>
+    :root { --aiv-color: #8B1A1A; }
+    .ink { stroke: var(--aiv-color, currentColor); fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .ink-fill { fill: var(--aiv-color, currentColor); stroke: none; }
+  </style>
+
+  <defs>
+    <g id="hornL2">
+      <path class="ink" stroke-width="11" stroke-linejoin="miter"
+        d="M436,240 L 230,84 L 300,238 Z" />
+    </g>
+    <g id="browL2">
+      <path class="ink" stroke-width="14" d="M360,340 L 462,300" />
+    </g>
+    <g id="eyeL2">
+      <path class="ink" stroke-width="8" d="M384,392 L 468,368" />
+      <path class="ink" stroke-width="6" d="M384,392 L 468,410" />
+      <path class="ink-fill" d="M430,388 l10,-3 l4,10 l-10,3 Z" />
+    </g>
+    <g id="hatchCheekL2">
+      <path class="ink" stroke-width="6" d="M362,472 L 402,500" />
+      <path class="ink" stroke-width="6" d="M354,506 L 394,534" />
+    </g>
+  </defs>
+
+  <!-- Kopf-Silhouette: angular, geradlinig -->
+  <g>
+    <path class="ink" stroke-width="12" stroke-linejoin="miter"
+      d="M500,214
+         L 380,268
+         L 352,382
+         L 366,494
+         L 340,610
+         L 404,730
+         L 500,846" />
+    <use href="#hornL2" />
+    <use href="#browL2" />
+    <use href="#eyeL2" />
+    <use href="#hatchCheekL2" />
+  </g>
+  <g transform="translate(1000,0) scale(-1,1)">
+    <path class="ink" stroke-width="12" stroke-linejoin="miter"
+      d="M500,214
+         L 380,268
+         L 352,382
+         L 366,494
+         L 340,610
+         L 404,730
+         L 500,846" />
+    <use href="#hornL2" />
+    <use href="#browL2" />
+    <use href="#eyeL2" />
+    <use href="#hatchCheekL2" />
+  </g>
+
+  <!-- Mitte: Nase, Mund, Kinn -->
+  <path class="ink" stroke-width="9" d="M500,360 L 500,494 L 468,528" />
+  <path class="ink" stroke-width="9" d="M500,494 L 532,528" />
+
+  <path class="ink" stroke-width="12" stroke-linejoin="miter" d="M412,600 L 500,634 L 588,600" />
+  <path class="ink" stroke-width="7" d="M412,600 L 400,584" />
+  <path class="ink" stroke-width="7" d="M588,600 L 600,584" />
+
+  <path class="ink" stroke-width="6" d="M470,672 L 500,706 L 530,672" />
+</svg>

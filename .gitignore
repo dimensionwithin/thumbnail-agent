@@ -10,6 +10,10 @@
 /data/
 /backups/
 /out/
+# Laufzeit-Logs des Wochenlaufs (run-livestreams-weekly.cmd legt logs/ an und
+# haengt den vollstaendigen stdout der Laeufe an). Darin stehen videoIds --
+# dieses Repo ist OEFFENTLICH, siehe docs/warum-keine-video-ids-im-repo.md.
+/logs/
 
 # Kuratierte Ausschluss-/Ground-Truth-Listen. Enthalten videoIds von
 # ungelisteten Mitglieder-Videos und Premieren -- dieses Repo ist OEFFENTLICH,

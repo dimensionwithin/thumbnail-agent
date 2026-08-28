@@ -17,6 +17,7 @@ from unittest.mock import patch
 from urllib.parse import unquote
 
 from thumbnail_service import (
+    SERIES_NAMES,
     BrowserOpenChannel,
     BrowserOpenCoordinator,
     HOST,
@@ -30,9 +31,14 @@ from thumbnail_service import (
     _console_print,
     _health_is_expected,
     create_server,
+    normalized_last_assigned,
+    record_series_registry_export,
     run_server,
     select_latest_png,
+    series_floor_number,
+    series_for_preset,
     signal_running_instance,
+    verify_only_series_touched,
 )
 
 
@@ -626,13 +632,21 @@ class ClientContractTests(unittest.TestCase):
         )
 
     def test_client_uses_server_confirmed_export_filename(self) -> None:
-        self.assertIn("return result.filename;", self.html)
+        # Seit der registry_warning-Erweiterung liefert writeExportToLocalService
+        # ein Objekt {filename, warning} statt eines nackten Strings -- der
+        # angezeigte Name muss weiterhin der vom Dienst BESTAETIGTE sein, nie der
+        # lokal gebaute.
+        self.assertIn("return { filename: result.filename, warning:", self.html)
         self.assertIn(
-            "Gespeichert im Export-Ordner: '+serviceFilename", self.html
+            "'Gespeichert im Export-Ordner: '+serviceResult.filename", self.html
         )
         self.assertNotIn(
             "writeExportToLocalService(blob, filename) ||", self.html
         )
+
+    def test_client_surfaces_a_registry_warning_next_to_the_filename(self) -> None:
+        self.assertIn("serviceResult.warning", self.html)
+        self.assertIn("— ACHTUNG: '+serviceResult.warning", self.html)
 
     def test_export_button_keeps_single_flight_guard_and_finally_reset(self) -> None:
         self.assertIn(
@@ -910,6 +924,388 @@ class LauncherContractTests(unittest.TestCase):
             first.release()
             second.release()
             third.release()
+
+
+class SeriesRegistryPerSeriesTest(unittest.TestCase):
+    """V6: harte Trennung der drei Zaehler. Jede Nummer gehoert zu genau einer
+    Serie, die Zuordnung haengt am PRESET, und ein Export darf ausschliesslich
+    den Zaehler der aktiven Serie beruehren."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.registry_path = root / "series-registry.json"
+        self.backup_directory = root / "backups"
+
+    def write_registry(self, registry: dict) -> None:
+        self.registry_path.write_text(
+            json.dumps(registry, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+
+    def read_registry(self) -> dict:
+        return json.loads(self.registry_path.read_text(encoding="utf-8"))
+
+    def record(self, preset: str, episode: str) -> str | None:
+        return record_series_registry_export(
+            preset,
+            episode,
+            registry_path=self.registry_path,
+            backup_directory=self.backup_directory,
+        )
+
+    def seeded_registry(self) -> dict:
+        return {
+            "$schema": "SERIES_REGISTRY_V2",
+            "aiv": [],
+            "innercircle": [{"number": 75, "videoId": "TESTVIDEO001", "date": "2026-08-20"}],
+            "livestream": [{"number": 66, "videoId": "abc", "date": "2026-05-31"}],
+            "standard": [],
+            "lastAssigned": {"standard": {"number": 15, "at": "2026-08-27T00:00:00Z"}},
+        }
+
+    def counters(self) -> dict:
+        return {
+            name: (self.read_registry().get("lastAssigned", {}).get(name) or {}).get("number")
+            for name in SERIES_NAMES
+        }
+
+    # --- Preset -> Serie ---------------------------------------------------
+
+    def test_preset_maps_to_exactly_one_series(self) -> None:
+        self.assertEqual(series_for_preset("aiv"), "aiv")
+        self.assertEqual(series_for_preset("innercircle"), "innercircle")
+        self.assertEqual(series_for_preset("livestream"), "livestream")
+        self.assertEqual(series_for_preset("standard"), "standard")
+
+    def test_nonchart_and_unknown_presets_have_no_series(self) -> None:
+        self.assertIsNone(series_for_preset("nonchart"))
+        # BJ6: memberlive traegt bewusst keine Nummer und damit keine Serie.
+        self.assertIsNone(series_for_preset("memberlive"))
+        self.assertIsNone(series_for_preset(""))
+        self.assertIsNone(series_for_preset("innercircle "))
+
+    # --- V6 Kreuztest ------------------------------------------------------
+
+    def test_standard_export_leaves_innercircle_and_livestream_untouched(self) -> None:
+        self.write_registry(self.seeded_registry())
+        before = self.read_registry()
+        self.assertIsNone(self.record("standard", "EP. 16"))
+        after = self.read_registry()
+        self.assertEqual(self.counters()["standard"], 16)
+        self.assertIsNone(self.counters()["innercircle"])
+        self.assertIsNone(self.counters()["livestream"])
+        for name in SERIES_NAMES:
+            self.assertEqual(before[name], after[name], f"Eintraege von {name} veraendert")
+
+    def test_innercircle_export_leaves_livestream_and_standard_untouched(self) -> None:
+        self.write_registry(self.seeded_registry())
+        before = self.read_registry()
+        self.assertIsNone(self.record("innercircle", "INNER CIRCLE #76"))
+        after = self.read_registry()
+        self.assertEqual(self.counters()["innercircle"], 76)
+        self.assertIsNone(self.counters()["livestream"])
+        self.assertEqual(self.counters()["standard"], 15, "Standard-Zaehler mitgeschoben")
+        for name in SERIES_NAMES:
+            self.assertEqual(before[name], after[name], f"Eintraege von {name} veraendert")
+
+    def test_livestream_export_leaves_innercircle_and_standard_untouched(self) -> None:
+        self.write_registry(self.seeded_registry())
+        self.assertIsNone(self.record("livestream", "LIVESTREAM #67"))
+        self.assertEqual(self.counters()["livestream"], 67)
+        self.assertIsNone(self.counters()["innercircle"])
+        self.assertEqual(self.counters()["standard"], 15)
+
+    def test_three_exports_in_a_row_keep_three_independent_counters(self) -> None:
+        self.write_registry(self.seeded_registry())
+        self.assertIsNone(self.record("standard", "EP. 16"))
+        self.assertIsNone(self.record("innercircle", "INNER CIRCLE #76"))
+        self.assertIsNone(self.record("livestream", "LIVESTREAM #67"))
+        self.assertEqual(
+            self.counters(),
+            {"aiv": None, "innercircle": 76, "livestream": 67, "standard": 16},
+        )
+
+    def test_aiv_export_leaves_the_three_older_series_untouched(self) -> None:
+        """BJ4-Kreuztest: ein aiv-Export darf innercircle, livestream und
+        standard weder in den Eintraegen noch im Zaehler beruehren."""
+        self.write_registry(self.seeded_registry())
+        before = self.read_registry()
+        self.assertIsNone(self.record("aiv", "AIV #1"))
+        after = self.read_registry()
+        self.assertEqual(self.counters()["aiv"], 1)
+        self.assertIsNone(self.counters()["innercircle"])
+        self.assertIsNone(self.counters()["livestream"])
+        self.assertEqual(self.counters()["standard"], 15, "Standard-Zaehler mitgeschoben")
+        for name in SERIES_NAMES:
+            self.assertEqual(before[name], after[name], f"Eintraege von {name} veraendert")
+
+    def test_older_exports_leave_the_aiv_counter_untouched(self) -> None:
+        """Gegenrichtung: die drei alten Serien duerfen den aiv-Zaehler nicht
+        anfassen -- auch nicht, nachdem aiv schon eine Nummer hat."""
+        self.write_registry(self.seeded_registry())
+        self.assertIsNone(self.record("aiv", "AIV #1"))
+        for preset, episode in (
+            ("standard", "EP. 16"),
+            ("innercircle", "INNER CIRCLE #76"),
+            ("livestream", "LIVESTREAM #67"),
+        ):
+            self.assertIsNone(self.record(preset, episode))
+            self.assertEqual(self.counters()["aiv"], 1, f"{preset} hat aiv verschoben")
+
+    def test_aiv_number_one_is_accepted_although_other_series_are_far_ahead(self) -> None:
+        """Die neue Serie startet bei #1, obwohl innercircle bei #75 steht.
+        Mit einem gemeinsamen Zaehler waere das faelschlich blockiert."""
+        self.write_registry(self.seeded_registry())
+        self.assertIsNone(self.record("aiv", "AIV #1"))
+        self.assertEqual(self.counters()["aiv"], 1)
+
+    def test_memberlive_export_never_writes(self) -> None:
+        """BJ6: series:null heisst wirklich nichts anfassen -- auch dann nicht,
+        wenn im Feld zufaellig eine Zahl steht."""
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        self.assertIsNone(self.record("memberlive", "MITGLIEDER LIVESTREAM #1"))
+        self.assertIsNone(self.record("memberlive", "MEMBER LIVESTREAM"))
+        self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"))
+
+    def test_presets_without_a_series_write_nothing_at_all(self) -> None:
+        """Weder nonchart noch memberlive duerfen irgendeinen Zaehler anlegen --
+        auch nicht den der jeweils anderen serienlosen Sorte."""
+        self.write_registry(self.seeded_registry())
+        for preset in ("nonchart", "memberlive"):
+            before = self.registry_path.read_text(encoding="utf-8")
+            self.assertIsNone(self.record(preset, "AIV #9"))
+            self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"))
+        registry = self.read_registry()
+        self.assertNotIn("nonchart", registry.get("lastAssigned", {}))
+        self.assertNotIn("memberlive", registry.get("lastAssigned", {}))
+        self.assertIsNone(self.counters()["aiv"])
+
+    def test_standard_number_below_innercircle_floor_is_still_accepted(self) -> None:
+        """Kernpunkt von V2: EP. 16 ist gueltig, obwohl Inner Circle schon bei
+        #75 steht. Mit einem gemeinsamen Zaehler waere das faelschlich blockiert."""
+        self.write_registry(self.seeded_registry())
+        self.assertIsNone(self.record("standard", "EP. 16"))
+        self.assertEqual(self.counters()["standard"], 16)
+
+    def test_nonchart_export_never_writes(self) -> None:
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        self.assertIsNone(self.record("nonchart", "IRGENDWAS #99"))
+        self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"))
+
+    def test_empty_series_does_not_fall_back_to_another_series(self) -> None:
+        """standard ist leer und hat keinen Zaehler -- der Vorschlag darf NICHT
+        aus innercircle geborgt werden."""
+        registry = {"innercircle": [{"number": 75}], "livestream": [], "standard": []}
+        self.write_registry(registry)
+        self.assertEqual(series_floor_number(registry, "standard"), 0)
+        self.assertIsNone(self.record("standard", "EP. 1"))
+        self.assertEqual(self.counters()["standard"], 1)
+
+    # --- Untergrenze und Warnungen ----------------------------------------
+
+    def test_already_assigned_number_warns_and_writes_nothing(self) -> None:
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        warning = self.record("livestream", "LIVESTREAM #66")
+        self.assertIsNotNone(warning)
+        self.assertIn("livestream", warning)
+        self.assertIn("#66", warning)
+        self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"))
+
+    def test_floor_is_the_higher_of_entries_and_counter(self) -> None:
+        registry = {
+            "innercircle": [{"number": 75}],
+            "lastAssigned": {"innercircle": {"number": 80}},
+        }
+        self.assertEqual(series_floor_number(registry, "innercircle"), 80)
+        registry["lastAssigned"]["innercircle"]["number"] = 70
+        self.assertEqual(series_floor_number(registry, "innercircle"), 75)
+
+    def test_field_without_a_number_is_ignored(self) -> None:
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        self.assertIsNone(self.record("innercircle", "INNER CIRCLE #"))
+        self.assertIsNone(self.record("standard", "EP. "))
+        self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"))
+
+    def test_standard_accepts_ep_prefix_and_bare_number(self) -> None:
+        self.write_registry(self.seeded_registry())
+        self.assertIsNone(self.record("standard", "EP. 16"))
+        self.assertIsNone(self.record("standard", "17"))
+        self.assertEqual(self.counters()["standard"], 17)
+
+    # --- Migration V1 -> V2 ------------------------------------------------
+
+    def test_scalar_last_assigned_migrates_to_innercircle(self) -> None:
+        self.write_registry({
+            "innercircle": [{"number": 75}],
+            "lastAssigned": {"number": 80, "at": "2026-08-01T00:00:00Z"},
+        })
+        self.assertEqual(series_floor_number(self.read_registry(), "innercircle"), 80)
+        self.assertEqual(series_floor_number(self.read_registry(), "standard"), 0)
+        self.assertIsNone(self.record("standard", "EP. 16"))
+        counters = self.counters()
+        self.assertEqual(counters["innercircle"], 80, "alter Stand ging verloren")
+        self.assertEqual(counters["standard"], 16)
+
+    def test_scalar_last_assigned_is_never_read_as_another_series(self) -> None:
+        registry = {"livestream": [], "lastAssigned": {"number": 80}}
+        self.assertEqual(series_floor_number(registry, "livestream"), 0)
+
+    # --- Selbstpruefung ----------------------------------------------------
+
+    def test_self_check_accepts_a_single_series_counter_change(self) -> None:
+        before = self.seeded_registry()
+        after = json.loads(json.dumps(before))
+        after["lastAssigned"]["standard"] = {"number": 16, "at": "x"}
+        self.assertIsNone(verify_only_series_touched(before, after, "standard"))
+
+    def test_self_check_rejects_a_foreign_series_counter_change(self) -> None:
+        before = self.seeded_registry()
+        after = json.loads(json.dumps(before))
+        after["lastAssigned"]["standard"] = {"number": 16, "at": "x"}
+        after["lastAssigned"]["innercircle"] = {"number": 76, "at": "x"}
+        violation = verify_only_series_touched(before, after, "standard")
+        self.assertIsNotNone(violation)
+        self.assertIn("innercircle", violation)
+
+    def test_self_check_rejects_a_lost_or_changed_entry_list(self) -> None:
+        before = self.seeded_registry()
+        after = json.loads(json.dumps(before))
+        after["lastAssigned"]["standard"] = {"number": 16, "at": "x"}
+        after["innercircle"] = []
+        violation = verify_only_series_touched(before, after, "standard")
+        self.assertIsNotNone(violation)
+        self.assertIn("innercircle", violation)
+
+    def test_write_is_refused_when_the_pre_write_self_check_fails(self) -> None:
+        """Statt eine falsche Serie zu beschreiben, wird abgebrochen -- die
+        Datei darf die falsche Serie gar nicht erst zu sehen bekommen."""
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        with patch("thumbnail_service.verify_only_series_touched",
+                   return_value="Der Zaehler der fremden Serie 'innercircle' hat sich veraendert."):
+            warning = self.record("standard", "EP. 16")
+        self.assertIsNotNone(warning)
+        self.assertIn("Selbstpruefung", warning)
+        self.assertIn("innercircle", warning)
+        self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"),
+                         "Registry wurde trotz fehlgeschlagener Selbstpruefung veraendert")
+        self.assertFalse(list(self.backup_directory.glob("*.json")) if self.backup_directory.exists() else [],
+                         "Es wurde gesichert, obwohl gar nicht geschrieben werden durfte")
+
+    def test_registry_is_restored_when_the_post_write_self_check_fails(self) -> None:
+        """Zweite Verteidigungslinie: die Pruefung vor dem Schreiben ist sauber,
+        aber das, was tatsaechlich auf der Platte landet, ist es nicht -- dann
+        wird das Backup zurueckgespielt."""
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        with patch("thumbnail_service.verify_only_series_touched",
+                   side_effect=[None, "Der Zaehler der fremden Serie 'livestream' hat sich veraendert."]):
+            warning = self.record("standard", "EP. 16")
+        self.assertIsNotNone(warning)
+        self.assertIn("Selbstpruefung nach dem Schreiben", warning)
+        self.assertIn("zurueckgespielt", warning)
+        self.assertEqual(before, self.registry_path.read_text(encoding="utf-8"),
+                         "Registry wurde nicht auf den Stand vor dem Export zurueckgesetzt")
+
+    def test_backup_is_written_before_the_registry_changes(self) -> None:
+        self.write_registry(self.seeded_registry())
+        before = self.registry_path.read_text(encoding="utf-8")
+        self.assertIsNone(self.record("standard", "EP. 16"))
+        backups = list(self.backup_directory.glob("series-registry-*.json"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(before, backups[0].read_text(encoding="utf-8"))
+
+
+class SeriesRegistryClientBindingTest(unittest.TestCase):
+    """Die Anzeige im Creator haengt am Preset, nicht am Feldnamen -- und die
+    vier Presets muessen mit dem Dienst uebereinstimmen."""
+
+    def setUp(self) -> None:
+        self.html = Path("thumbnail-compositor.html").read_text(encoding="utf-8")
+
+    def test_the_numbered_presets_declare_their_series(self) -> None:
+        for preset, series in (
+            ("standard", "standard"),
+            ("innercircle", "innercircle"),
+            ("livestream", "livestream"),
+            ("aiv", "aiv"),
+        ):
+            self.assertIn(f"series:'{series}'", self.html, f"{preset} ohne Serie")
+
+    def test_nonchart_declares_no_series_and_no_number_field(self) -> None:
+        # nonchart und memberlive -- beide serienlos, deshalb zweimal die Zeile.
+        self.assertEqual(
+            2, self.html.count("series:null, numberField:null, numberPrefix:null")
+        )
+
+    def test_client_binds_the_hint_to_the_preset_not_the_field_name(self) -> None:
+        self.assertIn("cfg.series && f.id === cfg.numberField", self.html)
+        self.assertNotIn("epIC' && icRegistryNextNumber", self.html)
+
+    def test_no_hardcoded_episode_number_is_left_in_the_defaults(self) -> None:
+        self.assertNotIn("EP. 143", self.html)
+        self.assertNotIn("INNER CIRCLE #12", self.html)
+        self.assertNotIn("LIVESTREAM #1'", self.html)
+
+    def test_client_and_service_agree_on_the_series_names(self) -> None:
+        self.assertIn(
+            "const SERIES_NAMES = ['aiv', 'innercircle', 'livestream', 'standard'];",
+            self.html,
+        )
+        self.assertEqual(SERIES_NAMES, ("aiv", "innercircle", "livestream", "standard"))
+
+
+
+class EmblemLayerTest(unittest.TestCase):
+    """BJ2/BK2: die Emblem-Ebene und ihre Sperrflaeche haengen am Preset aiv.
+    Alle anderen Presets muessen davon unberuehrt bleiben."""
+
+    def setUp(self) -> None:
+        self.html = Path("thumbnail-compositor.html").read_text(encoding="utf-8")
+
+    def test_emblem_is_embedded_as_data_uri(self) -> None:
+        """Weder der Dienst noch die Render-Harness liefern statische Dateien --
+        das Emblem muss in der HTML liegen, nicht als Dateipfad."""
+        self.assertIn("const AIV_EMBLEM_DATA_URI = 'data:image/png;base64,", self.html)
+        self.assertNotIn('src="assets/branding', self.html)
+
+    def test_draw_emblem_returns_early_for_every_other_preset(self) -> None:
+        self.assertIn("function drawEmblem(){\n  if (state.preset !== 'aiv') return;", self.html)
+
+    def test_emblem_is_drawn_between_vignette_and_watermark(self) -> None:
+        order = self.html[self.html.index("  drawImageCover();"):]
+        order = order[: order.index("}")]
+        self.assertLess(order.index("drawVignette()"), order.index("drawEmblem()"))
+        self.assertLess(order.index("drawEmblem()"), order.index("drawWatermark()"))
+
+    def test_block_rect_is_null_without_aiv_and_without_a_loaded_emblem(self) -> None:
+        """Kern der BK2-Zusage: liefert emblemBlockRect() null, bleibt die
+        Belegungskarte in autoPlace() unveraendert."""
+        self.assertIn(
+            "if (state.preset !== 'aiv' || !state.emblemImg) return null;", self.html
+        )
+
+    def test_auto_place_only_stamps_the_map_when_a_block_exists(self) -> None:
+        self.assertIn("const block = emblemBlockRect();\n  if (block){", self.html)
+
+    def test_block_rect_follows_the_ui_values(self) -> None:
+        """Sperrflaeche aus emblemX/emblemY/emblemSize plus Rand -- verschiebt
+        man das Emblem, wandert sie mit."""
+        for token in ("state.emblemX - half - pad", "state.emblemY - half - pad",
+                      "const half = state.emblemSize/2"):
+            self.assertIn(token, self.html)
+        self.assertIn("if (state.auto && state.img) applyAuto(); else render();", self.html)
+
+    def test_image_cover_is_untouched_by_the_emblem(self) -> None:
+        """Die zweite Bildebene darf nicht in drawImageCover() eingreifen."""
+        cover = self.html[self.html.index("function drawImageCover(){"):]
+        cover = cover[: cover.index("// ---------- scrim")]
+        self.assertNotIn("emblem", cover.lower())
 
 
 if __name__ == "__main__":

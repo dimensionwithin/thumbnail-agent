@@ -70,7 +70,7 @@ Evolution des JSON-Render-Contracts aus der originalen `thumbnails.jsx`:
 ```json
 {
   "videoId":    "abc123",
-  "preset":     "standard | innercircle | livestream | nonchart",
+  "preset":     "standard | innercircle | livestream | nonchart | aiv | memberlive",
   "color":      "brass | sage | oxblood",
   "chartForm":  "collapse | expansion | fractal",
   "chartSeed":  918273,

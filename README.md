@@ -124,7 +124,12 @@ weiterhin täglich für neue Videos verwendet, unabhängig von der abgeschlossen
   Motiv ist unten angeschnitten und liest sich am Bildrand, als schaue es ins Bild
   hinein — frei schwebend würde dieselbe Kante zur Kartenkante. Der Eck-Anker sorgt
   dafür, dass eine Größenänderung die Unterkante bündig lässt, statt das Emblem
-  wandern zu lassen.
+  wandern zu lassen. Die **Seite wechselt automatisch**: steht der Titel rechts,
+  weicht das Emblem nach links und wird dabei gespiegelt — das bringt die schwere
+  Kapuzenmasse zur äußeren Bildkante. Im UI auf links/rechts übersteuerbar. Die
+  Reihenfolge ist festgelegt: erst sucht `autoPlace()` die Titelposition, dann
+  folgt die Seite, dann höchstens **ein** zweiter Durchgang gegen die verschobene
+  Sperrfläche — Seite und Position können einander so nicht im Kreis jagen.
 - **Mehrere Emblem-Varianten.** Im Compositor wählbar, gedacht für verschiedene
   Stimmungen. Eine Variante ergänzen heißt: PNG mit Alpha in
   `assets/branding/emblems/` ablegen und `node scripts/embed-aiv-emblem.cjs` laufen

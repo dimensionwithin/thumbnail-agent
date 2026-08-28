@@ -1296,7 +1296,16 @@ class EmblemLayerTest(unittest.TestCase):
         self.assertIn("const EMBLEM_GLOW = { color: 'rgba(236,232,224,", self.html)
 
     def test_draw_emblem_returns_early_for_every_other_preset(self) -> None:
-        self.assertIn("function drawEmblem(){\n  if (state.preset !== 'aiv') return;", self.html)
+        """Der Preset-Test sitzt jetzt in emblemRect(), das drawEmblem() UND
+        emblemBlockRect() speist -- eine Stelle statt zweier, die auseinander
+        laufen koennen. Fuer jedes andere Preset ist der Rueckgabewert null."""
+        self.assertIn(
+            "const img = (state.preset === 'aiv') ? currentEmblem() : null;", self.html
+        )
+        draw = self.html[self.html.index("function drawEmblem(){"):]
+        draw = draw[: draw.index("\n}")]
+        self.assertIn("const rect = emblemRect();", draw)
+        self.assertIn("if (!rect) return;", draw)
 
     def test_emblem_is_drawn_between_vignette_and_watermark(self) -> None:
         order = self.html[self.html.index("  drawImageCover();"):]
@@ -1318,17 +1327,52 @@ class EmblemLayerTest(unittest.TestCase):
     def test_block_rect_follows_the_ui_values(self) -> None:
         """Sperrflaeche aus emblemX/emblemY/emblemSize plus Rand -- verschiebt
         man das Emblem, wandert sie mit."""
-        for token in ("state.emblemX - w - pad", "state.emblemY - h - pad",
-                      "const scale = state.emblemSize / Math.max(iw, ih);",
-                      "const w = iw*scale, h = ih*scale, pad = EMBLEM_BLOCK_PAD;"):
+        for token in ("rect.dx - pad", "rect.dy - pad",
+                      "rect.dx + rect.dw + pad", "rect.dy + rect.dh + pad"):
             self.assertIn(token, self.html)
 
-    def test_anchor_is_the_bottom_right_corner(self) -> None:
-        """CB1: emblemX ist die rechte Kante, emblemY die Unterkante. Mit einem
-        Mittelpunkt-Anker wanderte die buendige Unterkante bei jeder
-        Groessenaenderung -- der Anschnitt wuerde dann zur Kartenkante."""
-        self.assertIn("const dx = state.emblemX - dw, dy = state.emblemY - dh;", self.html)
-        self.assertIn("const EMBLEM_DEFAULT = { size: 480, x: 1240, y: 720 };", self.html)
+    def test_anchor_is_the_outer_bottom_corner(self) -> None:
+        """CB1/CD1: waagerecht ein RANDABSTAND (spiegelt sich beim Seitenwechsel
+        mit), senkrecht die Unterkante. Mit einem Mittelpunkt-Anker wanderte die
+        buendige Unterkante bei jeder Groessenaenderung -- der Anschnitt wuerde
+        dann zur Kartenkante."""
+        self.assertIn(
+            "const dx = (resolvedEmblemSide() === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);",
+            self.html,
+        )
+        self.assertIn("const EMBLEM_DEFAULT = { size: 480, margin: 40, y: 720 };", self.html)
+
+    def test_side_follows_the_title_position_when_automatic(self) -> None:
+        """CD1: Titel rechts -> Emblem links. Sonst rechts. 'top' und 'bottom'
+        haben keine Seite und behalten deshalb die Standardseite."""
+        self.assertIn(
+            "return (state.pos === 'right' || state.pos === 'bottom-right') ? 'left' : 'right';",
+            self.html,
+        )
+        self.assertIn("if (state.emblemSide !== 'auto') return state.emblemSide;", self.html)
+
+    def test_left_side_is_mirrored(self) -> None:
+        """CD1: gespiegelt wird wegen des Kapuzengewichts, NICHT wegen einer
+        Blickrichtung -- die Sonnenbrille ist deckend, es gibt keine Augen."""
+        self.assertIn("if (mirrored){ ctx.translate(dx + dw/2, 0); ctx.scale(-1, 1);", self.html)
+        self.assertIn("const mirrored = (resolvedEmblemSide() === 'left');", self.html)
+
+    def test_auto_placement_runs_at_most_two_passes(self) -> None:
+        """CD3: erst die Titelposition, dann folgt die Seite, dann EIN zweiter
+        Durchgang gegen die verschobene Sperrflaeche. Kein dritter -- Seite und
+        Position koennten einander sonst im Kreis jagen."""
+        block = self.html[self.html.index("function applyAuto(){"):]
+        block = block[: block.index("\n}")]
+        self.assertEqual(2, block.count("autoPlace(state.img)"))
+        self.assertIn("if (resolvedEmblemSide() !== sideBefore){", block)
+
+    def test_block_rect_and_drawing_share_one_geometry(self) -> None:
+        """Sperrflaeche und gezeichnete Flaeche duerfen nicht auseinanderlaufen --
+        beide kommen aus emblemRect()."""
+        self.assertIn("const rect = emblemRect();", self.html)
+        block = self.html[self.html.index("function emblemBlockRect(){"):]
+        block = block[: block.index("\n}")]
+        self.assertNotIn("emblemSize", block)
 
     def test_fallback_placement_knows_the_block_rect(self) -> None:
         """Fand die Suche keine freie Stellung, waehlte autoPlace() blind
@@ -1351,10 +1395,9 @@ class EmblemLayerTest(unittest.TestCase):
         emblem = self.html[self.html.index("function drawEmblem(){"):]
         emblem = emblem[: emblem.index("// ---------- live badge")]
         self.assertIn("ctx.shadowColor = EMBLEM_GLOW.color;", emblem)
-        self.assertLess(
-            emblem.index("if (state.preset !== 'aiv') return;"),
-            emblem.index("EMBLEM_GLOW"),
-        )
+        # Der Schein wird erst gezeichnet, nachdem emblemRect() eine Flaeche
+        # geliefert hat -- und die gibt es nur bei aiv.
+        self.assertLess(emblem.index("if (!rect) return;"), emblem.index("EMBLEM_GLOW"))
 
     def test_glow_offset_and_blur_are_scaled_to_device_pixels(self) -> None:
         """shadowOffsetX/shadowBlur werden von setTransform(SCALE,...) NICHT

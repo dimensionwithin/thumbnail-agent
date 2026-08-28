@@ -48,6 +48,41 @@ Dateien aus (der Dienst kennt nur vier API-Routen, die Harness läuft über
 stehen sie als `data:`-URIs in `thumbnail-compositor.html`. Jede Variante kostet
 dort dauerhaft rund 250–330 KB; das Skript warnt, wenn es zu viel wird.
 
+## Seitenwechsel und Spiegelung
+
+Das Emblem steht auf der dem Titel gegenüberliegenden Seite (Automatik, im
+Compositor auf links/rechts übersteuerbar). Auf der linken Seite wird es
+waagerecht **gespiegelt**.
+
+**Die Spiegelung dient dem Kapuzengewicht, NICHT einer Blickrichtung.** Das ist
+wichtig, weil es naheliegt, es andersherum zu vermuten: Der Avatar trägt eine
+vollständig deckende Sonnenbrille, es sind keine Augen sichtbar, und der Kopf ist
+nahezu frontal — es gibt schlicht nichts, was in eine Richtung zeigen könnte. An
+einer Vergleichsreihe geprüft: weder liest sich die ungespiegelte Fassung links
+als „abgewandt", noch die gespiegelte als „schaut zum Titel".
+
+Was die Spiegelung dagegen tatsächlich leistet: Die Kapuze ist asymmetrisch
+(27,5 % der sichtbaren Pixel weichen von der Spiegelung um mehr als 25/255 ab, im
+Kopfbereich 38 %). Gespiegelt liegt die schwere Kapuzenmasse zur äußeren
+Bildkante und das Gesicht öffnet sich zur Bildmitte. Ein kleiner, aber echter
+kompositorischer Gewinn.
+
+Sollte je eine Variante mit gedrehtem Kopf oder sichtbaren Augen dazukommen,
+liefert dieselbe Mechanik dann auch eine echte Blickrichtung — geändert werden
+muss dafür nichts.
+
+## Die Varianten sitzen im selben Rahmen
+
+Gemessen an den fertigen Renders aller sechs Varianten (identische Einstellungen,
+nur die Datei getauscht) liegt die Kopfmitte innerhalb von **x 10,1 px und
+y 10,4 px** — 0,8 % der Bildbreite. Der Avatar springt zwischen den Thumbnails
+also nicht, auch nicht bei `verwirrt`, obwohl deren erhobener Arm die Silhouette
+deutlich verbreitert (deckende Bounding-Box bis x 1508 statt ~1345).
+
+Eine Verankerung am Kopf statt am Bildrahmen ist deshalb nicht nötig. Wer neue
+Varianten erzeugt, sollte den Rahmen aber beibehalten — der Wert oben ist der
+Maßstab, an dem sich eine neue Datei messen lassen muss.
+
 ## _verworfen/
 
 Nichts hier darf eingebunden werden.

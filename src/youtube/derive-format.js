@@ -3,6 +3,31 @@
 // P2: Aus Video-Metadaten die SICHEREN Felder ableiten (preset, episode, date).
 // "Sicher" = aus harten Signalen, nicht aus Interpretation. Stance/Headline kommen erst in P3.
 
+const fs = require('fs');
+const path = require('path');
+
+const SERIES_REGISTRY_FILE = path.resolve('data', 'series-registry.json');
+const IC_NUMBERING_EXCLUDE_FILE = path.resolve('fixtures', 'ic-numbering-exclude.txt');
+
+function loadIcNumberingExclude(filePath) {
+  if (!fs.existsSync(filePath)) return new Set();
+  const ids = fs.readFileSync(filePath, 'utf8')
+    .split('\n')
+    .map(l => l.split('#')[0].trim())
+    .filter(Boolean);
+  return new Set(ids);
+}
+
+function loadSeriesRegistry(filePath) {
+  const map = new Map();
+  if (!fs.existsSync(filePath)) return map;
+  const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  for (const entry of data.innercircle || []) {
+    map.set(entry.videoId, `INNER CIRCLE #${entry.number}`);
+  }
+  return map;
+}
+
 // publishedAt (ISO 8601) -> "YYYY-MM-DD"
 function dateFromPublishedAt(publishedAt) {
   if (!publishedAt) return undefined;
@@ -40,34 +65,31 @@ function presetFromSignals(video, innerCircleIds) {
   return 'standard';
 }
 
-// Inner-Circle-Episodennummern CHRONOLOGISCH vergeben (nicht aus dem Titel).
-// Begruendung: Alte IC-Titel tragen keine Nummer; die Titel-Ableitung ist unzuverlaessig.
-// Stattdessen: alle eindeutigen IC-Videos nach publishedAt AUFSTEIGEND sortieren und
-// durchnummerieren -> "INNER CIRCLE #N", N=1 fuer das aelteste.
+// Inner-Circle-Episodennummern aus der PERSISTENTEN REGISTRY lesen
+// (data/series-registry.json), NICHT mehr live aus der Playlist-Reihenfolge neu zaehlen.
+// Begruendung: nachtraegliche Playlist-Aenderungen (z.B. rueckwirkendes Einsortieren
+// aelterer Mitglieder-Aufzeichnungen) verschieben bei einer Neuzaehlung jede Zahl
+// danach dauerhaft -- betraf am 14.08.2026 alle Folgen ab #9 (siehe
+// fixtures/ic-numbering-exclude.txt). Die Registry ist die alleinige Wahrheit,
+// gespeist aus den GEDRUCKTEN Thumbnail-Nummern; sie wird hier nur gelesen.
+// Videos aus fixtures/ic-numbering-exclude.txt bekommen nie eine Nummer (bestaetigte
+// Ad-hoc-Mitgliederstreams ausserhalb der nummerierten Serie).
 //
-// Stabilitaet: Die Reihenfolge haengt allein am aufsteigenden Datum (Tiebreak: videoId),
-// damit neue Folgen nur HINTEN anhaengen und bestehende Nummern sich NIE verschieben.
-//
-// videos: Array von { id, publishedAt, ... } (idealerweise die eindeutige Upload-Liste)
+// videos: Array von { id, ... }
 // innerCircleIds: Set<videoId>
 // -> Map<videoId, "INNER CIRCLE #N">
-function assignInnerCircleEpisodes(videos, innerCircleIds) {
+function assignInnerCircleEpisodes(videos, innerCircleIds, registryFile = SERIES_REGISTRY_FILE, excludeFile = IC_NUMBERING_EXCLUDE_FILE) {
   const map = new Map();
   if (!innerCircleIds || innerCircleIds.size === 0) return map;
+  const registry = loadSeriesRegistry(registryFile);
+  const excluded = loadIcNumberingExclude(excludeFile);
   const seen = new Set();
-  const ic = [];
   for (const v of videos || []) {
-    if (!innerCircleIds.has(v.id) || seen.has(v.id)) continue; // eindeutig halten
+    if (!innerCircleIds.has(v.id) || seen.has(v.id) || excluded.has(v.id)) continue;
     seen.add(v.id);
-    ic.push(v);
+    const episode = registry.get(v.id);
+    if (episode) map.set(v.id, episode);
   }
-  ic.sort((a, b) => {
-    const ta = Date.parse(a.publishedAt) || 0;
-    const tb = Date.parse(b.publishedAt) || 0;
-    if (ta !== tb) return ta - tb;                 // aufsteigend nach Datum
-    return String(a.id).localeCompare(String(b.id)); // deterministischer Tiebreak
-  });
-  ic.forEach((v, i) => map.set(v.id, `INNER CIRCLE #${i + 1}`));
   return map;
 }
 

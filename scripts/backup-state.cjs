@@ -33,6 +33,10 @@ const FILES = [
   'fixtures/members-only-exclude.txt',
   'fixtures/premieres-exclude.txt',
   'fixtures/member-meeting-dates.txt',
+  // BL2 (2026-08-28): Zielmenge von unlist-old-member-recordings.js. Lag frueher
+  // als TARGETS im Quelltext und war damit ueber git gesichert -- seit BL1 liegt
+  // sie hier und waere sonst genauso unwiederbringlich wie die anderen vier.
+  'fixtures/old-member-recordings.txt',
 ];
 
 const VERBOTEN_NAMEN = /(\.env|token|secret|credential|\.pem|\.key|\.npmrc|id_rsa)/i;
@@ -47,7 +51,8 @@ const VERBOTEN_INHALT = [
   [/BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY/, 'privater Schluessel'],
 ];
 
-const SERIES = ['innercircle', 'livestream', 'standard'];
+// BJ4: 'aiv' ergaenzt, sonst taucht die neue Serie im Backup-Diff nicht auf.
+const SERIES = ['aiv', 'innercircle', 'livestream', 'standard'];
 
 function meldung(zeile) {
   const stamp = new Date().toISOString();

@@ -18,6 +18,16 @@
 //   --privacy=X       unlisted | public | private (Default: unlisted).
 //   --delay=MS        Pause zwischen playlistItems.insert (Default: 800).
 //   --yes             Bestaetigung ueberspringen (nur nicht-interaktiv; ohne --execute wirkungslos).
+//   --force           Noetig fuer --execute, falls backups/livestream-playlist-progress.json
+//                      bereits eine playlistId enthaelt (siehe Hinweis unten).
+//
+// HINWEIS (bestaetigt): Dieses Skript ist bereits real gegen die Playlist-ID aus
+// LIVESTREAM_ARCHIVE_PLAYLIST_ID gelaufen und hat dort die 55 kuratierten
+// Sonntags-Livestreams eingefuegt (siehe backups/livestream-playlist-progress.json).
+// Ein weiterer --execute-Lauf ohne konkreten Grund ist vermutlich ein Versehen und
+// eine moegliche Quelle neuer Duplikate — deshalb der --force-Guard unten. Fuer das
+// Ergaenzen ALLER UEBRIGEN vergangenen Livestreams in dieselbe Playlist ist
+// src/youtube/sync-livestream-archive.js zustaendig, nicht dieses Skript.
 
 require('dotenv').config();
 const fs = require('fs');
@@ -28,10 +38,11 @@ const DEFAULT_TITLE = 'Sonntags-Livestreams';
 const DEFAULT_DESC = 'Chronologische Reihe der Sonntags-Livestreams (kuratiert). Automatisch zusammengestellt.';
 
 function parseArgs(argv) {
-  const a = { execute: false, in: 'data/livestream-catalog.json', title: DEFAULT_TITLE, desc: DEFAULT_DESC, privacy: 'unlisted', delay: 800, yes: false };
+  const a = { execute: false, in: 'data/livestream-catalog.json', title: DEFAULT_TITLE, desc: DEFAULT_DESC, privacy: 'unlisted', delay: 800, yes: false, force: false };
   for (const t of argv.slice(2)) {
     if (t === '--execute') a.execute = true;
     else if (t === '--yes') a.yes = true;
+    else if (t === '--force') a.force = true;
     else if (t.startsWith('--in=')) a.in = t.slice(5);
     else if (t.startsWith('--title=')) a.title = t.slice(8);
     else if (t.startsWith('--desc=')) a.desc = t.slice(7);
@@ -90,6 +101,15 @@ async function main() {
   }
 
   // --- EXECUTE ---
+  // Guardrail: dieses Skript ist bereits real gelaufen (progress.playlistId gesetzt).
+  // Ein erneuter --execute ohne --force ist vermutlich ein Versehen -> abbrechen,
+  // bevor irgendein API-Call passiert. Kernlogik (Insert/Resume/Katalog) bleibt unberuehrt.
+  if (progress.playlistId && !args.force) {
+    console.error(`\nAbbruch: Playlist wurde bereits angelegt/befuellt (playlistId=${progress.playlistId}, siehe ${progressPath}).`);
+    console.error('Falls ein erneuter Lauf wirklich gewollt ist: --force verwenden.');
+    console.log('CREATED: 0');
+    process.exit(1);
+  }
   if (!youtubeAvailable()) { console.error('\nAbbruch: --execute verlangt YouTube-Credentials (OAuth-Token + Client-ID).'); console.log('CREATED: 0'); process.exit(1); }
   if (!args.yes) {
     const ans = await ask(`\nWirklich Playlist "${args.title}" (${args.privacy}) erstellen und ${todo.length} Video(s) am LIVE-Kanal hinzufuegen? Tippe "PLAYLIST" zum Bestaetigen: `);

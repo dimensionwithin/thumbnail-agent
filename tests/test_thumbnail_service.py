@@ -1268,11 +1268,32 @@ class EmblemLayerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.html = Path("thumbnail-compositor.html").read_text(encoding="utf-8")
 
-    def test_emblem_is_embedded_as_data_uri(self) -> None:
+    def test_emblems_are_embedded_as_data_uris(self) -> None:
         """Weder der Dienst noch die Render-Harness liefern statische Dateien --
-        das Emblem muss in der HTML liegen, nicht als Dateipfad."""
-        self.assertIn("const AIV_EMBLEM_DATA_URI = 'data:image/png;base64,", self.html)
+        die Varianten muessen in der HTML liegen, nicht als Dateipfad."""
+        self.assertIn("const EMBLEMS = {", self.html)
+        self.assertIn("'data:image/png;base64,", self.html)
         self.assertNotIn('src="assets/branding', self.html)
+
+    def test_variants_come_from_the_folder_not_from_a_list_in_code(self) -> None:
+        """Eine Variante ergaenzen soll heissen: Datei ablegen, Skript laufen
+        lassen. Keine Namensliste im Quelltext, die man vergessen kann."""
+        self.assertIn("const EMBLEM_SLUGS = Object.keys(EMBLEMS);", self.html)
+        script = Path("scripts/embed-aiv-emblem.cjs").read_text(encoding="utf-8")
+        self.assertIn("fs.readdirSync(DIR)", script)
+
+    def test_selected_variant_falls_back_to_the_first_one(self) -> None:
+        """Ein entfernter oder umbenannter Dateiname darf nicht in einem leeren
+        Emblem enden."""
+        self.assertIn(
+            "return emblemImages[state.emblemVariant] || emblemImages[EMBLEM_SLUGS[0]] || null;",
+            self.html,
+        )
+
+    def test_glow_is_light_because_the_emblem_is_dark(self) -> None:
+        """Der Avatar ist fast schwarz (Median 15/255); ein dunkler Schein wuerde
+        auf dunklem Grund nichts bewirken."""
+        self.assertIn("const EMBLEM_GLOW = { color: 'rgba(236,232,224,", self.html)
 
     def test_draw_emblem_returns_early_for_every_other_preset(self) -> None:
         self.assertIn("function drawEmblem(){\n  if (state.preset !== 'aiv') return;", self.html)
@@ -1287,8 +1308,9 @@ class EmblemLayerTest(unittest.TestCase):
         """Kern der BK2-Zusage: liefert emblemBlockRect() null, bleibt die
         Belegungskarte in autoPlace() unveraendert."""
         self.assertIn(
-            "if (state.preset !== 'aiv' || !state.emblemImg) return null;", self.html
+            "const img = (state.preset === 'aiv') ? currentEmblem() : null;", self.html
         )
+        self.assertIn("  if (!img) return null;", self.html)
 
     def test_auto_place_only_stamps_the_map_when_a_block_exists(self) -> None:
         self.assertIn("const block = emblemBlockRect();\n  if (block){", self.html)
@@ -1296,9 +1318,31 @@ class EmblemLayerTest(unittest.TestCase):
     def test_block_rect_follows_the_ui_values(self) -> None:
         """Sperrflaeche aus emblemX/emblemY/emblemSize plus Rand -- verschiebt
         man das Emblem, wandert sie mit."""
-        for token in ("state.emblemX - half - pad", "state.emblemY - half - pad",
-                      "const half = state.emblemSize/2"):
+        for token in ("state.emblemX - w - pad", "state.emblemY - h - pad",
+                      "const scale = state.emblemSize / Math.max(iw, ih);",
+                      "const w = iw*scale, h = ih*scale, pad = EMBLEM_BLOCK_PAD;"):
             self.assertIn(token, self.html)
+
+    def test_anchor_is_the_bottom_right_corner(self) -> None:
+        """CB1: emblemX ist die rechte Kante, emblemY die Unterkante. Mit einem
+        Mittelpunkt-Anker wanderte die buendige Unterkante bei jeder
+        Groessenaenderung -- der Anschnitt wuerde dann zur Kartenkante."""
+        self.assertIn("const dx = state.emblemX - dw, dy = state.emblemY - dh;", self.html)
+        self.assertIn("const EMBLEM_DEFAULT = { size: 480, x: 1240, y: 720 };", self.html)
+
+    def test_fallback_placement_knows_the_block_rect(self) -> None:
+        """Fand die Suche keine freie Stellung, waehlte autoPlace() blind
+        'bottom' -- genau dort sitzt jetzt das Emblem. Der Rueckfall nimmt bei
+        vorhandener Sperrflaeche die Stellung mit der geringsten Ueberdeckung;
+        ohne Sperrflaeche (jedes andere Preset) bleibt es bei {bottom, 50}."""
+        self.assertIn("if (!best && block){", self.html)
+        self.assertIn("if (!best) best = {pos:'bottom', scalePct:50};", self.html)
+
+    def test_bottom_edge_crop_is_allowed_by_the_embed_script(self) -> None:
+        """CB2: Der Avatar sitzt buendig am unteren Bildrand, der Anschnitt dort
+        ist gewollt. Oben/links/rechts bleiben echte Zuschneidefehler."""
+        script = Path("scripts/embed-aiv-emblem.cjs").read_text(encoding="utf-8")
+        self.assertIn("edge !== 'unten' && share > 0.02", script)
         self.assertIn("if (state.auto && state.img) applyAuto(); else render();", self.html)
 
     def test_glow_is_drawn_behind_the_emblem_only_for_aiv(self) -> None:

@@ -113,18 +113,32 @@ weiterhin täglich für neue Videos verwendet, unabhängig von der abgeschlossen
   drei Farbwelten, drei Chartformen, dazu Episodennummer, Datum, Label und automatische
   Titelskalierung.
 - **AIV mit fester Emblem-Ebene.** Für die Reihe „Alles ist vorbestimmt" liegt ein
-  zweites Bild über dem hochgeladenen: ein roter Teufelskopf als wiederkehrendes
-  Erkennungszeichen. Es wird nicht hochgeladen, sondern steckt als `data:`-URI in der
+  zweites Bild über dem hochgeladenen: ein Avatar als wiederkehrendes
+  Erkennungszeichen. Er wird nicht hochgeladen, sondern steckt als `data:`-URI in der
   HTML — weder der Dienst noch die Render-Harness liefern statische Dateien aus.
-  Quelle bleibt `assets/branding/aiv-emblem.png`, neu eingebettet wird mit
-  `node scripts/embed-aiv-emblem.cjs`. Größe und Position sind einstellbar; ein
-  schmaler dunkler Schein dahinter hält das Emblem auf hellem wie auf dunklem
-  Material lesbar, ohne seine Farbe zu verändern.
+  Größe (längere Kante, das Seitenverhältnis bleibt erhalten) und Position sind
+  einstellbar; ein schmaler **heller** Schein dahinter hält das Emblem auf hellem wie
+  auf dunklem Material lesbar, ohne seine Farbe zu verändern — hell deshalb, weil der
+  Avatar fast schwarz ist und seine Kontur auf dunklem Grund sonst verschwindet.
+  Anker ist die **untere rechte Ecke**, Standard bündig mit dem unteren Bildrand: das
+  Motiv ist unten angeschnitten und liest sich am Bildrand, als schaue es ins Bild
+  hinein — frei schwebend würde dieselbe Kante zur Kartenkante. Der Eck-Anker sorgt
+  dafür, dass eine Größenänderung die Unterkante bündig lässt, statt das Emblem
+  wandern zu lassen.
+- **Mehrere Emblem-Varianten.** Im Compositor wählbar, gedacht für verschiedene
+  Stimmungen. Eine Variante ergänzen heißt: PNG mit Alpha in
+  `assets/branding/emblems/` ablegen und `node scripts/embed-aiv-emblem.cjs` laufen
+  lassen — kein Manifest, keine Liste im Quelltext. Der Dateiname ohne Endung ist der
+  Schlüssel und liefert die Beschriftung im Auswahlfeld. Das Skript prüft dabei Alpha,
+  Größe und ob das Motiv an einer Kante angeschnitten ist, die frei sein sollte.
 - **Grenze der Auto-Platzierung: helle Fotos.** `autoPlace()` baut eine Belegungskarte
   aus der absoluten Helligkeit (`luma > 0.15` gilt als Inhalt). Bei einem hellen,
   formatfüllenden Foto sind damit praktisch alle Zellen belegt — gemessen 96 % bei
   einem Studioporträt — und die Funktion fällt auf ihren kleinsten Wert
-  `bottom @ 50 %` zurück, statt eine freie Zone zu finden. Bei dunklen Charts, wofür
+  `bottom @ 50 %` zurück, statt eine freie Zone zu finden. Bei `aiv` berücksichtigt dieser
+  Rückfall immerhin die Emblem-Sperrfläche und wählt die Stellung mit der geringsten
+  Überdeckung — sonst liefe die Headline durch das Emblem, das genau dort unten rechts
+  sitzt. Bei dunklen Charts, wofür
   sie gebaut wurde, funktioniert sie unverändert. Ein Umbau auf lokale Kontrastvarianz
   wäre möglich, wurde aber **bewusst nicht gemacht**: er beträfe alle Presets, während
   das Problem nur bei den wenigen Foto-Formaten im Jahr auftritt — dort ist der Titel

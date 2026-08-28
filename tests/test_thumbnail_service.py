@@ -1301,6 +1301,35 @@ class EmblemLayerTest(unittest.TestCase):
             self.assertIn(token, self.html)
         self.assertIn("if (state.auto && state.img) applyAuto(); else render();", self.html)
 
+    def test_glow_is_drawn_behind_the_emblem_only_for_aiv(self) -> None:
+        """BM1: Der Schein haengt an drawEmblem() und damit am frueh
+        aussteigenden aiv-Zweig -- kein anderes Preset kann ihn erreichen."""
+        emblem = self.html[self.html.index("function drawEmblem(){"):]
+        emblem = emblem[: emblem.index("// ---------- live badge")]
+        self.assertIn("ctx.shadowColor = EMBLEM_GLOW.color;", emblem)
+        self.assertLess(
+            emblem.index("if (state.preset !== 'aiv') return;"),
+            emblem.index("EMBLEM_GLOW"),
+        )
+
+    def test_glow_offset_and_blur_are_scaled_to_device_pixels(self) -> None:
+        """shadowOffsetX/shadowBlur werden von setTransform(SCALE,...) NICHT
+        mitskaliert. Ohne * SCALE landet der Schatten ausserhalb der Leinwand
+        und der Schein ist unsichtbar -- genau das ist beim Bau passiert."""
+        self.assertIn("ctx.shadowOffsetX = off * SCALE;", self.html)
+        self.assertIn(
+            "ctx.shadowBlur = state.emblemSize * EMBLEM_GLOW.blurRatio * SCALE;", self.html
+        )
+
+    def test_emblem_itself_is_drawn_exactly_once(self) -> None:
+        """Der Schein darf die Farbe des Emblems nicht antasten: das Bild wird
+        fuer den Schatten ausserhalb der Leinwand gezeichnet und danach genau
+        einmal an seiner echten Stelle."""
+        emblem = self.html[self.html.index("function drawEmblem(){"):]
+        emblem = emblem[: emblem.index("// ---------- live badge")]
+        self.assertEqual(1, emblem.count("ctx.drawImage(img, dx, dy, dw, dh);"))
+        self.assertIn("ctx.drawImage(img, dx - off, dy, dw, dh)", emblem)
+
     def test_image_cover_is_untouched_by_the_emblem(self) -> None:
         """Die zweite Bildebene darf nicht in drawImageCover() eingreifen."""
         cover = self.html[self.html.index("function drawImageCover(){"):]

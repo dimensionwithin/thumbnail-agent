@@ -697,6 +697,13 @@ const AIV_EMBLEM_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAA
 // <<< AIV-EMBLEM-DATA-URI
 
 const EMBLEM_DEFAULT = { size: 360, x: 1000, y: 300 };
+// BM1: Der Schein skaliert mit der Emblem-Groesse (blurRatio), damit er bei jeder
+// Einstellung gleich schmal wirkt. Werte an einer Reihe abgestufter Renders
+// abgelesen, hell wie dunkel: ab etwa blurRatio 0.04 kippt der Eindruck auf hellem
+// Grund in Richtung Schlagschatten, und auf dunklem Grund beginnt ein sichtbarer
+// Hof um die Hoerner. Ein einzelner Durchgang genuegt -- zwei uebereinander legten
+// den Hof so weit auf, dass er die Kerzen dahinter verschluckte.
+const EMBLEM_GLOW = { color: 'rgba(15,14,13,0.40)', blurRatio: 0.035, passes: 1 };
 let emblemLoad = null;
 // Idempotent: laedt genau einmal. Fehlt die Data-URI (Emblem noch nicht
 // eingebettet), bleibt state.emblemImg null und drawEmblem() zeichnet nichts --
@@ -727,7 +734,32 @@ function drawEmblem(){
   // begrenzt die laengere Kante, damit die Groesse verlaesslich bleibt.
   const s = state.emblemSize / Math.max(iw, ih);
   const dw = iw*s, dh = ih*s;
-  ctx.drawImage(img, state.emblemX - dw/2, state.emblemY - dh/2, dw, dh);
+  const dx = state.emblemX - dw/2, dy = state.emblemY - dh/2;
+
+  // BM1: schmaler dunkler Schein HINTER dem Emblem, damit es auf hellem wie auf
+  // dunklem Material gleich sicher steht -- ohne die Farbe des Emblems anzutasten.
+  //
+  // Der Schein folgt der Alphaform, ist also kein Rechteck. Erzeugt wird er ueber
+  // den bekannten "nur der Schatten"-Kniff: das Bild wird um eine ganze Leinwand-
+  // breite nach links AUSSERHALB gezeichnet und sein Schatten um denselben Betrag
+  // zurueckversetzt. So landet nur der Schatten im Bild -- das Emblem selbst wird
+  // danach genau EINMAL gezeichnet und bleibt unveraendert. Zeichnete man es
+  // stattdessen mehrfach mit Schatten, wuerden die halbtransparenten Kanten der
+  // Schraffur aufaddieren und das Emblem dunkler und dichter wirken.
+  //
+  // ACHTUNG: shadowOffsetX/shadowBlur liegen in GERAETE-Pixeln und werden von der
+  // Transformation (setTransform(SCALE,...)) NICHT mitskaliert. Die Verschiebung
+  // muss deshalb mit SCALE multipliziert werden -- sonst landet der Schatten
+  // ausserhalb der Leinwand und man sieht schlicht nichts.
+  const off = W * 2;
+  ctx.save();
+  ctx.shadowColor = EMBLEM_GLOW.color;
+  ctx.shadowBlur = state.emblemSize * EMBLEM_GLOW.blurRatio * SCALE;
+  ctx.shadowOffsetX = off * SCALE;
+  for (let i = 0; i < EMBLEM_GLOW.passes; i++) ctx.drawImage(img, dx - off, dy, dw, dh);
+  ctx.restore();
+
+  ctx.drawImage(img, dx, dy, dw, dh);
 }
 
 // ---------- live badge (bottom-right, live formats only) ----------

@@ -14,6 +14,9 @@
 # haengt den vollstaendigen stdout der Laeufe an). Darin stehen videoIds --
 # dieses Repo ist OEFFENTLICH, siehe docs/warum-keine-video-ids-im-repo.md.
 /logs/
+# Ad-hoc-Testordner. Enthielt zuletzt Ausgangsmaterial einer Folge -- dieses
+# Repo ist oeffentlich, siehe docs/warum-keine-video-ids-im-repo.md.
+/.tmp-test/
 
 # Kuratierte Ausschluss-/Ground-Truth-Listen. Enthalten videoIds von
 # ungelisteten Mitglieder-Videos und Premieren -- dieses Repo ist OEFFENTLICH,

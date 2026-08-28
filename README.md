@@ -109,8 +109,26 @@ weiterhin täglich für neue Videos verwendet, unabhängig von der abgeschlossen
   Data-URL zurück. Deshalb ist dieselbe Datei sowohl manuelles Werkzeug im Browser als
   auch Renderer im Automatisierungslauf — es gibt keine zweite Implementierung, die
   auseinanderlaufen könnte.
-- **Vier Presets** (Standard, Inner Circle, Livestream, ohne Chart), drei Farbwelten,
-  drei Chartformen, dazu Episodennummer, Datum, Label und automatische Titelskalierung.
+- **Sechs Presets** (Standard, Inner Circle, Livestream, ohne Chart, AIV, Member Live),
+  drei Farbwelten, drei Chartformen, dazu Episodennummer, Datum, Label und automatische
+  Titelskalierung.
+- **AIV mit fester Emblem-Ebene.** Für die Reihe „Alles ist vorbestimmt" liegt ein
+  zweites Bild über dem hochgeladenen: ein roter Teufelskopf als wiederkehrendes
+  Erkennungszeichen. Es wird nicht hochgeladen, sondern steckt als `data:`-URI in der
+  HTML — weder der Dienst noch die Render-Harness liefern statische Dateien aus.
+  Quelle bleibt `assets/branding/aiv-emblem.png`, neu eingebettet wird mit
+  `node scripts/embed-aiv-emblem.cjs`. Größe und Position sind einstellbar; ein
+  schmaler dunkler Schein dahinter hält das Emblem auf hellem wie auf dunklem
+  Material lesbar, ohne seine Farbe zu verändern.
+- **Grenze der Auto-Platzierung: helle Fotos.** `autoPlace()` baut eine Belegungskarte
+  aus der absoluten Helligkeit (`luma > 0.15` gilt als Inhalt). Bei einem hellen,
+  formatfüllenden Foto sind damit praktisch alle Zellen belegt — gemessen 96 % bei
+  einem Studioporträt — und die Funktion fällt auf ihren kleinsten Wert
+  `bottom @ 50 %` zurück, statt eine freie Zone zu finden. Bei dunklen Charts, wofür
+  sie gebaut wurde, funktioniert sie unverändert. Ein Umbau auf lokale Kontrastvarianz
+  wäre möglich, wurde aber **bewusst nicht gemacht**: er beträfe alle Presets, während
+  das Problem nur bei den wenigen Foto-Formaten im Jahr auftritt — dort ist der Titel
+  von Hand schneller gesetzt als das Risiko wert ist.
 - `src/config-schema.js` hält den Vertrag zwischen Automatisierung und Renderer:
   validiert, setzt unbekannte Werte auf Defaults zurück und meldet das als Warnung,
   statt still etwas anderes zu zeichnen.

@@ -10,6 +10,13 @@
 /data/
 /backups/
 /out/
+
+# Kuratierte Ausschluss-/Ground-Truth-Listen. Enthalten videoIds von
+# ungelisteten Mitglieder-Videos und Premieren -- dieses Repo ist OEFFENTLICH,
+# eine ungelistete videoId ist ein Zugriffsschluessel. Gesichert wird stattdessen
+# im privaten State-Repo (siehe README). Die *.sample.json in fixtures/ bleiben
+# bewusst versioniert, die sind anonymisiert.
+/fixtures/*.txt
 review.html
 review.comments.html
 review.*.html

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import datetime
 import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import shutil
+import socket
 import stat
 import subprocess
 import tempfile
@@ -23,14 +26,35 @@ from thumbnail_service import (
     HOST,
     FileSnapshot,
     PNG_SIGNATURE,
+    PortOccupant,
+    QuitChannel,
     REPARSE_ATTRIBUTE,
+    SERVICE_FILE,
     SERVICE_ID,
     SERVICE_PROTOCOL_VERSION,
     SingleInstanceGuard,
     SourceSelectionError,
     _console_print,
     _health_is_expected,
+    _network_port_value,
+    command_line_names_this_service,
     create_server,
+    describe_port_occupant,
+    inspect_port_occupant,
+    resolve_port_conflict,
+    stop_running_instance,
+    instance_marker_path,
+    marker_matches_process,
+    read_instance_marker,
+    remove_instance_marker,
+    write_instance_marker,
+    foreign_owner_hint,
+    unknown_owner_hint,
+    EXIT_WHEN_IDLE_ENV,
+    IDLE_TIMEOUT_SECONDS,
+    IdleShutdownGuard,
+    MAX_TRACKED_SESSIONS,
+    exit_when_idle_default,
     describe_directory,
     normalized_last_assigned,
     read_env_file,
@@ -696,7 +720,14 @@ class EmblemFallbackTests(unittest.TestCase):
         self.assertIn("const REQUIRED_PROTOCOL_VERSION = 2;", self.html)
         self.assertIn("if (version !== null && version < REQUIRED_PROTOCOL_VERSION){", self.html)
         self.assertIn("bitte den Dienst neu starten", self.html)
-        self.assertEqual(2, SERVICE_PROTOCOL_VERSION)
+        # Die beiden Zahlen duerfen auseinanderlaufen: die Dienstversion steigt
+        # mit JEDER Aenderung am Routenangebot (mit /api/session/ping auf 3),
+        # die Anforderung der Seite nur, wenn sie auf eine neue Route
+        # ANGEWIESEN ist. Das Lebenszeichen ist sie nicht -- gegen einen
+        # aelteren Dienst laeuft der Compositor vollstaendig weiter, nur ohne
+        # Selbstbeendigung. Fordern darf die Seite aber nie mehr, als der
+        # Dienst anbietet.
+        self.assertLessEqual(2, SERVICE_PROTOCOL_VERSION)
 
     def test_load_failures_reach_the_user_interface(self) -> None:
         self.assertIn("emblemWarnungEl.textContent = emblemLoadWarnung;", self.html)
@@ -753,7 +784,14 @@ class ClientContractTests(unittest.TestCase):
         self.assertIn(
             "sourceRefreshBtn.addEventListener('click'", self.html
         )
-        self.assertNotIn("setInterval(", self.html)
+        # Der Quellimport pollt weiterhin nicht. Seit CQ1 gibt es genau EINEN
+        # Intervall im Dokument -- das Lebenszeichen an den Dienst. Es fragt
+        # nichts ab, sondern meldet nur, dass diese Seite noch offen ist.
+        self.assertEqual(1, self.html.count("setInterval("))
+        self.assertIn(
+            "heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);",
+            self.html,
+        )
 
     def test_source_file_is_always_created_as_png(self) -> None:
         self.assertIn(
@@ -1825,6 +1863,937 @@ class EmblemLayerTest(unittest.TestCase):
         cover = self.html[self.html.index("function drawImageCover(){"):]
         cover = cover[: cover.index("// ---------- scrim")]
         self.assertNotIn("emblem", cover.lower())
+
+
+class PortOccupantIdentityTests(unittest.TestCase):
+    """CQ4/CR1: Angeboten wird nur, was belegbar unsere eigene Instanz ist."""
+
+    def occupant(self, **overrides) -> PortOccupant:
+        base = dict(port=8765, pid=4242, image_path=r"C:\Windows\explorer.exe")
+        base.update(overrides)
+        base.setdefault("image_name", Path(base["image_path"]).name if base["image_path"] else None)
+        return PortOccupant(**base)
+
+    def inspect(self, *, health=None, pid=4242, command_line=None, port=8765):
+        return inspect_port_occupant(
+            port,
+            health_payload=lambda _port, _timeout: health,
+            pid_lookup=lambda _port: pid,
+            command_line_lookup=lambda _pid: command_line,
+        )
+
+    def test_foreign_process_is_never_offered(self) -> None:
+        occupant = self.occupant(health_service="etwas-anderes")
+        self.assertFalse(occupant.may_be_stopped)
+
+    def test_unknown_owner_is_never_offered(self) -> None:
+        """Ohne PID gibt es nichts, das man gezielt beenden koennte."""
+        occupant = self.occupant(pid=None, image_path=None, identified_by_health=True)
+        self.assertFalse(occupant.may_be_stopped)
+
+    def test_health_identity_is_enough(self) -> None:
+        occupant = self.occupant(identified_by_health=True)
+        self.assertTrue(occupant.may_be_stopped)
+
+    def test_command_line_identity_is_enough(self) -> None:
+        occupant = self.occupant(identified_by_command_line=True)
+        self.assertTrue(occupant.may_be_stopped)
+
+    def test_old_protocol_version_still_counts_as_our_service(self) -> None:
+        """Genau der Fall aus Commit 272eaad: laufende ALTE Fassung. Sie ist
+        unsere Instanz und muss angeboten werden, obwohl die Protokollversion
+        nicht zur Oberflaeche passt."""
+        occupant = self.inspect(
+            health={
+                "service": SERVICE_ID,
+                "protocol_version": SERVICE_PROTOCOL_VERSION - 1,
+                "ready": True,
+            }
+        )
+        self.assertTrue(occupant.identified_by_health)
+        self.assertTrue(occupant.may_be_stopped)
+
+    def test_foreign_service_id_on_the_port_is_refused(self) -> None:
+        occupant = self.inspect(health={"service": "fremder-dienst", "ready": True})
+        self.assertFalse(occupant.identified_by_health)
+        self.assertFalse(occupant.may_be_stopped)
+
+    def test_command_line_must_name_this_very_script(self) -> None:
+        own = str(SERVICE_FILE)
+        self.assertTrue(command_line_names_this_service(f'pythonw.exe "{own}"'))
+        # Aufruf ohne Pfad: so startet der CMD-Launcher, mit gesetztem
+        # Arbeitsverzeichnis.
+        self.assertTrue(
+            command_line_names_this_service("py -3 thumbnail_service.py --port 8765")
+        )
+
+    def test_same_named_script_elsewhere_is_refused(self) -> None:
+        """Im Zweifel verweigern (CR1): gleicher Dateiname, fremder Pfad."""
+        self.assertFalse(
+            command_line_names_this_service(
+                r'pythonw.exe "C:\Anderswo\thumbnail_service.py"'
+            )
+        )
+
+    def test_unrelated_command_line_is_refused(self) -> None:
+        self.assertFalse(command_line_names_this_service("pythonw.exe irgendwas.py"))
+        self.assertFalse(command_line_names_this_service(None))
+        self.assertFalse(command_line_names_this_service(""))
+
+    def test_command_line_is_not_queried_for_non_python_processes(self) -> None:
+        """Die CIM-Abfrage ist teuer und kann bei einem fremden Prozess ohnehin
+        nichts entscheiden."""
+        calls = []
+
+        def lookup(pid):
+            calls.append(pid)
+            return None
+
+        with patch(
+            "thumbnail_service._open_process", return_value=None
+        ):  # ohne Handle bleibt image_name None
+            inspect_port_occupant(
+                8765,
+                health_payload=lambda _port, _timeout: None,
+                pid_lookup=lambda _port: 4242,
+                command_line_lookup=lookup,
+            )
+        self.assertEqual([], calls)
+
+
+class PortOccupantDescriptionTests(unittest.TestCase):
+    """CR1: Die Meldung sagt IMMER, was den Port haelt."""
+
+    def test_description_names_process_path_and_start_time(self) -> None:
+        occupant = PortOccupant(
+            port=8765,
+            pid=4242,
+            image_path=r"C:\Windows\explorer.exe",
+            image_name="explorer.exe",
+            started_at=datetime.datetime(2026, 8, 29, 14, 2, 3),
+        )
+        text = describe_port_occupant(occupant)
+        self.assertIn("Port 8765", text)
+        self.assertIn("explorer.exe", text)
+        self.assertIn("4242", text)
+        self.assertIn(r"C:\Windows\explorer.exe", text)
+        self.assertIn("29.08.2026 14:02:03", text)
+
+    def test_description_says_so_when_the_owner_is_unknown(self) -> None:
+        text = describe_port_occupant(PortOccupant(port=8765))
+        self.assertIn("nicht ermitteln", text)
+
+    def test_description_reports_a_foreign_service_identity(self) -> None:
+        text = describe_port_occupant(
+            PortOccupant(port=8765, pid=7, health_service="fremder-dienst")
+        )
+        self.assertIn("fremden Dienstkennung", text)
+        self.assertIn("fremder-dienst", text)
+
+    def test_description_reports_our_own_protocol_version(self) -> None:
+        text = describe_port_occupant(
+            PortOccupant(
+                port=8765,
+                pid=7,
+                health_service=SERVICE_ID,
+                health_protocol=1,
+                identified_by_health=True,
+            )
+        )
+        self.assertIn("Protokoll 1", text)
+
+
+class PortConflictResolutionTests(unittest.TestCase):
+    """CQ4: Diagnose, Angebot, Ausfuehrung -- und was verweigert wird."""
+
+    def setUp(self) -> None:
+        self.asked: list[str] = []
+        self.stopped: list[PortOccupant] = []
+        self.messages: list[str] = []
+        patcher = patch("thumbnail_service._startup_error", self.messages.append)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        console = patch("thumbnail_service._console_print", self.messages.append)
+        console.start()
+        self.addCleanup(console.stop)
+
+    def stop(self, occupant, _is_free, **_kwargs):
+        self.stopped.append(occupant)
+        return True, "beendet"
+
+    def resolve(self, occupant, *, answer=True, may_prompt=True, force=False):
+        def ask(description):
+            self.asked.append(description)
+            return answer
+
+        return resolve_port_conflict(
+            8765,
+            lambda: True,
+            may_prompt=may_prompt,
+            force=force,
+            inspect=lambda _port: occupant,
+            ask=ask,
+            stop=self.stop,
+        )
+
+    def foreign(self) -> PortOccupant:
+        return PortOccupant(
+            port=8765,
+            pid=4242,
+            image_path=r"C:\Windows\explorer.exe",
+            image_name="explorer.exe",
+        )
+
+    def ours(self) -> PortOccupant:
+        return PortOccupant(
+            port=8765,
+            pid=4242,
+            image_path=r"C:\Python\pythonw.exe",
+            image_name="pythonw.exe",
+            health_service=SERVICE_ID,
+            health_protocol=1,
+            identified_by_health=True,
+        )
+
+    def test_foreign_process_is_neither_asked_about_nor_stopped(self) -> None:
+        self.assertFalse(self.resolve(self.foreign()))
+        self.assertEqual([], self.asked)
+        self.assertEqual([], self.stopped)
+
+    def test_foreign_process_message_still_says_what_holds_the_port(self) -> None:
+        self.resolve(self.foreign())
+        text = "\n".join(self.messages)
+        self.assertIn("explorer.exe", text)
+        self.assertIn("4242", text)
+        self.assertIn("--port 8766", text)
+
+    def test_unknown_owner_message_offers_a_way_out(self) -> None:
+        self.resolve(PortOccupant(port=8765))
+        text = "\n".join(self.messages)
+        self.assertIn("nicht ermitteln", text)
+        self.assertIn("--port 8766", text)
+        self.assertEqual([], self.stopped)
+
+    def test_our_instance_is_offered_and_stopped_on_yes(self) -> None:
+        self.assertTrue(self.resolve(self.ours()))
+        self.assertEqual(1, len(self.asked))
+        self.assertEqual(1, len(self.stopped))
+
+    def test_declined_offer_stops_nothing(self) -> None:
+        self.assertFalse(self.resolve(self.ours(), answer=False))
+        self.assertEqual([], self.stopped)
+        self.assertIn("Task-Manager", "\n".join(self.messages))
+
+    def test_no_prompt_reports_without_asking(self) -> None:
+        self.assertFalse(self.resolve(self.ours(), may_prompt=False))
+        self.assertEqual([], self.asked)
+        self.assertEqual([], self.stopped)
+        self.assertIn("pythonw.exe", "\n".join(self.messages))
+
+    def test_force_stops_without_asking(self) -> None:
+        self.assertTrue(self.resolve(self.ours(), may_prompt=False, force=True))
+        self.assertEqual([], self.asked)
+        self.assertEqual(1, len(self.stopped))
+
+
+class GracefulBeforeHardTests(unittest.TestCase):
+    """CR2: erst das Quit-Signal, TerminateProcess nur als Rueckfall."""
+
+    def occupant(self) -> PortOccupant:
+        return PortOccupant(port=8765, pid=4242, identified_by_health=True)
+
+    def test_a_reacting_instance_is_never_terminated(self) -> None:
+        signalled: list[int] = []
+        terminated: list[int] = []
+        freed = iter([False, True, True, True])
+
+        ok, detail = stop_running_instance(
+            self.occupant(),
+            lambda: next(freed, True),
+            sleep_func=lambda _seconds: None,
+            terminate=lambda pid: terminated.append(pid) or True,
+            signal_quit=lambda port: signalled.append(port) or True,
+        )
+        self.assertTrue(ok)
+        self.assertEqual([8765], signalled)
+        self.assertEqual([], terminated)
+        self.assertIn("geordnet", detail)
+
+    def test_a_hanging_instance_is_terminated_after_the_grace(self) -> None:
+        terminated: list[int] = []
+
+        def terminate(pid):
+            terminated.append(pid)
+            return True
+
+        state = {"killed": False}
+
+        def is_free():
+            return state["killed"]
+
+        def terminate_and_free(pid):
+            terminate(pid)
+            state["killed"] = True
+            return True
+
+        ok, detail = stop_running_instance(
+            self.occupant(),
+            is_free,
+            graceful_timeout=0.0,
+            hard_timeout=1.0,
+            sleep_func=lambda _seconds: None,
+            terminate=terminate_and_free,
+            signal_quit=lambda _port: False,
+        )
+        self.assertTrue(ok)
+        self.assertEqual([4242], terminated)
+        # Der Hinweis auf die moegliche Platzhalterdatei ist der Grund, warum
+        # dieser Weg der zweite ist (CR2).
+        self.assertIn("Platzhalterdatei", detail)
+
+    def test_an_unkillable_instance_reports_failure(self) -> None:
+        ok, detail = stop_running_instance(
+            self.occupant(),
+            lambda: False,
+            graceful_timeout=0.0,
+            hard_timeout=0.0,
+            sleep_func=lambda _seconds: None,
+            terminate=lambda _pid: False,
+            signal_quit=lambda _port: False,
+        )
+        self.assertFalse(ok)
+        self.assertIn("4242", detail)
+
+
+class QuitChannelTests(unittest.TestCase):
+    def test_quit_channel_has_its_own_name(self) -> None:
+        """Der Quit-Kanal darf den Browser-Kanal nicht ueberlagern."""
+        self.assertNotEqual(QuitChannel(8765).name, BrowserOpenChannel(8765).name)
+        self.assertIn("Quit", QuitChannel(8765).name)
+
+    def test_quit_channel_is_per_port(self) -> None:
+        self.assertNotEqual(QuitChannel(8765).name, QuitChannel(8766).name)
+
+    @unittest.skipUnless(os.name == "nt", "benannte Kernel-Objekte gibt es nur unter Windows")
+    def test_signal_reaches_a_listening_channel(self) -> None:
+        channel = QuitChannel(8891)
+        channel.create()
+        self.addCleanup(channel.close)
+        self.assertFalse(channel.wait(0))
+        self.assertTrue(QuitChannel.signal(8891))
+        self.assertTrue(channel.wait(500))
+
+    @unittest.skipUnless(os.name == "nt", "benannte Kernel-Objekte gibt es nur unter Windows")
+    def test_signal_without_listener_is_reported_as_unreachable(self) -> None:
+        """Eine alte Fassung ohne Quit-Kanal: signal() meldet False, der
+        Aufrufer faellt auf den harten Weg zurueck."""
+        self.assertFalse(QuitChannel.signal(8892))
+
+
+class HealthPayloadTests(unittest.TestCase):
+    def test_payload_and_verdict_agree_on_the_expected_service(self) -> None:
+        with patch(
+            "thumbnail_service._health_payload",
+            return_value={
+                "service": SERVICE_ID,
+                "protocol_version": SERVICE_PROTOCOL_VERSION,
+                "ready": True,
+            },
+        ):
+            self.assertTrue(_health_is_expected(8765))
+
+    def test_an_old_protocol_is_not_the_expected_service(self) -> None:
+        with patch(
+            "thumbnail_service._health_payload",
+            return_value={
+                "service": SERVICE_ID,
+                "protocol_version": SERVICE_PROTOCOL_VERSION - 1,
+                "ready": True,
+            },
+        ):
+            self.assertFalse(_health_is_expected(8765))
+
+
+class NetworkByteOrderTests(unittest.TestCase):
+    def test_local_port_is_read_in_network_byte_order(self) -> None:
+        # 8765 == 0x223D; im Tabelleneintrag stehen die Bytes vertauscht.
+        self.assertEqual(8765, _network_port_value(0x3D22))
+        self.assertEqual(80, _network_port_value(0x5000))
+
+
+
+class InstanceMarkerTests(unittest.TestCase):
+    """CQ4: Der Beleg, der ohne WMI auskommt.
+
+    Auf diesem Rechner fehlt die WMI-Klasse Win32_Process -- die Kommandozeile
+    eines fremden Prozesses ist dort nicht zu bekommen. Ohne den Marker bliebe
+    bei einer haengenden Instanz (die nicht mehr auf /api/health antwortet)
+    kein einziger Beleg uebrig, und der Launcher muesste verweigern.
+    """
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        patcher = patch("thumbnail_service.MARKER_DIRECTORY", self.directory)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_marker_round_trip(self) -> None:
+        write_instance_marker(8765)
+        marker = read_instance_marker(8765)
+        self.assertIsNotNone(marker)
+        self.assertEqual(SERVICE_ID, marker["service"])
+        self.assertEqual(os.getpid(), marker["pid"])
+
+    def test_marker_is_removed_again(self) -> None:
+        write_instance_marker(8765)
+        remove_instance_marker(8765)
+        self.assertIsNone(read_instance_marker(8765))
+
+    def test_removing_a_missing_marker_is_not_an_error(self) -> None:
+        remove_instance_marker(8765)
+
+    def test_marker_is_per_port(self) -> None:
+        write_instance_marker(8765)
+        self.assertIsNone(read_instance_marker(8766))
+
+    def test_marker_identifies_the_own_process(self) -> None:
+        write_instance_marker(8765)
+        ticks = read_instance_marker(8765)["creation_ticks"]
+        self.assertTrue(marker_matches_process(8765, os.getpid(), ticks))
+
+    def test_a_reused_pid_is_not_accepted(self) -> None:
+        """Der eigentliche Zweck der Erzeugungszeit: eine liegengebliebene
+        Markerdatei darf nicht auf einen fremden Prozess zeigen, der die PID
+        inzwischen wiederverwendet hat."""
+        write_instance_marker(8765)
+        ticks = read_instance_marker(8765)["creation_ticks"]
+        self.assertFalse(marker_matches_process(8765, os.getpid(), ticks + 1))
+
+    def test_a_foreign_pid_is_not_accepted(self) -> None:
+        write_instance_marker(8765)
+        ticks = read_instance_marker(8765)["creation_ticks"]
+        self.assertFalse(marker_matches_process(8765, os.getpid() + 1, ticks))
+
+    def test_missing_marker_is_no_evidence(self) -> None:
+        self.assertFalse(marker_matches_process(8765, os.getpid(), 1))
+
+    def test_unknown_pid_is_no_evidence(self) -> None:
+        write_instance_marker(8765)
+        self.assertFalse(marker_matches_process(8765, None, 1))
+
+    def test_foreign_marker_content_is_rejected(self) -> None:
+        instance_marker_path(8765).write_text(
+            json.dumps({"service": "etwas-anderes", "pid": os.getpid()}),
+            encoding="utf-8",
+        )
+        self.assertIsNone(read_instance_marker(8765))
+
+    def test_damaged_marker_is_rejected(self) -> None:
+        instance_marker_path(8765).write_text("kein json", encoding="utf-8")
+        self.assertIsNone(read_instance_marker(8765))
+
+    def test_marker_alone_is_enough_to_be_offered(self) -> None:
+        """Die haengende Instanz: keine Health-Antwort, keine Kommandozeile."""
+        occupant = inspect_port_occupant(
+            8765,
+            health_payload=lambda _port, _timeout: None,
+            pid_lookup=lambda _port: 4242,
+            command_line_lookup=lambda _pid: None,
+            marker_check=lambda _port, _pid, _ticks: True,
+        )
+        self.assertTrue(occupant.identified_by_marker)
+        self.assertTrue(occupant.may_be_stopped)
+        self.assertIn("eingetragen", describe_port_occupant(occupant))
+
+    def test_without_any_evidence_nothing_is_offered(self) -> None:
+        occupant = inspect_port_occupant(
+            8765,
+            health_payload=lambda _port, _timeout: None,
+            pid_lookup=lambda _port: 4242,
+            command_line_lookup=lambda _pid: None,
+            marker_check=lambda _port, _pid, _ticks: False,
+        )
+        self.assertFalse(occupant.may_be_stopped)
+
+
+
+class MarkerSurvivesFailedStartTests(unittest.TestCase):
+    """Regression aus dem Abnahmelauf: Ein gescheiterter Start loeschte die
+    Markerdatei der noch LAUFENDEN anderen Instanz -- und nahm dem naechsten
+    Start damit genau den Beleg, an dem er sie als eigene erkannt haette.
+    Weggeraeumt wird nur der selbst geschriebene Marker."""
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        patcher = patch("thumbnail_service.MARKER_DIRECTORY", self.directory)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.blocker = socket.socket()
+        self.addCleanup(self.blocker.close)
+        self.blocker.bind((HOST, 0))
+        self.blocker.listen(1)
+        self.port = self.blocker.getsockname()[1]
+
+    def test_failed_start_keeps_a_foreign_marker(self) -> None:
+        write_instance_marker(self.port)
+        before = instance_marker_path(self.port).read_text(encoding="utf-8")
+        with patch("thumbnail_service._startup_error"), patch(
+            "thumbnail_service._console_print"
+        ):
+            result = run_server(
+                self.port,
+                open_browser=False,
+                restart_prompt=False,
+            )
+        self.assertEqual(4, result)
+        self.assertTrue(instance_marker_path(self.port).is_file())
+        self.assertEqual(before, instance_marker_path(self.port).read_text(encoding="utf-8"))
+
+
+class HintPortTests(unittest.TestCase):
+    def test_the_suggested_port_follows_the_blocked_one(self) -> None:
+        """Der Ausweichvorschlag muss zum Konflikt passen und darf nicht
+        wieder auf den belegten Port zeigen."""
+        self.assertIn("--port 8766", foreign_owner_hint(8765))
+        self.assertIn("--port 8800", unknown_owner_hint(8799))
+        self.assertNotIn("--port 8799", unknown_owner_hint(8799))
+
+
+
+class FakeClock:
+    """Steuerbare Uhr. monotonic() zaehlt unter Windows Schlafzeit MIT --
+    ein Standby sieht fuer den Dienst genauso aus wie ein Sprung hier."""
+
+    def __init__(self, start: float = 1000.0):
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> float:
+        self.now += seconds
+        return self.now
+
+
+class IdleGuardArmingTests(unittest.TestCase):
+    """CS2: Der Waechter entsteht ausschliesslich aus einem Lebenszeichen."""
+
+    def setUp(self) -> None:
+        self.clock = FakeClock()
+        self.shutdowns: list[int] = []
+        self.guard = IdleShutdownGuard(
+            lambda: self.shutdowns.append(1),
+            timeout=120.0,
+            poll_interval=5.0,
+            clock=self.clock,
+            announce=lambda _message: None,
+        )
+        self.addCleanup(self.guard.close)
+
+    def test_a_fresh_guard_is_not_armed(self) -> None:
+        self.assertFalse(self.guard.armed)
+
+    def test_exports_alone_never_arm_the_guard(self) -> None:
+        """Ein Skript, das nur exportiert, darf die Selbstbeendigung nicht
+        ungewollt einschalten."""
+        for _ in range(50):
+            self.guard.note_activity()
+            self.clock.advance(60)
+        self.assertFalse(self.guard.armed)
+        self.assertEqual([], self.shutdowns)
+
+    def test_a_heartbeat_arms_the_guard(self) -> None:
+        self.guard.note_heartbeat("sitzung-eins")
+        self.assertTrue(self.guard.armed)
+
+    def test_arming_is_not_reachable_without_a_heartbeat(self) -> None:
+        """Strukturell statt als Abfrage (CS2): Es gibt keine oeffentliche
+        Methode, die den Waechter startet. Wer die Schalterlogik umbaut, kann
+        daran nichts aendern, ohne note_heartbeat() selbst anzufassen."""
+        starters = [
+            name
+            for name in dir(self.guard)
+            if not name.startswith("_") and callable(getattr(self.guard, name))
+        ]
+        self.assertEqual(
+            {"close", "drop_session", "expired", "forgive", "note_activity",
+             "note_heartbeat", "tick"},
+            set(starters),
+        )
+        thread_names = {thread.name for thread in threading.enumerate()}
+        self.assertNotIn("thumbnail-idle-watchdog", thread_names)
+
+    def test_a_disabled_guard_never_arms_even_with_heartbeats(self) -> None:
+        guard = IdleShutdownGuard(
+            lambda: self.shutdowns.append(1),
+            enabled=False,
+            clock=self.clock,
+            announce=lambda _message: None,
+        )
+        self.addCleanup(guard.close)
+        for _ in range(10):
+            guard.note_heartbeat("sitzung-eins")
+        self.assertFalse(guard.armed)
+        self.assertEqual(0, guard.session_count)
+
+
+class IdleGuardExpiryTests(unittest.TestCase):
+    """CS1: wann der Waechter WIRKT und wann er es nicht darf."""
+
+    def setUp(self) -> None:
+        self.clock = FakeClock()
+        self.guard = IdleShutdownGuard(
+            lambda: None,
+            timeout=120.0,
+            poll_interval=5.0,
+            jump_tolerance=10.0,
+            clock=self.clock,
+            announce=lambda _message: None,
+        )
+        self.addCleanup(self.guard.close)
+
+    def test_tab_closed_expires_after_the_grace(self) -> None:
+        """Fall 1: Tab zu -- nach 120 s ohne Lebenszeichen ist Schluss."""
+        self.guard.note_heartbeat("tab-eins")
+        self.clock.advance(119)
+        self.assertFalse(self.guard.expired(self.clock.now))
+        self.clock.advance(2)
+        self.assertTrue(self.guard.expired(self.clock.now))
+
+    def test_a_reload_keeps_the_service_alive(self) -> None:
+        """Fall 2: Neuladen. Die neue Seite meldet sich mit einer NEUEN
+        Kennung; die alte laeuft still aus. Zwischen beiden liegen ein bis
+        zwei Sekunden -- weit unter der Karenzzeit."""
+        self.guard.note_heartbeat("tab-vor-dem-neuladen")
+        self.clock.advance(2)
+        self.guard.note_heartbeat("tab-nach-dem-neuladen")
+        for _ in range(20):
+            self.clock.advance(15)
+            self.guard.note_heartbeat("tab-nach-dem-neuladen")
+            self.assertFalse(self.guard.expired(self.clock.now))
+        # Insgesamt weit ueber der Karenzzeit vergangen, nie abgelaufen.
+        self.assertGreater(self.clock.now - 1000.0, 2 * 120.0)
+
+    def test_closing_one_of_two_tabs_keeps_the_service_alive(self) -> None:
+        """Fall 3: Zwei Tabs, einer geht zu. Der andere haelt den Dienst."""
+        self.guard.note_heartbeat("tab-eins")
+        self.guard.note_heartbeat("tab-zwei")
+        self.assertEqual(2, self.guard.session_count)
+        for _ in range(20):
+            self.clock.advance(15)
+            self.guard.note_heartbeat("tab-zwei")  # nur noch einer meldet sich
+            self.assertFalse(self.guard.expired(self.clock.now))
+        self.assertGreater(self.clock.now - 1000.0, 2 * 120.0)
+
+    def test_a_background_tab_at_one_beat_per_minute_survives(self) -> None:
+        """Chrome drosselt Timer im Hintergrund auf einen Durchlauf pro
+        Minute. Genau dafuer sind die 120 s gewaehlt."""
+        self.guard.note_heartbeat("tab-im-hintergrund")
+        for _ in range(10):
+            self.clock.advance(60)
+            self.assertFalse(self.guard.expired(self.clock.now))
+            self.guard.note_heartbeat("tab-im-hintergrund")
+
+    def test_an_export_refreshes_the_deadline(self) -> None:
+        """Wer exportiert, schaut zu -- auch wenn der Timer gerade gedrosselt
+        ist."""
+        self.guard.note_heartbeat("tab-eins")
+        self.clock.advance(100)
+        self.guard.note_activity()
+        self.clock.advance(100)
+        self.assertFalse(self.guard.expired(self.clock.now))
+
+    def test_never_expires_without_any_sign_of_life(self) -> None:
+        """Fall 4: Nie ein Lebenszeichen -- es gibt gar keine Frist."""
+        self.clock.advance(10_000)
+        self.assertFalse(self.guard.expired(self.clock.now))
+
+
+class IdleGuardSleepTests(unittest.TestCase):
+    """CS1, Fall 5: der Zeitsprung.
+
+    Nur simulierbar -- ein echtes Standby laesst sich im Test nicht ausloesen.
+    Die Simulation ist aber genau richtig: time.monotonic() laeuft unter
+    Windows ueber GetTickCount64 und ZAEHLT SCHLAFZEIT MIT. Fuer den Waechter
+    ist ein Standby daher nichts anderes als eine Uhr, die zwischen zwei Runden
+    weit springt -- und genau das stellt FakeClock her. Was der Test prueft,
+    ist die einzige Stelle, an der der Dienst diesen Unterschied sehen kann:
+    die Luecke zwischen zwei Runden von tick().
+    """
+
+    def setUp(self) -> None:
+        self.clock = FakeClock()
+        self.shutdowns: list[int] = []
+        self.guard = IdleShutdownGuard(
+            lambda: self.shutdowns.append(1),
+            timeout=120.0,
+            poll_interval=5.0,
+            jump_tolerance=10.0,
+            clock=self.clock,
+            announce=lambda _message: None,
+        )
+        self.addCleanup(self.guard.close)
+
+    def test_without_the_jump_detection_standby_would_end_the_service(self) -> None:
+        """Der Nachweis, dass die Erkennung ueberhaupt etwas abfaengt: nach
+        zwei Stunden Standby ist die Frist rechnerisch laengst abgelaufen."""
+        self.guard.note_heartbeat("tab-eins")
+        self.clock.advance(2 * 60 * 60)
+        self.assertTrue(self.guard.expired(self.clock.now))
+
+    def test_a_time_jump_resets_the_grace_instead_of_shutting_down(self) -> None:
+        self.guard.note_heartbeat("tab-eins")
+        previous = self.clock.now
+        self.clock.advance(2 * 60 * 60)  # Standby
+        previous, finished = self.guard.tick(previous)
+        self.assertFalse(finished)
+        # Und danach laeuft die volle Karenzzeit neu, nicht ein Rest davon.
+        self.clock.advance(119)
+        self.assertFalse(self.guard.expired(self.clock.now))
+        self.clock.advance(2)
+        self.assertTrue(self.guard.expired(self.clock.now))
+
+    def test_a_normal_round_is_not_mistaken_for_a_jump(self) -> None:
+        """Die Toleranz darf die Selbstbeendigung nicht aushebeln: eine Runde
+        im normalen Takt zaehlt nicht als Sprung."""
+        self.guard.note_heartbeat("tab-eins")
+        previous = self.clock.now
+        for _ in range(30):
+            self.clock.advance(5)
+            previous, finished = self.guard.tick(previous)
+        self.assertTrue(finished)
+
+    def test_a_short_hiccup_is_tolerated_as_a_jump(self) -> None:
+        """Eine Verzoegerung knapp ueber Takt plus Toleranz gilt als Sprung --
+        im Zweifel weiterlaufen statt zu frueh beenden."""
+        self.guard.note_heartbeat("tab-eins")
+        previous = self.clock.now
+        self.clock.advance(200)
+        previous, finished = self.guard.tick(previous)
+        self.assertFalse(finished)
+        self.assertEqual([], self.shutdowns)
+
+
+class IdleGuardSessionTableTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.clock = FakeClock()
+        self.guard = IdleShutdownGuard(
+            lambda: None, clock=self.clock, announce=lambda _m: None
+        )
+        self.addCleanup(self.guard.close)
+
+    def test_the_same_tab_is_counted_once(self) -> None:
+        for _ in range(5):
+            self.guard.note_heartbeat("tab-eins")
+        self.assertEqual(1, self.guard.session_count)
+
+    def test_the_table_does_not_grow_without_bound(self) -> None:
+        """Immer neue Kennungen (viele Neuladungen) duerfen den Dienst nicht
+        volllaufen lassen."""
+        for index in range(MAX_TRACKED_SESSIONS + 20):
+            self.guard.note_heartbeat(f"sitzung-{index:04d}")
+        self.assertEqual(MAX_TRACKED_SESSIONS, self.guard.session_count)
+
+    def test_a_dropped_session_is_gone(self) -> None:
+        self.guard.note_heartbeat("tab-eins")
+        self.guard.drop_session("tab-eins")
+        self.assertEqual(0, self.guard.session_count)
+
+
+class IdleShutdownEndToEndTests(unittest.TestCase):
+    """Dieselben Faelle noch einmal gegen den LAUFENDEN Dienst ueber HTTP --
+    mit verkuerzter Karenzzeit, damit die Laufzeit ertraeglich bleibt. Was hier
+    zusaetzlich nachgewiesen wird, ist die Verdrahtung: Route, Kopfzeilen,
+    Waechter und serve_forever greifen wirklich ineinander."""
+
+    token = "test-session-token-that-is-long-enough"
+    timeout_seconds = 0.8
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        (root / "source").mkdir()
+        (root / "export").mkdir()
+        self.guard = IdleShutdownGuard(
+            lambda: self.server.shutdown(),
+            timeout=self.timeout_seconds,
+            poll_interval=0.05,
+            jump_tolerance=0.5,
+            announce=lambda _message: None,
+        )
+        self.addCleanup(self.guard.close)
+        self.server = create_server(
+            port=0,
+            session_token=self.token,
+            source_directory=root / "source",
+            export_directory=root / "export",
+            stability_delay=0,
+            idle_guard=self.guard,
+        )
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.01}
+        )
+        self.thread.start()
+        self.addCleanup(self.stop)
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.thread.join(timeout=3)
+        self.server.server_close()
+
+    def ping(self, session_id: str, *, token: str | None = token) -> tuple[int, dict]:
+        connection = http.client.HTTPConnection(HOST, self.server.server_port)
+        headers = {"Host": f"{HOST}:{self.server.server_port}"}
+        if token is not None:
+            headers["X-Session-Token"] = token
+        if session_id is not None:
+            headers["X-Session-Id"] = session_id
+        connection.request("POST", "/api/session/ping", headers=headers)
+        response = connection.getresponse()
+        data = response.read()
+        status = response.status
+        connection.close()
+        return status, (json.loads(data) if data else {})
+
+    def still_running(self) -> bool:
+        return self.thread.is_alive()
+
+    def keep_alive_for(self, seconds: float, session_id: str) -> None:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if not self.still_running():
+                return
+            self.ping(session_id)
+            time.sleep(self.timeout_seconds / 4)
+
+    def test_a_ping_is_answered_and_counted(self) -> None:
+        status, payload = self.ping("tab-eins-kennung")
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(1, payload["sessions"])
+
+    def test_the_ping_needs_the_session_token(self) -> None:
+        status, payload = self.ping("tab-eins-kennung", token=None)
+        self.assertEqual(401, status)
+        self.assertEqual("invalid_token", payload["code"])
+        self.assertFalse(self.guard.armed)
+
+    def test_a_malformed_session_id_is_rejected(self) -> None:
+        for bad in ("", "kurz", "hat leerzeichen drin", "x" * 200):
+            status, payload = self.ping(bad)
+            self.assertEqual(400, status, bad)
+            self.assertEqual("invalid_session_id", payload["code"])
+        self.assertFalse(self.guard.armed)
+
+    def test_case_one_closed_tab_ends_the_service(self) -> None:
+        self.ping("tab-das-gleich-zugeht")
+        time.sleep(self.timeout_seconds * 3)
+        self.thread.join(timeout=2)
+        self.assertFalse(self.still_running())
+
+    def test_case_two_a_reload_keeps_it_running(self) -> None:
+        self.ping("kennung-vor-dem-neuladen")
+        time.sleep(self.timeout_seconds / 2)  # die Luecke des Neuladens
+        self.keep_alive_for(self.timeout_seconds * 3, "kennung-nach-dem-neuladen")
+        self.assertTrue(self.still_running())
+
+    def test_case_three_one_of_two_tabs_closes(self) -> None:
+        self.ping("erster-tab-kennung")
+        self.ping("zweiter-tab-kennung")
+        self.assertEqual(2, self.guard.session_count)
+        self.keep_alive_for(self.timeout_seconds * 3, "zweiter-tab-kennung")
+        self.assertTrue(self.still_running())
+
+    def test_case_four_without_any_heartbeat_it_never_ends(self) -> None:
+        self.assertFalse(self.guard.armed)
+        time.sleep(self.timeout_seconds * 3)
+        self.assertTrue(self.still_running())
+        self.assertNotIn(
+            "thumbnail-idle-watchdog",
+            {thread.name for thread in threading.enumerate()},
+        )
+
+    def test_ping_is_post_only(self) -> None:
+        connection = http.client.HTTPConnection(HOST, self.server.server_port)
+        connection.request(
+            "GET",
+            "/api/session/ping",
+            headers={
+                "Host": f"{HOST}:{self.server.server_port}",
+                "X-Session-Token": self.token,
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        self.assertEqual(405, response.status)
+        self.assertEqual("method_not_allowed", payload["code"])
+
+
+class ExitWhenIdleSwitchTests(unittest.TestCase):
+    """CQ3, Schalterebene 2 und 3."""
+
+    def test_without_a_browser_it_is_off(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(EXIT_WHEN_IDLE_ENV, None)
+            self.assertFalse(exit_when_idle_default(False))
+            self.assertTrue(exit_when_idle_default(True))
+
+    def test_the_environment_overrides_both_ways(self) -> None:
+        with patch.dict(os.environ, {EXIT_WHEN_IDLE_ENV: "0"}):
+            self.assertFalse(exit_when_idle_default(True))
+        with patch.dict(os.environ, {EXIT_WHEN_IDLE_ENV: "1"}):
+            self.assertTrue(exit_when_idle_default(False))
+        with patch.dict(os.environ, {EXIT_WHEN_IDLE_ENV: "nein"}):
+            self.assertFalse(exit_when_idle_default(True))
+
+    def test_an_unknown_value_falls_back_to_the_browser_rule(self) -> None:
+        with patch.dict(os.environ, {EXIT_WHEN_IDLE_ENV: "vielleicht"}):
+            self.assertFalse(exit_when_idle_default(False))
+            self.assertTrue(exit_when_idle_default(True))
+
+
+class HeartbeatClientContractTests(unittest.TestCase):
+    """Was die Seite dafuer tun muss (CQ1)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (Path(__file__).resolve().parents[1] / "thumbnail-compositor.html").read_text(
+            encoding="utf-8"
+        )
+
+    def test_the_page_sends_a_heartbeat(self) -> None:
+        self.assertIn("fetch('/api/session/ping'", self.html)
+        self.assertIn("'X-Session-Id': heartbeatSessionId", self.html)
+        self.assertIn("'X-Session-Token': localService.token", self.html)
+
+    def test_every_document_gets_its_own_session_id(self) -> None:
+        """Sonst koennte ein Neuladen nicht von einem zweiten Tab
+        unterschieden werden."""
+        self.assertIn("window.crypto.randomUUID()", self.html)
+
+    def test_the_interval_leaves_room_for_throttling(self) -> None:
+        """15 s Takt gegen 120 s Karenzzeit: auch auf einen Schlag pro Minute
+        gedrosselt bleibt Luft fuer zwei ausgefallene Schlaege."""
+        self.assertIn("const HEARTBEAT_INTERVAL_MS = 15000;", self.html)
+        self.assertLessEqual(15.0 * 4, IDLE_TIMEOUT_SECONDS)
+
+    def test_returning_to_the_tab_reports_immediately(self) -> None:
+        self.assertIn("document.visibilityState === 'visible') sendHeartbeat()", self.html)
+
+    def test_the_heartbeat_stays_off_without_the_local_service(self) -> None:
+        """Ueber file:// -- also in der Render-Harness -- gibt es keinen Dienst
+        und darf es keine Anfragen geben."""
+        self.assertIn("if (!localService.available) return;", self.html)
+        self.assertIn(
+            "if (!localService.available || heartbeatTimer !== null) return;", self.html
+        )
+
+    def test_an_older_service_stops_the_heartbeat_quietly(self) -> None:
+        self.assertIn("if (response.status === 404){", self.html)
 
 
 if __name__ == "__main__":

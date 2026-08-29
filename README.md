@@ -105,6 +105,29 @@ weiterhin täglich für neue Videos verwendet, unabhängig von der abgeschlossen
   `./thumbnail-source` und `./thumbnail-export` relativ zum Arbeitsverzeichnis. Start über
   `START-THUMBNAIL-COMPOSITOR.vbs` (ohne Fenster) oder `START-THUMBNAIL-COMPOSITOR.cmd`
   (sichtbar, zur Diagnose).
+- **Der Dienst beendet sich, wenn niemand mehr zuschaut.** Die offene
+  Compositor-Seite meldet sich alle 15 s beim Dienst; 120 s nach dem letzten
+  Lebenszeichen fährt er sich herunter. Gemessen wird bewusst die Seite und nicht
+  die Zahl offener Verbindungen — der Compositor rechnet im Canvas und kann
+  minutenlang keine Anfrage stellen. Die 120 s fangen Neuladen, Tabwechsel
+  (Chrome drosselt Hintergrund-Timer auf einen Schlag pro Minute) und mehrere
+  Tabs ab; ein Standby wird an der Zeitlücke zwischen zwei Wachrunden erkannt und
+  setzt die Frist zurück, statt beim Aufwachen zu beenden. **Drei Sicherungen für
+  Batch- und Testläufe:** der Wächter entsteht ausschließlich aus einem echten
+  Lebenszeichen — ein Dienst, bei dem sich nie eine Seite gemeldet hat, hat gar
+  keinen Thread, der ihn beenden könnte; `--no-browser` schaltet die
+  Selbstbeendigung ohnehin ab; und `--exit-when-idle` / `--no-exit-when-idle`
+  bzw. `THUMBNAIL_EXIT_WHEN_IDLE` übersteuern das ausdrücklich. Die
+  Render-Harness ist nicht betroffen — sie lädt den Compositor über `file://`
+  und spricht den Dienst überhaupt nicht an.
+- **Belegter Port wird benannt, nicht nur gemeldet.** Läuft beim Start schon etwas auf
+  dem Port, sagt der Launcher, *was* — Prozess, PID, Programmdatei, Startzeit — und
+  bietet das Beenden an, wenn der Prozess belegbar eine eigene Instanz ist (Antwort mit
+  der Dienstkennung, Aufruf des eigenen Skripts, oder Eintrag in
+  `logs/thumbnail-service-<port>.json`). Im Zweifel wird nichts angerührt; ein fremder
+  Prozess nie. Beendet wird sanft über ein benanntes Quit-Signal, hart erst, wenn die
+  alte Instanz darauf nicht reagiert. Ohne Rückfrage: `--force-restart`; nur melden:
+  `--no-restart-prompt`.
 - **Eine Schnittstelle.** `window.adwRender(config)` liefert das fertige Bild als
   Data-URL zurück. Deshalb ist dieselbe Datei sowohl manuelles Werkzeug im Browser als
   auch Renderer im Automatisierungslauf — es gibt keine zweite Implementierung, die
@@ -179,7 +202,7 @@ getrennt ausgespielt. Details in [src/reviews/README.md](src/reviews/README.md).
   es gibt drei einmalige Verifikationsskripte unter `scripts/`, die die
   Sicherheitsgarantien nachweisen (kein Upload ohne `--execute`, Backup-Pflicht,
   Manifest-Pflicht, Wiederaufnahme nach Abbruch). Sie sind nicht Teil der Pipeline und
-  laufen nicht in CI. Der **Compositor-Dienst** hat **62 automatisierte Tests** unter
+  laufen nicht in CI. Der **Compositor-Dienst** hat **258 automatisierte Tests** unter
   `unittest`, davon 26 End-to-End über HTTP gegen den laufenden Dienst. Lauf:
   `python tests/test_thumbnail_service.py` aus dem Repo-Root. Ein Test wird ohne
   Symlink-Recht unter Windows übersprungen.

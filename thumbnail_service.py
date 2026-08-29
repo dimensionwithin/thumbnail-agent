@@ -16,6 +16,7 @@ import secrets
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -79,7 +80,8 @@ SERVICE_ID = "dimensionwithin-thumbnail-compositor"
 # passiert: der Dienst lief weiter, lieferte die NEUE HTML (sie wird pro Anfrage
 # von der Platte gelesen), kannte /api/emblem aber nicht -- alle Varianten kamen
 # als 404 zurueck und der Compositor zeichnete stumm seinen Rueckfall.
-SERVICE_PROTOCOL_VERSION = 2
+# 3 (2026-08-29): /api/session/ping kam dazu.
+SERVICE_PROTOCOL_VERSION = 3
 STARTUP_SIGNAL_TIMEOUT_SECONDS = 5.0
 BROWSER_OPEN_DELAY_SECONDS = 0.35
 WINDOWS_ERROR_ALREADY_EXISTS = 183
@@ -151,6 +153,7 @@ class BrowserOpenChannel:
     """Gezähltes, tokenfreies Windows-Signal an die primäre Instanz."""
 
     MAX_PENDING_SIGNALS = 64
+    LABEL = "Browser-Signalkanal"
 
     def __init__(self, port: int):
         self.name = (
@@ -177,7 +180,7 @@ class BrowserOpenChannel:
             raise ctypes.WinError(ctypes.get_last_error())
         if ctypes.get_last_error() == WINDOWS_ERROR_ALREADY_EXISTS:
             kernel32.CloseHandle(handle)
-            raise OSError("Der Browser-Signalkanal ist bereits belegt.")
+            raise OSError(f"Der {self.LABEL} ist bereits belegt.")
         self.handle = handle
 
     def wait(self, timeout_ms: int) -> bool:
@@ -279,7 +282,11 @@ class BrowserOpenCoordinator:
             self.thread.join(timeout=0.5)
 
 
-def _health_is_expected(port: int, timeout_seconds: float = 0.4) -> bool:
+def _health_payload(port: int, timeout_seconds: float = 0.4) -> dict | None:
+    """Rohe Health-Antwort. Wer den Port haelt, interessiert auch dann, wenn
+    die Antwort NICHT unserer Erwartung entspricht (CQ4) -- deshalb getrennt
+    von der Ja/Nein-Bewertung darunter."""
+
     connection: http.client.HTTPConnection | None = None
     try:
         connection = http.client.HTTPConnection(
@@ -296,20 +303,24 @@ def _health_is_expected(port: int, timeout_seconds: float = 0.4) -> bool:
         response = connection.getresponse()
         data = response.read(4097)
         if response.status != HTTPStatus.OK or len(data) > 4096:
-            return False
+            return None
         if response.getheader("Cache-Control") != "no-store":
-            return False
+            return None
         payload = json.loads(data)
-        return payload == {
-            "service": SERVICE_ID,
-            "protocol_version": SERVICE_PROTOCOL_VERSION,
-            "ready": True,
-        }
+        return payload if isinstance(payload, dict) else None
     except (OSError, ValueError, json.JSONDecodeError):
-        return False
+        return None
     finally:
         if connection is not None:
             connection.close()
+
+
+def _health_is_expected(port: int, timeout_seconds: float = 0.4) -> bool:
+    return _health_payload(port, timeout_seconds) == {
+        "service": SERVICE_ID,
+        "protocol_version": SERVICE_PROTOCOL_VERSION,
+        "ready": True,
+    }
 
 
 def signal_running_instance(
@@ -331,6 +342,905 @@ def signal_running_instance(
         if remaining <= 0:
             return False
         sleep_func(min(poll_interval, remaining))
+
+
+# ---------------------------------------------------------------------------
+# CQ1-CQ3: Der Dienst beendet sich, wenn niemand mehr zuschaut.
+#
+# Gemessen wird das ueber ein Lebenszeichen der Seite, NICHT ueber offene
+# Verbindungen. Der Compositor rechnet fast alles im Canvas und kann minuten-
+# lang keine einzige Anfrage stellen; eine Verbindungszaehlung faende dann 0
+# offene Sockets und beendete den Dienst mitten in der Arbeit. Umgekehrt haelt
+# der Browser Keep-Alive-Sockets nach dem Schliessen des Tabs noch eine Weile
+# offen -- die Zaehlung waere also in BEIDE Richtungen falsch.
+# ---------------------------------------------------------------------------
+
+# 120 s: Ein Neuladen ist nach 1-2 s zurueck. Ein Tab im Hintergrund wird von
+# Chrome auf einen Timer-Durchlauf pro Minute gedrosselt -- 120 s verkraftet
+# also zwei ausgefallene gedrosselte Schlaege. Ein zu frueher Abbruch trifft
+# mitten in der Arbeit; zwei Minuten Nachlauf kosten nichts, zumal ein
+# uebriggebliebener Dienst seit CQ4 beim naechsten Start angeboten wird.
+IDLE_TIMEOUT_SECONDS = 120.0
+IDLE_POLL_SECONDS = 5.0
+# Standby-Erkennung: time.monotonic() laeuft unter Windows ueber GetTickCount64
+# und ZAEHLT SCHLAFZEIT MIT. Ohne diese Erkennung waere nach zwei Stunden
+# Standby jede Karenzzeit ueberschritten und der Dienst beendete sich beim
+# Aufwachen -- genau der Fall, der nicht passieren darf. Springt die Uhr
+# zwischen zwei Runden weiter als Takt plus Toleranz, war die Maschine weg;
+# dann bekommt die Seite die volle Karenzzeit neu.
+SLEEP_JUMP_TOLERANCE_SECONDS = 10.0
+MAX_TRACKED_SESSIONS = 32
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+EXIT_WHEN_IDLE_ENV = "THUMBNAIL_EXIT_WHEN_IDLE"
+
+
+class IdleShutdownGuard:
+    """Beendet den Dienst nach einer Karenzzeit ohne Lebenszeichen.
+
+    CS2 -- die Sicherung ist strukturell, nicht als Abfrage gebaut: Der
+    Wachhund-Thread entsteht AUSSCHLIESSLICH in note_heartbeat(), also nur als
+    Folge eines echten Lebenszeichens einer Seite. Es gibt keinen zweiten Pfad,
+    der ihn starten koennte -- kein Konstruktor, kein start(), keine
+    Schalterauswertung. Wer spaeter die Schalterlogik umbaut, kann daran
+    nichts aendern, ohne note_heartbeat() selbst anzufassen: ein Dienst, bei
+    dem sich nie eine Seite gemeldet hat (Batch-Render, Testlauf, Harness),
+    hat schlicht keinen Thread, der ihn beenden koennte.
+
+    Aus demselben Grund frischt note_activity() -- jede sonstige beglaubigte
+    Anfrage -- die Frist nur auf und schaerft NIE. Sonst koennte ein Skript,
+    das nur exportiert, die Selbstbeendigung ungewollt aktivieren.
+    """
+
+    def __init__(
+        self,
+        shutdown: Callable[[], object],
+        *,
+        enabled: bool = True,
+        timeout: float = IDLE_TIMEOUT_SECONDS,
+        poll_interval: float = IDLE_POLL_SECONDS,
+        jump_tolerance: float = SLEEP_JUMP_TOLERANCE_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+        announce: Callable[[str], None] = _console_print,
+    ):
+        self._shutdown = shutdown
+        self._enabled = enabled
+        self._timeout = timeout
+        self._poll_interval = poll_interval
+        self._jump_tolerance = jump_tolerance
+        self._clock = clock
+        self._announce = announce
+        self._lock = threading.Lock()
+        self._sessions: dict[str, float] = {}
+        self._last_activity: float | None = None
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    # -- Zustand ---------------------------------------------------------
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @property
+    def armed(self) -> bool:
+        """Wacht bereits jemand? Nur wahr nach einem echten Lebenszeichen."""
+
+        with self._lock:
+            return self._thread is not None
+
+    @property
+    def session_count(self) -> int:
+        with self._lock:
+            return len(self._sessions)
+
+    # -- Eingaenge -------------------------------------------------------
+    def note_heartbeat(self, session_id: str) -> int:
+        """Die einzige Stelle, an der der Wachhund entstehen kann."""
+
+        if not self._enabled:
+            return 0
+        with self._lock:
+            now = self._clock()
+            # Laengst verstummte Sitzungen aus der Tabelle nehmen, damit die
+            # zurueckgemeldete Zahl wirklich die offenen Seiten sind.
+            for stale in [
+                key
+                for key, seen in self._sessions.items()
+                if now - seen > self._timeout
+            ]:
+                del self._sessions[stale]
+            if (
+                session_id not in self._sessions
+                and len(self._sessions) >= MAX_TRACKED_SESSIONS
+            ):
+                # Kein unbegrenztes Wachstum durch immer neue Kennungen: die
+                # aelteste weicht. Fuer die Frist ist das folgenlos, sie
+                # richtet sich ohnehin nach dem juengsten Lebenszeichen.
+                oldest = min(self._sessions, key=self._sessions.__getitem__)
+                del self._sessions[oldest]
+            self._sessions[session_id] = now
+            self._last_activity = now
+            count = len(self._sessions)
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._watch,
+                    name="thumbnail-idle-watchdog",
+                    daemon=True,
+                )
+                self._thread.start()
+                self._announce(
+                    "Der Compositor ist offen; der Dienst beendet sich "
+                    f"{int(self._timeout)} Sekunden nach dem letzten "
+                    "Lebenszeichen."
+                )
+        return count
+
+    def note_activity(self) -> None:
+        """Frischt die Frist auf, schaerft aber nie (siehe Klassenkommentar)."""
+
+        if not self._enabled:
+            return
+        with self._lock:
+            self._last_activity = self._clock()
+
+    def drop_session(self, session_id: str) -> None:
+        with self._lock:
+            self._sessions.pop(session_id, None)
+
+    def close(self) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=max(0.5, self._poll_interval))
+
+    # -- Wachhund --------------------------------------------------------
+    def _newest_sign_of_life(self) -> float | None:
+        signs = list(self._sessions.values())
+        if self._last_activity is not None:
+            signs.append(self._last_activity)
+        return max(signs) if signs else None
+
+    def expired(self, now: float) -> bool:
+        with self._lock:
+            newest = self._newest_sign_of_life()
+            return newest is not None and (now - newest) > self._timeout
+
+    def forgive(self, now: float) -> None:
+        """Nach einem Zeitsprung: alle Fristen auf jetzt, volle Karenzzeit neu."""
+
+        with self._lock:
+            for session_id in self._sessions:
+                self._sessions[session_id] = now
+            if self._last_activity is not None:
+                self._last_activity = now
+
+    def tick(self, previous: float) -> tuple[float, bool]:
+        """Eine Runde. Liefert (neuer Bezugspunkt, jetzt beenden?).
+
+        Getrennt von der Schleife, damit der Zeitsprung ohne echtes Warten
+        pruefbar ist: ein Aufruf mit einem weit zurueckliegenden Bezugspunkt
+        ist genau das, was nach einem Standby passiert.
+        """
+
+        now = self._clock()
+        if now - previous > self._poll_interval + self._jump_tolerance:
+            self.forgive(now)
+            self._announce(
+                "Zeitsprung erkannt (vermutlich Standby); die Karenzzeit "
+                "beginnt von vorn."
+            )
+            return now, False
+        return now, self.expired(now)
+
+    def _watch(self) -> None:
+        previous = self._clock()
+        while not self._stop_event.wait(self._poll_interval):
+            previous, finished = self.tick(previous)
+            if finished:
+                self._announce(
+                    "Seit "
+                    f"{int(self._timeout)} Sekunden kein Lebenszeichen aus dem "
+                    "Compositor; der lokale Dienst wird beendet."
+                )
+                self._shutdown()
+                return
+
+
+def exit_when_idle_default(open_browser: bool) -> bool:
+    """Schalterebene 2 und 3 (CQ3).
+
+    Ohne Browser -- also im Batch- und Testlauf -- ist die Selbstbeendigung
+    aus. Ausdruecklich uebersteuerbar ueber die Umgebung; die Kommandozeile
+    schlaegt beides und wird in main() ausgewertet.
+    """
+
+    configured = os.environ.get(EXIT_WHEN_IDLE_ENV, "").strip().lower()
+    if configured in ("0", "false", "nein", "no", "off"):
+        return False
+    if configured in ("1", "true", "ja", "yes", "on"):
+        return True
+    return open_browser
+
+
+# ---------------------------------------------------------------------------
+# CQ4: Wer haelt den Port -- und darf er beendet werden?
+#
+# Bis hierher endete ein belegter Port bei einer zwar korrekten, aber taten-
+# losen Meldung ("Dienstidentitaet passt nicht"). Sie sagte nicht, WAS den Port
+# haelt und was zu tun ist. Der Block unten ermittelt den Besitzer, beschreibt
+# ihn IMMER (auch wenn nichts angeboten wird, siehe CR1) und bietet das Beenden
+# NUR an, wenn ein belastbarer Beleg den Prozess als unsere eigene Instanz
+# ausweist. Im Zweifel wird verweigert.
+# ---------------------------------------------------------------------------
+
+SERVICE_FILE = Path(__file__).resolve()
+PYTHON_IMAGE_NAMES = ("python.exe", "pythonw.exe")
+WINDOWS_ERROR_INSUFFICIENT_BUFFER = 122
+WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+WINDOWS_PROCESS_TERMINATE = 0x0001
+WINDOWS_CREATE_NO_WINDOW = 0x08000000
+WINDOWS_IDYES = 6
+WINDOWS_MB_YESNO = 0x00000004
+WINDOWS_MB_ICONWARNING = 0x00000030
+WINDOWS_TCP_TABLE_OWNER_PID_LISTENER = 3
+WINDOWS_AF_INET = 2
+# Sanft vor hart (CR2): erst das Quit-Signal, und erst wenn die alte Instanz
+# darauf nicht reagiert, TerminateProcess. Ein harter Abschuss mitten in einem
+# Export kann eine reservierte Zieldatei zuruecklassen -- siehe
+# _reserve_export_path(); der sanfte Weg laeuft durch server_close() und
+# hinterlaesst nichts.
+GRACEFUL_QUIT_TIMEOUT_SECONDS = 6.0
+HARD_QUIT_TIMEOUT_SECONDS = 3.0
+COMMAND_LINE_TIMEOUT_SECONDS = 8.0
+# logs/ ist gitignored (siehe .gitignore) und liegt neben dem Skript.
+MARKER_DIRECTORY = Path(__file__).with_name("logs")
+MAX_MARKER_BYTES = 4096
+def unknown_owner_hint(port: int) -> str:
+    return (
+        "Wer den Port haelt, liess sich nicht ermitteln. Deshalb wird hier "
+        "nichts beendet. Bitte den sichtbaren CMD-Launcher zur Diagnose "
+        "verwenden oder den Compositor auf einem anderen Port starten:\n"
+        f"START-THUMBNAIL-COMPOSITOR.cmd --port {port + 1}"
+    )
+
+
+def foreign_owner_hint(port: int) -> str:
+    return (
+        "Dieser Prozess gehoert nicht zum Thumbnail-Compositor und wird "
+        "deshalb nicht angeruehrt. Entweder den fremden Prozess selbst "
+        "beenden oder den Compositor auf einem anderen Port starten:\n"
+        f"START-THUMBNAIL-COMPOSITOR.cmd --port {port + 1}"
+    )
+
+MANUAL_STOP_HINT = (
+    "Es wurde nichts beendet. Die alte Instanz laesst sich im Task-Manager "
+    "unter dem oben genannten Prozess beenden; danach den Launcher erneut "
+    "starten."
+)
+
+
+class QuitChannel(BrowserOpenChannel):
+    """Benanntes Windows-Signal an die laufende Instanz: geordnet beenden.
+
+    Bewusst derselbe Semaphor-Mechanismus wie beim Browser-Kanal: tokenfrei,
+    nur lokal, und eine alte Fassung ohne diesen Kanal laesst sich schlicht
+    nicht oeffnen -- signal() liefert dann False und der Aufrufer faellt auf
+    den harten Weg zurueck.
+    """
+
+    MAX_PENDING_SIGNALS = 4
+    LABEL = "Quit-Signalkanal"
+
+    def __init__(self, port: int):
+        super().__init__(port)
+        self.name = (
+            f"Local\\DimensionWithinThumbnailCompositor-Quit-{HOST}-{port}"
+        )
+
+
+class QuitSignalWatcher:
+    """Wartet auf das Quit-Signal und faehrt den Server aus einem Fremdthread."""
+
+    def __init__(self, channel: QuitChannel, shutdown: Callable[[], object]):
+        self.channel = channel
+        self.shutdown = shutdown
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if os.name != "nt":
+            return
+        self.thread = threading.Thread(
+            target=self._watch,
+            name="thumbnail-quit-signal",
+            daemon=True,
+        )
+        self.thread.start()
+
+    def _watch(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                if self.channel.wait(200):
+                    if self.stop_event.is_set():
+                        return
+                    _console_print(
+                        "\nEin neuer Start hat das Beenden angefordert; "
+                        "der lokale Dienst wird beendet."
+                    )
+                    # serve_forever() laeuft im Hauptthread -- shutdown() MUSS
+                    # aus einem anderen Thread kommen, sonst verklemmt es sich.
+                    self.shutdown()
+                    return
+            except OSError as error:
+                if not self.stop_event.is_set():
+                    _console_print(f"Quit-Signalkanal fehlgeschlagen: {error!r}")
+                return
+
+    def close(self) -> None:
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=0.5)
+
+
+class _MIB_TCPROW_OWNER_PID(ctypes.Structure):
+    _fields_ = [
+        ("dwState", ctypes.c_ulong),
+        ("dwLocalAddr", ctypes.c_ulong),
+        ("dwLocalPort", ctypes.c_ulong),
+        ("dwRemoteAddr", ctypes.c_ulong),
+        ("dwRemotePort", ctypes.c_ulong),
+        ("dwOwningPid", ctypes.c_ulong),
+    ]
+
+
+def _network_port_value(raw: int) -> int:
+    """dwLocalPort haelt den Port in Netzwerk-Byte-Reihenfolge im unteren Wort."""
+
+    return ((raw & 0xFF) << 8) | ((raw >> 8) & 0xFF)
+
+
+def listening_pid(port: int, host: str = HOST) -> int | None:
+    """PID des lauschenden Sockets auf host:port, sonst None.
+
+    Bewusst GetExtendedTcpTable statt "netstat -ano": kein Unterprozess, keine
+    sprachabhaengige Ausgabe, und dieselbe ctypes-Bauweise wie Mutex und
+    Semaphor weiter oben.
+    """
+
+    if os.name != "nt":
+        return None
+    try:
+        iphlpapi = ctypes.WinDLL("iphlpapi", use_last_error=True)
+    except OSError:
+        return None
+    size = ctypes.c_ulong(0)
+    result = iphlpapi.GetExtendedTcpTable(
+        None,
+        ctypes.byref(size),
+        False,
+        WINDOWS_AF_INET,
+        WINDOWS_TCP_TABLE_OWNER_PID_LISTENER,
+        0,
+    )
+    if result != WINDOWS_ERROR_INSUFFICIENT_BUFFER or size.value < 4:
+        return None
+    buffer = ctypes.create_string_buffer(size.value)
+    result = iphlpapi.GetExtendedTcpTable(
+        buffer,
+        ctypes.byref(size),
+        False,
+        WINDOWS_AF_INET,
+        WINDOWS_TCP_TABLE_OWNER_PID_LISTENER,
+        0,
+    )
+    if result != 0:
+        return None
+    count = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ulong)).contents.value
+    row_size = ctypes.sizeof(_MIB_TCPROW_OWNER_PID)
+    if 4 + count * row_size > size.value:
+        return None
+    try:
+        wanted = int.from_bytes(socket.inet_aton(host), "little")
+        wildcard = int.from_bytes(socket.inet_aton("0.0.0.0"), "little")
+    except OSError:
+        return None
+    for index in range(count):
+        row = _MIB_TCPROW_OWNER_PID.from_buffer(buffer, 4 + index * row_size)
+        if _network_port_value(row.dwLocalPort) != port:
+            continue
+        # Ein Lauscher auf 0.0.0.0 belegt 127.0.0.1 mit.
+        if row.dwLocalAddr not in (wanted, wildcard):
+            continue
+        return int(row.dwOwningPid)
+    return None
+
+
+def _open_process(pid: int, access: int) -> int | None:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [
+        ctypes.c_ulong,
+        ctypes.c_bool,
+        ctypes.c_ulong,
+    ]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    handle = kernel32.OpenProcess(access, False, pid)
+    return handle or None
+
+
+def _close_handle(handle: int) -> None:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle(handle)
+
+
+def _process_image_path(handle: int) -> str | None:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_ulong),
+    ]
+    length = ctypes.c_ulong(32768)
+    buffer = ctypes.create_unicode_buffer(length.value)
+    if not kernel32.QueryFullProcessImageNameW(
+        handle, 0, buffer, ctypes.byref(length)
+    ):
+        return None
+    return buffer.value or None
+
+
+class _FILETIME(ctypes.Structure):
+    _fields_ = [
+        ("dwLowDateTime", ctypes.c_ulong),
+        ("dwHighDateTime", ctypes.c_ulong),
+    ]
+
+
+def _process_creation_ticks(handle: int) -> int | None:
+    """Erzeugungszeitpunkt in 100-ns-Ticks seit 1601 -- der Wert, an dem sich
+    eine wiederverwendete PID von der urspruenglichen unterscheiden laesst."""
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [
+        ctypes.POINTER(_FILETIME)
+    ] * 4
+    creation, exited, kernel_time, user_time = (_FILETIME() for _ in range(4))
+    if not kernel32.GetProcessTimes(
+        handle,
+        ctypes.byref(creation),
+        ctypes.byref(exited),
+        ctypes.byref(kernel_time),
+        ctypes.byref(user_time),
+    ):
+        return None
+    ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+    return ticks or None
+
+
+def _ticks_to_local_time(ticks: int | None) -> datetime.datetime | None:
+    if not ticks:
+        return None
+    epoch = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
+    try:
+        return (epoch + datetime.timedelta(microseconds=ticks // 10)).astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _own_creation_ticks() -> int | None:
+    if os.name != "nt":
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    return _process_creation_ticks(kernel32.GetCurrentProcess())
+
+
+def instance_marker_path(port: int) -> Path:
+    return MARKER_DIRECTORY / f"thumbnail-service-{port}.json"
+
+
+def write_instance_marker(port: int) -> None:
+    """Hinterlegt PID und Erzeugungszeitpunkt der eigenen Instanz.
+
+    Das ist der Beleg, der ohne WMI auskommt: Diese Datei schreibt unser
+    eigener Code in unser eigenes Verzeichnis. Wenn der Besitzer des Ports
+    genau diese PID hat UND denselben Erzeugungszeitpunkt, ist es unsere
+    Instanz -- eine wiederverwendete PID hat zwangslaeufig einen anderen.
+    Ein Scheitern ist folgenlos: dann fehlt spaeter nur ein Beleg.
+    """
+
+    try:
+        MARKER_DIRECTORY.mkdir(parents=True, exist_ok=True)
+        instance_marker_path(port).write_text(
+            json.dumps(
+                {
+                    "service": SERVICE_ID,
+                    "port": port,
+                    "pid": os.getpid(),
+                    "creation_ticks": _own_creation_ticks(),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def remove_instance_marker(port: int) -> None:
+    try:
+        instance_marker_path(port).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def read_instance_marker(port: int) -> dict | None:
+    try:
+        path = instance_marker_path(port)
+        if path.stat().st_size > MAX_MARKER_BYTES:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("service") != SERVICE_ID:
+        return None
+    return payload
+
+
+def marker_matches_process(
+    port: int, pid: int | None, creation_ticks: int | None
+) -> bool:
+    """Nur mit uebereinstimmender PID UND Erzeugungszeit -- sonst koennte eine
+    liegengebliebene Markerdatei auf einen voellig fremden Prozess zeigen,
+    der die PID inzwischen wiederverwendet."""
+
+    if pid is None:
+        return False
+    marker = read_instance_marker(port)
+    if marker is None or marker.get("pid") != pid:
+        return False
+    recorded = marker.get("creation_ticks")
+    if not isinstance(recorded, int) or creation_ticks is None:
+        return False
+    return recorded == creation_ticks
+
+
+def _process_command_line(pid: int) -> str | None:
+    """Kommandozeile eines fremden Prozesses -- der entscheidende Beleg.
+
+    Ueber CIM statt ueber das PEB des Fremdprozesses: PEB-Lesen ist bei
+    gemischter Bitbreite unzuverlaessig, und ein Fehlgriff wuerde hier die
+    Frage "darf beendet werden?" falsch beantworten.
+    """
+
+    if os.name != "nt":
+        return None
+    query = (
+        "(Get-CimInstance Win32_Process -Filter "
+        + '"ProcessId='
+        + str(int(pid))
+        + '").CommandLine'
+    )
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                query,
+            ],
+            capture_output=True,
+            timeout=COMMAND_LINE_TIMEOUT_SECONDS,
+            creationflags=WINDOWS_CREATE_NO_WINDOW,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    # Bewusst selbst dekodiert: text=True nimmt die ANSI-Codepage und wirft bei
+    # jedem Pfad mit Sonderzeichen einen UnicodeDecodeError -- im Lesethread,
+    # also mit Traceback vor den Augen des Anwenders.
+    command_line = (completed.stdout or b"").decode("utf-8", "replace").strip()
+    return command_line or None
+
+
+def command_line_names_this_service(command_line: str | None) -> bool:
+    """Nennt diese Kommandozeile UNSER Dienstskript -- und kein gleichnamiges?"""
+
+    if not command_line:
+        return False
+    lowered = command_line.lower()
+    if SERVICE_FILE.name.lower() not in lowered:
+        return False
+    if str(SERVICE_FILE).lower() in lowered:
+        return True
+    # Ein absoluter Pfad auf ein gleichnamiges Skript woanders ist NICHT unser
+    # Dienst -- im Zweifel verweigern (CR1). Nur der Aufruf ohne Pfadangabe
+    # zaehlt; so startet der CMD-Launcher, mit gesetztem Arbeitsverzeichnis.
+    foreign = re.search(
+        r"[a-z]:[\\/][^\"']*" + re.escape(SERVICE_FILE.name.lower()), lowered
+    )
+    return foreign is None
+
+
+@dataclass(frozen=True)
+class PortOccupant:
+    """Was ueber den Besitzer des Ports bekannt ist -- Belege getrennt gefuehrt."""
+
+    port: int
+    pid: int | None = None
+    image_path: str | None = None
+    image_name: str | None = None
+    started_at: datetime.datetime | None = None
+    command_line: str | None = None
+    health_service: str | None = None
+    health_protocol: int | None = None
+    identified_by_health: bool = False
+    identified_by_command_line: bool = False
+    identified_by_marker: bool = False
+
+    @property
+    def may_be_stopped(self) -> bool:
+        """Angeboten wird nur mit PID UND mindestens einem positiven Beleg."""
+
+        if self.pid is None:
+            return False
+        return (
+            self.identified_by_health
+            or self.identified_by_command_line
+            or self.identified_by_marker
+        )
+
+
+def inspect_port_occupant(
+    port: int,
+    *,
+    health_payload: Callable[[int, float], dict | None] | None = None,
+    pid_lookup: Callable[[int], int | None] | None = None,
+    command_line_lookup: Callable[[int], str | None] | None = None,
+    marker_check: Callable[[int, int | None, int | None], bool] | None = None,
+) -> PortOccupant:
+    payload = (health_payload or _health_payload)(port, 0.4)
+    health_service = None
+    health_protocol = None
+    if isinstance(payload, dict):
+        service = payload.get("service")
+        if isinstance(service, str):
+            health_service = service
+        protocol = payload.get("protocol_version")
+        if isinstance(protocol, int):
+            health_protocol = protocol
+    pid = (pid_lookup or listening_pid)(port)
+    image_path = None
+    image_name = None
+    creation_ticks = None
+    if pid is not None:
+        handle = _open_process(pid, WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION)
+        if handle is not None:
+            try:
+                image_path = _process_image_path(handle)
+                creation_ticks = _process_creation_ticks(handle)
+            finally:
+                _close_handle(handle)
+        if image_path:
+            image_name = Path(image_path).name
+    started_at = _ticks_to_local_time(creation_ticks)
+    identified_by_marker = (marker_check or marker_matches_process)(
+        port, pid, creation_ticks
+    )
+    identified_by_health = health_service == SERVICE_ID
+    command_line = None
+    identified_by_command_line = False
+    # Die teure CIM-Abfrage nur, wenn sie ueberhaupt etwas entscheiden kann:
+    # bei einem Prozess, der kein Python ist, waere die Antwort ohne Belang.
+    if (
+        pid is not None
+        and image_name is not None
+        and image_name.lower() in PYTHON_IMAGE_NAMES
+    ):
+        command_line = (command_line_lookup or _process_command_line)(pid)
+        identified_by_command_line = command_line_names_this_service(command_line)
+    return PortOccupant(
+        port=port,
+        pid=pid,
+        image_path=image_path,
+        image_name=image_name,
+        started_at=started_at,
+        command_line=command_line,
+        health_service=health_service,
+        health_protocol=health_protocol,
+        identified_by_health=identified_by_health,
+        identified_by_command_line=identified_by_command_line,
+        identified_by_marker=identified_by_marker,
+    )
+
+
+def describe_port_occupant(occupant: PortOccupant) -> str:
+    """Sagt IMMER, was den Port haelt -- auch wenn nichts angeboten wird (CR1)."""
+
+    lines = [f"Port {occupant.port} ist bereits belegt.", ""]
+    if occupant.pid is None:
+        lines.append("Der belegende Prozess liess sich nicht ermitteln.")
+    else:
+        lines.append(
+            f"Prozess: {occupant.image_name or 'unbekannt'} (PID {occupant.pid})"
+        )
+        if occupant.image_path:
+            lines.append(f"Programmdatei: {occupant.image_path}")
+        if occupant.started_at is not None:
+            lines.append(
+                "Gestartet: " + occupant.started_at.strftime("%d.%m.%Y %H:%M:%S")
+            )
+        if occupant.command_line:
+            lines.append(f"Aufruf: {occupant.command_line}")
+    lines.append("")
+    if occupant.identified_by_health:
+        version = (
+            str(occupant.health_protocol)
+            if occupant.health_protocol is not None
+            else "unbekannt"
+        )
+        lines.append(
+            "Der Port antwortet mit der Kennung des Thumbnail-Compositors "
+            f"(Protokoll {version})."
+        )
+    elif occupant.health_service:
+        lines.append(
+            "Der Port antwortet mit einer fremden Dienstkennung: "
+            f"{occupant.health_service}."
+        )
+    else:
+        lines.append(
+            "Der Port antwortet nicht mit einer erkennbaren Dienstkennung."
+        )
+    if occupant.identified_by_command_line:
+        lines.append("Der Aufruf nennt dieses Dienstskript.")
+    if occupant.identified_by_marker:
+        lines.append(
+            "Dieser Prozess hat sich beim Start als Thumbnail-Dienst "
+            f"eingetragen ({instance_marker_path(occupant.port).name})."
+        )
+    return "\n".join(lines)
+
+
+def _ask_to_stop(description: str) -> bool:
+    question = (
+        description
+        + "\n\nDie laufende Instanz beenden und den Compositor neu starten?"
+    )
+    if sys.stdout is not None:
+        _console_print(question)
+        try:
+            if sys.stdin is None or not sys.stdin.isatty():
+                return False
+            answer = input("Beenden und neu starten? [j/N] ").strip().lower()
+        except (EOFError, OSError, ValueError):
+            return False
+        return answer in ("j", "ja", "y", "yes")
+    if os.name != "nt":
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        return (
+            user32.MessageBoxW(
+                None,
+                question,
+                "DimensionWithin Thumbnail-Compositor",
+                WINDOWS_MB_YESNO | WINDOWS_MB_ICONWARNING,
+            )
+            == WINDOWS_IDYES
+        )
+    except (AttributeError, OSError):
+        return False
+
+
+def _terminate_process(pid: int) -> bool:
+    if os.name != "nt":
+        return False
+    handle = _open_process(pid, WINDOWS_PROCESS_TERMINATE)
+    if handle is None:
+        return False
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        return bool(kernel32.TerminateProcess(handle, 1))
+    finally:
+        _close_handle(handle)
+
+
+def stop_running_instance(
+    occupant: PortOccupant,
+    is_free: Callable[[], bool],
+    *,
+    graceful_timeout: float = GRACEFUL_QUIT_TIMEOUT_SECONDS,
+    hard_timeout: float = HARD_QUIT_TIMEOUT_SECONDS,
+    sleep_func: Callable[[float], None] = time.sleep,
+    terminate: Callable[[int], bool] = _terminate_process,
+    signal_quit: Callable[[int], bool] = QuitChannel.signal,
+) -> tuple[bool, str]:
+    """Sanft vor hart (CR2). Liefert (frei geworden, Beschreibung des Wegs)."""
+
+    def wait_until(timeout: float) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            if is_free():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            sleep_func(0.1)
+
+    signal_quit(occupant.port)
+    if wait_until(graceful_timeout):
+        return True, "Die alte Instanz hat sich geordnet beendet."
+    if occupant.pid is None:
+        return False, "Die alte Instanz reagiert nicht und hat keine bekannte PID."
+    if not terminate(occupant.pid):
+        return (
+            False,
+            f"Die alte Instanz (PID {occupant.pid}) liess sich nicht beenden.",
+        )
+    if wait_until(hard_timeout):
+        return (
+            True,
+            "Die alte Instanz reagierte nicht auf das Beenden-Signal und wurde "
+            "hart beendet. Falls dabei gerade ein Export lief, kann im "
+            "Exportordner eine leere Platzhalterdatei zurueckgeblieben sein.",
+        )
+    return False, "Der Port ist auch nach dem Beenden noch belegt."
+
+
+def resolve_port_conflict(
+    port: int,
+    is_free: Callable[[], bool],
+    *,
+    may_prompt: bool,
+    force: bool,
+    inspect: Callable[[int], PortOccupant] = inspect_port_occupant,
+    ask: Callable[[str], bool] = _ask_to_stop,
+    stop: Callable[..., tuple[bool, str]] = stop_running_instance,
+) -> bool:
+    """Diagnose, Angebot, Ausfuehrung. False heisst: der Port bleibt belegt."""
+
+    occupant = inspect(port)
+    description = describe_port_occupant(occupant)
+    if not occupant.may_be_stopped:
+        hint = (
+            unknown_owner_hint(port)
+            if occupant.pid is None
+            else foreign_owner_hint(port)
+        )
+        _startup_error(description + "\n\n" + hint)
+        return False
+    if force:
+        _console_print(description)
+    elif not may_prompt:
+        _startup_error(description + "\n\n" + MANUAL_STOP_HINT)
+        return False
+    elif not ask(description):
+        # Die Frage hat die Beschreibung bereits gezeigt -- hier nur noch der
+        # Hinweis, sonst steht alles zweimal auf der Konsole.
+        _startup_error(MANUAL_STOP_HINT)
+        return False
+    freed, detail = stop(occupant, is_free)
+    if not freed:
+        _startup_error(detail + "\n\n" + MANUAL_STOP_HINT)
+        return False
+    _console_print(detail)
+    return True
+
+
+def port_is_free(port: int, host: str = HOST) -> bool:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        probe.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
 
 
 class SourceSelectionError(Exception):
@@ -855,8 +1765,12 @@ class ThumbnailHTTPServer(ThreadingHTTPServer):
         export_directory: Path = EXPORT_DIRECTORY,
         html_file: Path = HTML_FILE,
         stability_delay: float = STABILITY_DELAY_SECONDS,
+        idle_guard: "IdleShutdownGuard | None" = None,
     ):
         super().__init__(server_address, handler_class)
+        # Ohne Waechter (Testaufbauten, die create_server direkt benutzen)
+        # verhaelt sich der Dienst wie bisher: er laeuft, bis er beendet wird.
+        self.idle_guard = idle_guard
         self.session_token = session_token
         self.source_directory = Path(source_directory)
         self.export_directory = Path(export_directory)
@@ -922,6 +1836,11 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
 
     def _reject_invalid_api_token(self) -> bool:
         if self._token_is_valid():
+            # Wer exportiert, schaut zu. Das FRISCHT die Frist nur auf und
+            # schaerft den Waechter nicht -- schaerfen kann nur ein echtes
+            # Lebenszeichen der Seite (siehe IdleShutdownGuard).
+            if self.server.idle_guard is not None:
+                self.server.idle_guard.note_activity()
             return False
         self._send_json(
             HTTPStatus.UNAUTHORIZED,
@@ -943,6 +1862,15 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._serve_health()
+            return
+        if request.path == "/api/session/ping":
+            if self._reject_invalid_api_token():
+                return
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "Das Lebenszeichen wird ausschließlich per POST gemeldet.",
+            )
             return
         if request.path == "/":
             self._serve_compositor(request.query)
@@ -1127,12 +2055,52 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 "Die Emblem-Route ist ausschließlich read-only per GET.",
             )
             return
+        if request.path == "/api/session/ping":
+            if self._reject_invalid_api_token():
+                return
+            self._note_heartbeat()
+            return
         if request.path == "/api/export":
             if self._reject_invalid_api_token():
                 return
             self._save_export()
             return
         self._send_json(HTTPStatus.NOT_FOUND, "not_found", "Endpunkt nicht gefunden.")
+
+    def _note_heartbeat(self) -> None:
+        """Lebenszeichen einer offenen Compositor-Seite.
+
+        Die Sitzungskennung kommt als Kopfzeile, nicht im Rumpf: die Anfrage
+        traegt keinen Inhalt, und ein enges Muster laesst sich hier in einer
+        Zeile pruefen.
+        """
+
+        session_id = self.headers.get("X-Session-Id", "")
+        if not SESSION_ID_PATTERN.match(session_id):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_session_id",
+                "Die Sitzungskennung fehlt oder ist ungültig.",
+            )
+            return
+        guard = self.server.idle_guard
+        sessions = guard.note_heartbeat(session_id) if guard is not None else 0
+        payload = json.dumps(
+            {
+                "ok": True,
+                "sessions": sessions,
+                "idle_timeout_seconds": (
+                    int(IDLE_TIMEOUT_SECONDS)
+                    if guard is not None and guard.enabled
+                    else None
+                ),
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self._send_headers(
+            HTTPStatus.OK, "application/json; charset=utf-8", len(payload)
+        )
+        self.wfile.write(payload)
 
     def _serve_compositor(self, query: str) -> None:
         token_values = parse_qs(query, keep_blank_values=True).get("token", [])
@@ -1345,6 +2313,7 @@ def create_server(
     export_directory: Path = EXPORT_DIRECTORY,
     html_file: Path = HTML_FILE,
     stability_delay: float = STABILITY_DELAY_SECONDS,
+    idle_guard: IdleShutdownGuard | None = None,
 ) -> ThumbnailHTTPServer:
     token = session_token or secrets.token_urlsafe(32)
     return ThumbnailHTTPServer(
@@ -1355,6 +2324,7 @@ def create_server(
         export_directory=export_directory,
         html_file=html_file,
         stability_delay=stability_delay,
+        idle_guard=idle_guard,
     )
 
 
@@ -1444,53 +2414,98 @@ def run_server(
     browser_open_delay: float = BROWSER_OPEN_DELAY_SECONDS,
     source_directory: Path | None = None,
     export_directory: Path | None = None,
+    restart_prompt: bool = True,
+    force_restart: bool = False,
+    exit_when_idle: bool | None = None,
 ) -> int:
     instance_guard = SingleInstanceGuard(port)
     if not instance_guard.acquire():
-        if not open_browser:
-            _console_print("Der lokale Thumbnail-Dienst läuft bereits.")
-            return 5
-        if signal_running_instance(port):
+        # Passt die Identität, ist das kein Konflikt, sondern ein zweiter
+        # Aufruf: die laufende Instanz öffnet nur ein Fenster nach.
+        if open_browser and signal_running_instance(port):
             _console_print(
                 "Der lokale Thumbnail-Dienst läuft bereits; "
                 "der Compositor wird erneut geöffnet."
             )
             return 0
-        _startup_error(
-            "Eine laufende Thumbnail-Instanz konnte nicht sicher erreicht werden.\n\n"
-            "Der lokale Port antwortet nicht mit der erwarteten Dienstidentität. "
-            "Bitte den sichtbaren CMD-Launcher zur Diagnose verwenden."
-        )
-        return 6
+        if not open_browser and _health_is_expected(port):
+            _console_print("Der lokale Thumbnail-Dienst läuft bereits.")
+            return 5
+        # CQ4: Ab hier steht wirklich etwas im Weg. Bis hierher endete das in
+        # einer korrekten, aber tatenlosen Meldung ("Dienstidentität passt
+        # nicht"). Jetzt wird gesagt, WAS den Port hält -- und wenn es belegbar
+        # unsere eigene Instanz ist, wird das Aufräumen angeboten.
+        if not resolve_port_conflict(
+            port,
+            instance_guard.acquire,
+            may_prompt=restart_prompt and open_browser,
+            force=force_restart,
+        ):
+            return 5 if not open_browser else 6
     channel = BrowserOpenChannel(port)
+    quit_channel = QuitChannel(port)
     coordinator: BrowserOpenCoordinator | None = None
+    quit_watcher: QuitSignalWatcher | None = None
+    marker_written = False
+    server: ThumbnailHTTPServer | None = None
+    # Schalterebene 3 (Kommandozeile) schlaegt Ebene 2 (--no-browser bzw. die
+    # Umgebungsvariable). Ebene 1 -- der Waechter schaerft erst mit dem ersten
+    # Lebenszeichen -- steckt in IdleShutdownGuard selbst und laesst sich von
+    # hier aus gar nicht umgehen.
+    idle_guard = IdleShutdownGuard(
+        lambda: server.shutdown() if server is not None else None,
+        enabled=(
+            exit_when_idle
+            if exit_when_idle is not None
+            else exit_when_idle_default(open_browser)
+        ),
+    )
     try:
-        try:
-            channel.create()
-            env_file_values = read_env_file()
-            resolved_source = resolve_directory(
-                SOURCE_DIRECTORY_ENV,
-                source_directory,
-                SOURCE_DIRECTORY,
-                env_file_values,
-            )
-            resolved_export = resolve_directory(
-                EXPORT_DIRECTORY_ENV,
-                export_directory,
-                EXPORT_DIRECTORY,
-                env_file_values,
-            )
-            server = create_server(
-                port=port,
-                session_token=session_token,
-                source_directory=resolved_source,
-                export_directory=resolved_export,
-            )
-        except OSError as error:
-            _startup_error(
-                "Der lokale Thumbnail-Dienst konnte nicht gestartet werden.\n\n"
-                f"Port {port} ist belegt oder nicht verfügbar: {error}"
-            )
+        env_file_values = read_env_file()
+        resolved_source = resolve_directory(
+            SOURCE_DIRECTORY_ENV,
+            source_directory,
+            SOURCE_DIRECTORY,
+            env_file_values,
+        )
+        resolved_export = resolve_directory(
+            EXPORT_DIRECTORY_ENV,
+            export_directory,
+            EXPORT_DIRECTORY,
+            env_file_values,
+        )
+        # Zwei Anläufe: Der Mutex kann frei sein, während der Port noch von
+        # einer verwaisten Instanz gehalten wird. Auch dieser Fall bekommt die
+        # Diagnose aus CQ4, danach genau ein Wiederholungsversuch.
+        for attempt in (1, 2):
+            try:
+                channel.create()
+                quit_channel.create()
+                server = create_server(
+                    port=port,
+                    session_token=session_token,
+                    source_directory=resolved_source,
+                    export_directory=resolved_export,
+                    idle_guard=idle_guard,
+                )
+                break
+            except OSError as error:
+                channel.close()
+                quit_channel.close()
+                if attempt == 2 or not resolve_port_conflict(
+                    port,
+                    lambda: port_is_free(port),
+                    may_prompt=restart_prompt and open_browser,
+                    force=force_restart,
+                ):
+                    if attempt == 2:
+                        _startup_error(
+                            "Der lokale Thumbnail-Dienst konnte nicht gestartet "
+                            f"werden.\n\nPort {port} ist belegt oder nicht "
+                            f"verfügbar: {error}"
+                        )
+                    return 4
+        if server is None:
             return 4
         actual_port = server.server_port
         url = (
@@ -1503,10 +2518,23 @@ def run_server(
             browser_opener or webbrowser.open,
         )
         coordinator.start()
+        quit_watcher = QuitSignalWatcher(quit_channel, lambda: server.shutdown())
+        quit_watcher.start()
+        write_instance_marker(port)
+        marker_written = True
         _console_print("DimensionWithin Thumbnail-Compositor")
         _console_print(f"Lokaler Dienst: http://{HOST}:{actual_port}/")
         _console_print(describe_directory("Quellordner", resolved_source))
         _console_print(describe_directory("Exportordner", resolved_export))
+        _console_print(
+            "Selbstbeendigung: "
+            + (
+                f"aktiv, {int(IDLE_TIMEOUT_SECONDS)} s nach dem letzten "
+                "Lebenszeichen des Compositors"
+                if idle_guard.enabled
+                else "aus"
+            )
+        )
         _console_print("Beenden mit Strg+C.")
         if open_browser:
             coordinator.schedule_initial_open(browser_open_delay)
@@ -1518,9 +2546,15 @@ def run_server(
             server.server_close()
         return 0
     finally:
+        idle_guard.close()
+        if marker_written:
+            remove_instance_marker(port)
         if coordinator is not None:
             coordinator.close()
+        if quit_watcher is not None:
+            quit_watcher.close()
         channel.close()
+        quit_channel.close()
         instance_guard.release()
 
 
@@ -1547,6 +2581,32 @@ def main() -> None:
             f"{EXPORT_DIRECTORY_ENV}, sonst ./{EXPORT_DIRECTORY}."
         ),
     )
+    parser.add_argument(
+        "--force-restart",
+        action="store_true",
+        help=(
+            "Eine belegbar eigene, bereits laufende Instanz ohne Rueckfrage "
+            "beenden und neu starten."
+        ),
+    )
+    parser.add_argument(
+        "--exit-when-idle",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Beendet den Dienst nach "
+            f"{int(IDLE_TIMEOUT_SECONDS)} s ohne Lebenszeichen des "
+            "Compositors. Ohne Angabe an, wenn ein Browser geoeffnet wird, "
+            f"sonst aus; {EXIT_WHEN_IDLE_ENV} uebersteuert das."
+        ),
+    )
+    parser.add_argument(
+        "--no-restart-prompt",
+        action="store_true",
+        help=(
+            "Bei belegtem Port nur melden, wer ihn haelt, und nichts anbieten."
+        ),
+    )
     args = parser.parse_args()
     raise SystemExit(
         run_server(
@@ -1555,6 +2615,9 @@ def main() -> None:
             session_token=args.session_token,
             source_directory=args.source_dir,
             export_directory=args.export_dir,
+            restart_prompt=not args.no_restart_prompt,
+            force_restart=args.force_restart,
+            exit_when_idle=args.exit_when_idle,
         )
     )
 

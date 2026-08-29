@@ -2159,6 +2159,57 @@ window.adwRender = async function(cfg){
   return await new Promise(res => { cv.toBlob(b => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); }, 'image/png'); });
 };
 
+// ---------- Lebenszeichen an den lokalen Dienst (CQ1)
+// Der Dienst beendet sich, wenn sich 120 s lang keine offene Seite mehr
+// gemeldet hat. Gemessen wird bewusst hier und nicht an offenen Verbindungen:
+// dieser Compositor rechnet im Canvas und kann minutenlang keine einzige
+// Anfrage stellen -- eine Verbindungszaehlung wuerde ihn dann faelschlich fuer
+// geschlossen halten.
+const HEARTBEAT_INTERVAL_MS = 15000;
+// Pro geladenem Dokument eine eigene Kennung. Damit zaehlt der Dienst offene
+// Seiten einzeln: zwei Tabs, einer geschlossen -- der Dienst laeuft weiter.
+// Ein Neuladen erzeugt eine neue Kennung; die alte laeuft still aus.
+const heartbeatSessionId = (window.crypto && window.crypto.randomUUID)
+  ? window.crypto.randomUUID()
+  : 'sitzung-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+let heartbeatTimer = null;
+
+async function sendHeartbeat(){
+  if (!localService.available) return;
+  try {
+    const response = await fetch('/api/session/ping', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: {
+        'X-Session-Token': localService.token,
+        'X-Session-Id': heartbeatSessionId,
+      },
+    });
+    // Ein aelterer Dienst kennt die Route nicht. Der kann sich ohnehin nicht
+    // selbst beenden -- also still aufhoeren statt die Konsole vollzuschreiben.
+    if (response.status === 404){
+      if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  } catch (error){
+    // Ein einzelner Fehlschlag ist folgenlos: die Karenzzeit des Dienstes
+    // faengt deutlich mehr ab als einen ausgefallenen Schlag.
+  }
+}
+
+function startHeartbeat(){
+  if (!localService.available || heartbeatTimer !== null) return;
+  sendHeartbeat();
+  heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+  // Im Hintergrund drosselt der Browser den Takt auf bis zu einen Schlag pro
+  // Minute. Beim Zurueckkommen deshalb sofort melden, statt auf den naechsten
+  // gedrosselten Schlag zu warten.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sendHeartbeat();
+  });
+}
+
 (async function init(){
   initMeta();
   setSourcePhase(sourceState.phase);
@@ -2175,6 +2226,7 @@ window.adwRender = async function(cfg){
   await ensureFonts();
   await loadEmblem();
   render();
+  startHeartbeat();
   if (localService.available) await loadLatestSource();
 })();
 </script>

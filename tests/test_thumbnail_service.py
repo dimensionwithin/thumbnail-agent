@@ -1351,6 +1351,39 @@ class EmblemLayerTest(unittest.TestCase):
         )
         self.assertIn("if (state.emblemSide !== 'auto') return state.emblemSide;", self.html)
 
+    def test_mirror_wraps_the_emblem_itself_not_only_the_glow(self) -> None:
+        """CF1: DER Fehler, der eine Positionspruefung ueberlebt hat.
+
+        Die Spiegelung lag im inneren save/restore-Block, der nur den Beschnitt
+        fuer den Schein umschliesst. Gespiegelt wurde dadurch ausschliesslich der
+        weichgezeichnete Schatten -- dem sieht man es nicht an -- waehrend das
+        Emblem selbst nach dem restore() unveraendert gezeichnet wurde. Alle
+        x-Koordinaten stimmten dabei, die Ausrichtung nicht.
+
+        Geprueft wird deshalb die VERSCHACHTELUNG: zwischen der Spiegelung und
+        dem Zeichnen des Emblems darf kein unpaariges restore() stehen."""
+        body = self.html[self.html.index("function drawEmblem(){"):]
+        body = body[: body.index("\n}")]
+        mirror = body.index("ctx.scale(-1, 1)")
+        draw = body.rindex("ctx.drawImage(img, dx, dy, dw, dh);")
+        self.assertLess(mirror, draw, "Emblem wird vor der Spiegelung gezeichnet")
+        between = body[mirror:draw]
+        self.assertEqual(
+            between.count("ctx.save()"),
+            between.count("ctx.restore()"),
+            "unpaariges restore() zwischen Spiegelung und Emblem -- die "
+            "Spiegelung greift dann nur fuer den Schein",
+        )
+
+    def test_glow_offset_flips_with_the_mirror(self) -> None:
+        """CF1, zweiter Fehler derselben Familie: shadowOffsetX liegt in
+        GERAETE-Pixeln und wird von der Spiegelung nicht mitgedreht, die
+        Verschiebung des Quellbildes dagegen schon. Ohne Vorzeichenwechsel
+        landet der Schatten um 2*off daneben und der Schein fehlt auf der
+        gespiegelten Seite vollstaendig (gemessen: 4984 statt 32633
+        Schein-Pixel)."""
+        self.assertIn("ctx.shadowOffsetX = (mirrored ? -off : off) * SCALE;", self.html)
+
     def test_left_side_is_mirrored(self) -> None:
         """CD1: gespiegelt wird wegen des Kapuzengewichts, NICHT wegen einer
         Blickrichtung -- die Sonnenbrille ist deckend, es gibt keine Augen."""
@@ -1403,7 +1436,7 @@ class EmblemLayerTest(unittest.TestCase):
         """shadowOffsetX/shadowBlur werden von setTransform(SCALE,...) NICHT
         mitskaliert. Ohne * SCALE landet der Schatten ausserhalb der Leinwand
         und der Schein ist unsichtbar -- genau das ist beim Bau passiert."""
-        self.assertIn("ctx.shadowOffsetX = off * SCALE;", self.html)
+        self.assertIn("ctx.shadowOffsetX = (mirrored ? -off : off) * SCALE;", self.html)
         self.assertIn(
             "ctx.shadowBlur = state.emblemSize * EMBLEM_GLOW.blurRatio * SCALE;", self.html
         )

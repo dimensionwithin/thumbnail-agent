@@ -822,18 +822,32 @@ function drawEmblem(){
   // Karte. Innerhalb der Flaeche bleibt er unveraendert; der Anschnitt selbst
   // faellt auf dunklem Grund nicht auf, weil dort Schwarz auf Schwarz trifft.
   const off = W * 2;
-  ctx.save();
+
   // CD1: Auf der linken Seite wird waagerecht gespiegelt. Das dient dem
   // KAPUZENGEWICHT, nicht einer Blickrichtung -- die Sonnenbrille des Avatars ist
   // deckend, es gibt keine Augen und damit nichts, was in eine Richtung zeigen
   // koennte (an einer Abstufungsreihe geprueft, siehe assets/branding/README.md).
   // Gespiegelt liegt die schwere Kapuzenmasse zur aeusseren Bildkante und das
   // Gesicht oeffnet sich zur Bildmitte.
+  //
+  // ACHTUNG AUF DIE VERSCHACHTELUNG: Die Spiegelung muss den Schein UND das
+  // Emblem umschliessen. Lag sie nur im inneren Block (dem Beschnitt fuer den
+  // Schein), wurde ausschliesslich der weichgezeichnete Schatten gespiegelt --
+  // und das sieht man ihm nicht an. Der Fehler ueberlebte eine Pruefung, die
+  // die Position des Emblems mass statt seiner Ausrichtung.
+  ctx.save();
   if (mirrored){ ctx.translate(dx + dw/2, 0); ctx.scale(-1, 1); ctx.translate(-(dx + dw/2), 0); }
+
+  ctx.save();
   ctx.beginPath(); ctx.rect(dx, dy, dw, dh); ctx.clip();
   ctx.shadowColor = EMBLEM_GLOW.color;
   ctx.shadowBlur = state.emblemSize * EMBLEM_GLOW.blurRatio * SCALE;
-  ctx.shadowOffsetX = off * SCALE;
+  // shadowOffsetX liegt in GERAETE-Pixeln und wird von der Spiegelung NICHT
+  // mitgedreht -- die Verschiebung des Quellbildes dagegen schon. Unter der
+  // Spiegelung muss der Versatz deshalb das Vorzeichen wechseln, sonst landet
+  // der Schatten um 2*off daneben, also ausserhalb der Leinwand: der Schein
+  // fehlte auf der linken Seite dann vollstaendig.
+  ctx.shadowOffsetX = (mirrored ? -off : off) * SCALE;
   for (let i = 0; i < EMBLEM_GLOW.passes; i++) ctx.drawImage(img, dx - off, dy, dw, dh);
   ctx.restore();
 

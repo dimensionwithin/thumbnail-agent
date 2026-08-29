@@ -22,6 +22,15 @@ const fs = require('fs'), path = require('path');
   await p.waitForFunction(() => typeof window.adwRender === 'function');
 
   for (const cfg of configs){
+    // CJ1: Die Emblem-Varianten liegen nicht mehr in der HTML, sondern werden vom
+    // lokalen Dienst geholt -- den gibt es hier nicht (file://, hart offline).
+    // Deshalb reicht die Harness die gewaehlte Variante als Data-URI durch; ohne
+    // Angabe zeichnet der Compositor seinen eingebetteten Rueckfall.
+    if (cfg.emblemVariant){
+      const file = path.join('assets','branding','emblems', cfg.emblemVariant + '.png');
+      if (fs.existsSync(file)) cfg.emblemDataUri = 'data:image/png;base64,' + fs.readFileSync(file).toString('base64');
+      else console.warn('WARNUNG: Variante "'+cfg.emblemVariant+'" nicht gefunden, Rueckfall wird gezeichnet.');
+    }
     const dataUrl = await p.evaluate(c => window.adwRender(c), cfg);
     const buf = Buffer.from(dataUrl.split(',')[1], 'base64');
     const file = path.join(outDir, 'adw-' + cfg.videoId + '.png');

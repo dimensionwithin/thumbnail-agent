@@ -41,12 +41,49 @@ ab.
   echte Fehler und werden gemeldet: dort entstünde die gerade Kante mitten in der
   Fläche.
 
-**Diese Dateien sind die Quelle der Wahrheit.** Der Compositor lädt sie NICHT
-zur Laufzeit — weder der lokale Dienst noch die Render-Harness liefern statische
-Dateien aus (der Dienst kennt nur vier API-Routen, die Harness läuft über
-`file://` mit hartem Offline-Routing und würde das Canvas „tainten"). Stattdessen
-stehen sie als `data:`-URIs in `thumbnail-compositor.html`. Jede Variante kostet
-dort dauerhaft rund 250–330 KB; das Skript warnt, wenn es zu viel wird.
+**Diese Dateien sind die Quelle der Wahrheit — und werden zur Laufzeit gelesen.**
+
+Bis 29.08.2026 lagen alle Varianten als `data:`-URIs in
+`thumbnail-compositor.html`. Bei 14 Stück wären das ~4,7 MB base64 in einer
+Datei, die bei jedem Start komplett geparst wird, und die Bibliothek wächst
+weiter. Heruntersskalieren wäre nur ein Aufschub gewesen: selbst bei 448 px
+blieben ~2,5 MB, und wir skalieren beim Zeichnen ohnehin schon um Faktor 1,5
+hoch (Quelle 640 px, gezeichnet auf 960 Gerätepixel).
+
+Stattdessen gilt jetzt:
+
+- **Mit Dienst:** Der Compositor holt jede Variante über `GET /api/emblem?slug=…`.
+  Der Sitzungstoken geht als **Kopfzeile** mit, nicht in der URL — deshalb
+  `fetch()` statt `<img src>`; aus der Antwort wird eine `blob:`-URL, die die CSP
+  erlaubt und die das Canvas nicht „tainted" (gleicher Ursprung).
+- **Ohne Dienst** (`file://`, Render-Harness): Eine einzige Variante — `neutral` —
+  ist als `data:`-URI eingebettet und wird IMMER zuerst geladen. Fällt der Dienst
+  aus oder fehlt er, zeichnet der Compositor sie statt gar nichts.
+- **Render-Harness:** bekommt die gewählte Variante als `cfg.emblemDataUri`
+  durchgereicht (siehe `render-harness.cjs`) und ist damit unabhängig von beidem.
+
+Der Slug in der Route wird gegen `^[a-z0-9][a-z0-9-]{0,63}$` geprüft, und der
+aufgelöste Pfad muss im Emblem-Ordner liegen — beides zusammen, damit auch eine
+spätere Lockerung des Musters nicht aus dem Ordner hinausführt.
+
+## Die Scheinfarbe folgt der Helligkeit
+
+Ein dunkles Motiv braucht einen hellen Schein, ein helles einen dunklen. Das
+Einbett-Skript misst je Variante den Median der Helligkeit über die deckenden
+Pixel und schreibt ihn in die HTML; ab **90** gilt ein Motiv als hell und bekommt
+den dunklen Schein.
+
+Die Schwelle liegt weit von beiden Gruppen entfernt: die Graustufen-Varianten
+messen 13–21, `christkind` misst 221. Gemessene Wirkung im transparenten Saum:
+
+| | heller Grund | dunkler Grund |
+|---|---|---|
+| `neutral` (heller Schein) | +0,5 | +3,5 |
+| `christkind` (dunkler Schein) | −4,5 | −0,2 |
+
+`christkind` verlor auf hellem Grund vorher seine Kontur — weißes Gewand auf
+hellem Hintergrund, und ein heller Schein kann dagegen nichts ausrichten. Mit
+dem dunklen steht es in beiden Fällen.
 
 ## Seitenwechsel und Spiegelung
 
@@ -82,6 +119,27 @@ deutlich verbreitert (deckende Bounding-Box bis x 1508 statt ~1345).
 Eine Verankerung am Kopf statt am Bildrahmen ist deshalb nicht nötig. Wer neue
 Varianten erzeugt, sollte den Rahmen aber beibehalten — der Wert oben ist der
 Maßstab, an dem sich eine neue Datei messen lassen muss.
+
+## Kopfposition: 25 × 33 px Streuung, kein Handlungsbedarf
+
+Gemessen über alle 14 Varianten per Schablonensuche nach der **Sonnenbrille**
+(die alle tragen — der frühere Finder „größter heller Fleck" hätte bei
+`christkind` das Gewand und bei `weihnachtsmann` den Bart als Gesicht gezählt):
+
+    Streuung ueber alle 14: x 25,0 px, y 32,5 px   (fruehere sechs: 10 x 10)
+
+    weihnachtsmann  dy +21,6     Muetze drueckt das Gesicht nach unten
+    cowboyhut       dy +21,6     Hutkrempe, dasselbe
+    feiern          dx +19,7     erhobenes Glas verschiebt die Figur
+    lachen          dx +19,1
+    christkind      dx +16,6  dy +12,2   Heiligenschein oben, Gewand breiter
+    die uebrigen neun            unter 9 px
+
+**Das ist kein Fehler und keine Vorlage muss nachgeschnitten werden.** 22 px
+senkrecht sind 3 % der Bildhöhe — im direkten A/B sichtbar, beim normalen
+Durchscrollen nicht. Und es ist bauartbedingt: eine Mütze muss irgendwo hin, ein
+Heiligenschein auch. Wer es enger will, muss die Vorlagen mit gleichem
+Kopfmittelpunkt erzeugen; am Code ist nichts zu ändern.
 
 ## _verworfen/
 

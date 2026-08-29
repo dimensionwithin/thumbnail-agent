@@ -42,6 +42,18 @@ HTML_FILE = Path(__file__).with_name("thumbnail-compositor.html")
 # siehe _record_series_registry_entry(). Beide Pfade sind relativ zum Skript,
 # nicht zum aktuellen Arbeitsverzeichnis (analog zu HTML_FILE).
 SERIES_REGISTRY_FILE = Path(__file__).with_name("data") / "series-registry.json"
+# CJ1: Emblem-Varianten werden zur Laufzeit gelesen statt in die HTML eingebettet.
+# Bei 14 Varianten waeren das ~4,7 MB base64 in einer Datei, die bei jedem Start
+# komplett geparst wird -- und die Bibliothek waechst weiter. Eingebettet bleibt
+# nur eine Rueckfall-Variante, damit der Compositor auch ohne Dienst nicht
+# emblemlos rendert (siehe assets/branding/README.md).
+EMBLEMS_DIRECTORY = Path(__file__).with_name("assets") / "branding" / "emblems"
+# Der Slug ist der Dateiname ohne Endung. Bewusst eng: nur Kleinbuchstaben,
+# Ziffern und Bindestrich, erstes Zeichen alphanumerisch, hoechstens 64 Zeichen.
+# Damit kann aus einem Slug weder ein Pfadtrenner noch ".." noch ein absoluter
+# Pfad werden -- der Join unten kann die Verzeichnisgrenze nicht verlassen.
+EMBLEM_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+MAX_EMBLEM_BYTES = 4 * 1024 * 1024
 SERIES_REGISTRY_BACKUP_DIRECTORY = Path(__file__).with_name("backups")
 MAX_SERIES_REGISTRY_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
@@ -946,7 +958,76 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 return
             self._serve_series_registry()
             return
+        if request.path == "/api/emblem":
+            if self._reject_invalid_api_token():
+                return
+            self._serve_emblem(request.query)
+            return
         self._send_json(HTTPStatus.NOT_FOUND, "not_found", "Endpunkt nicht gefunden.")
+
+    def _serve_emblem(self, query: str) -> None:
+        """Liest EINE Emblem-Variante read-only aus assets/branding/emblems/.
+
+        Der einzige Parameter ist ein Slug, der gegen EMBLEM_SLUG_PATTERN geprueft
+        wird -- keine Pfade, keine Endungen, keine Grossbuchstaben. Zusaetzlich
+        wird der aufgeloeste Pfad gegen das Zielverzeichnis geprueft (Guertel und
+        Hosentraeger): selbst wenn das Muster je aufgeweicht wuerde, kaeme so
+        nichts ausserhalb des Ordners heraus.
+        """
+        values = parse_qs(query, keep_blank_values=True).get("slug", [])
+        if len(values) != 1:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_slug",
+                "Es muss genau ein slug-Parameter angegeben werden.",
+            )
+            return
+        slug = values[0]
+        if not EMBLEM_SLUG_PATTERN.match(slug):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_slug",
+                "Der slug enthaelt unerlaubte Zeichen.",
+            )
+            return
+        try:
+            directory = EMBLEMS_DIRECTORY.resolve(strict=True)
+            candidate = (directory / f"{slug}.png").resolve(strict=True)
+        except OSError:
+            self._send_json(
+                HTTPStatus.NOT_FOUND, "emblem_missing", "Diese Emblem-Variante gibt es nicht."
+            )
+            return
+        if candidate.parent != directory or not candidate.is_file():
+            self._send_json(
+                HTTPStatus.NOT_FOUND, "emblem_missing", "Diese Emblem-Variante gibt es nicht."
+            )
+            return
+        try:
+            data = candidate.read_bytes()
+        except OSError:
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "emblem_unreadable",
+                "Die Emblem-Datei konnte nicht gelesen werden.",
+            )
+            return
+        if len(data) > MAX_EMBLEM_BYTES:
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "emblem_too_large",
+                "Die Emblem-Datei ist unerwartet gross.",
+            )
+            return
+        if data[:8] != bytes.fromhex("89504e470d0a1a0a"):   # PNG-Signatur
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                "emblem_not_png",
+                "Die Emblem-Datei ist kein PNG.",
+            )
+            return
+        self._send_headers(HTTPStatus.OK, "image/png", len(data))
+        self.wfile.write(data)
 
     def _serve_series_registry(self) -> None:
         """Liest data/series-registry.json read-only fuer die Nummern-Anzeige."""
@@ -1019,6 +1100,15 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.METHOD_NOT_ALLOWED,
                 "method_not_allowed",
                 "Die Registry-Anzeige ist ausschließlich read-only per GET. Ein Registry-Eintrag entsteht ausschliesslich als Nebeneffekt von /api/export.",
+            )
+            return
+        if request.path == "/api/emblem":
+            if self._reject_invalid_api_token():
+                return
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "Die Emblem-Route ist ausschließlich read-only per GET.",
             )
             return
         if request.path == "/api/export":

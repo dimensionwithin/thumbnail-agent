@@ -597,6 +597,117 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(list(self.export.iterdir()), [])
 
 
+
+class EmblemRouteTests(HttpEndpointTests):
+    """CJ1: /api/emblem liefert eine Variante read-only aus
+    assets/branding/emblems/. Die Route nimmt Nutzereingabe entgegen und baut
+    daraus einen Dateipfad -- deshalb hier die Sicherheitspruefungen einzeln."""
+
+    def emblem(self, slug: str, **kwargs):
+        return self.request(path="/api/emblem?slug=" + slug, **kwargs)
+
+    def test_known_slug_returns_a_png(self) -> None:
+        status, headers, data = self.emblem("neutral")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Content-Type"), "image/png")
+        self.assertEqual(data[:8], bytes.fromhex("89504e470d0a1a0a"))
+
+    def test_unknown_slug_is_a_clean_404(self) -> None:
+        status, _, data = self.emblem("gibtesnicht")
+        self.assertEqual(status, 404)
+        self.assertIn(b"emblem_missing", data)
+
+    def test_path_traversal_is_refused(self) -> None:
+        """Weder ueber Verzeichniswechsel noch ueber Pfadtrenner noch ueber
+        prozentcodierte Varianten darf etwas ausserhalb des Ordners kommen."""
+        for slug in (
+            "..%2F..%2Fthumbnail_service",
+            "..%2F..%2F.env",
+            "%2Fetc%2Fpasswd",
+            "neutral%2F..%2F..%2Fpackage",
+            "..",
+            "....%2F%2Fneutral",
+        ):
+            with self.subTest(slug=slug):
+                status, _, data = self.emblem(slug)
+                self.assertIn(status, (400, 404))
+                self.assertNotIn(b"PNG", data[:64])
+
+    def test_uppercase_and_extension_are_refused(self) -> None:
+        """Der Slug ist der nackte Dateiname ohne Endung, nur klein."""
+        for slug in ("Neutral", "neutral.png", "neutral%00", "neutral+", "neutral%20"):
+            with self.subTest(slug=slug):
+                status, _, _ = self.emblem(slug)
+                self.assertIn(status, (400, 404))
+
+    def test_missing_or_wrong_token_is_refused(self) -> None:
+        status, _, _ = self.emblem("neutral", token=None)
+        self.assertEqual(status, 401)
+        status, _, _ = self.emblem("neutral", token="falsch-aber-lang-genug-xxxxxx")
+        self.assertEqual(status, 401)
+
+    def test_slug_parameter_must_appear_exactly_once(self) -> None:
+        for query in ("", "?slug=", "?slug=neutral&slug=ernst"):
+            with self.subTest(query=query):
+                status, _, _ = self.request(path="/api/emblem" + query)
+                self.assertIn(status, (400, 404))
+
+    def test_route_is_read_only(self) -> None:
+        status, _, data = self.request(method="POST", path="/api/emblem?slug=neutral")
+        self.assertEqual(status, 405)
+        self.assertIn(b"method_not_allowed", data)
+
+
+class EmblemFallbackTests(unittest.TestCase):
+    """CJ1: Ohne laufenden Dienst darf NICHT emblemlos gerendert werden -- der
+    eingebettete Rueckfall muss greifen."""
+
+    def setUp(self) -> None:
+        self.html = Path("thumbnail-compositor.html").read_text(encoding="utf-8")
+
+    def test_exactly_one_variant_is_embedded(self) -> None:
+        self.assertEqual(1, self.html.count("const EMBLEM_FALLBACK_URI = 'data:image/png;base64,"))
+        self.assertIn("const EMBLEM_FALLBACK_SLUG = 'neutral';", self.html)
+
+    def test_fallback_is_loaded_before_the_service_is_consulted(self) -> None:
+        load = self.html[self.html.index("function loadEmblem(){"):]
+        load = load[: load.index("\n}")]
+        self.assertLess(
+            load.index("EMBLEM_FALLBACK_URI"), load.index("localService.available")
+        )
+
+    def test_current_emblem_falls_back_instead_of_drawing_nothing(self) -> None:
+        self.assertIn("|| emblemImages[EMBLEM_FALLBACK_SLUG]", self.html)
+
+    def test_service_failure_per_variant_is_caught(self) -> None:
+        """Ein Ausfall bei EINER Variante darf nicht den ganzen Ladevorgang
+        abbrechen -- sonst faellt auch der Rueckfall aus."""
+        self.assertIn("catch (error){ console.error('Emblem \"'+slug+'\" nicht vom Dienst ladbar.'", self.html)
+
+    def test_token_travels_in_a_header_not_in_the_url(self) -> None:
+        self.assertIn("headers: { 'X-Session-Token': localService.token }", self.html)
+
+
+class EmblemGlowColourTests(unittest.TestCase):
+    """CJ2: Die Scheinfarbe folgt der gemessenen Helligkeit des Motivs."""
+
+    def setUp(self) -> None:
+        self.html = Path("thumbnail-compositor.html").read_text(encoding="utf-8")
+
+    def test_bright_variants_get_a_dark_glow(self) -> None:
+        self.assertIn("return (meta && meta.hell) ? EMBLEM_GLOW.dark : EMBLEM_GLOW.color;", self.html)
+        self.assertIn("ctx.shadowColor = emblemGlowColor();", self.html)
+
+    def test_brightness_is_measured_at_embed_time(self) -> None:
+        script = Path("scripts/embed-aiv-emblem.cjs").read_text(encoding="utf-8")
+        self.assertIn("const HELL_SCHWELLE = 90;", script)
+        self.assertIn("hell: " + '"' + " + (v.median > HELL_SCHWELLE) + " + '"', script.replace("'", '"'))
+
+    def test_the_colour_follows_the_shown_variant_not_the_selected_one(self) -> None:
+        """Greift der Rueckfall, muss die Farbe zur TATSAECHLICH gezeichneten
+        Variante passen -- sonst bekaeme ein helles Motiv den hellen Schein."""
+        self.assertIn("const meta = EMBLEM_META[shownEmblemSlug()];", self.html)
+
 class ClientContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -1271,24 +1382,23 @@ class EmblemLayerTest(unittest.TestCase):
     def test_emblems_are_embedded_as_data_uris(self) -> None:
         """Weder der Dienst noch die Render-Harness liefern statische Dateien --
         die Varianten muessen in der HTML liegen, nicht als Dateipfad."""
-        self.assertIn("const EMBLEMS = {", self.html)
-        self.assertIn("'data:image/png;base64,", self.html)
+        self.assertIn("const EMBLEM_META = {", self.html)
+        self.assertIn("const EMBLEM_FALLBACK_URI = 'data:image/png;base64,", self.html)
         self.assertNotIn('src="assets/branding', self.html)
 
     def test_variants_come_from_the_folder_not_from_a_list_in_code(self) -> None:
         """Eine Variante ergaenzen soll heissen: Datei ablegen, Skript laufen
         lassen. Keine Namensliste im Quelltext, die man vergessen kann."""
-        self.assertIn("const EMBLEM_SLUGS = Object.keys(EMBLEMS);", self.html)
+        self.assertIn("const EMBLEM_SLUGS = Object.keys(EMBLEM_META);", self.html)
         script = Path("scripts/embed-aiv-emblem.cjs").read_text(encoding="utf-8")
         self.assertIn("fs.readdirSync(DIR)", script)
 
     def test_selected_variant_falls_back_to_the_first_one(self) -> None:
         """Ein entfernter oder umbenannter Dateiname darf nicht in einem leeren
         Emblem enden."""
-        self.assertIn(
-            "return emblemImages[state.emblemVariant] || emblemImages[EMBLEM_SLUGS[0]] || null;",
-            self.html,
-        )
+        self.assertIn("return emblemImages[state.emblemVariant]", self.html)
+        self.assertIn("|| emblemImages[EMBLEM_FALLBACK_SLUG]", self.html)
+        self.assertIn("|| emblemImages[EMBLEM_SLUGS[0]]", self.html)
 
     def test_glow_is_light_because_the_emblem_is_dark(self) -> None:
         """Der Avatar ist fast schwarz (Median 15/255); ein dunkler Schein wuerde
@@ -1481,7 +1591,7 @@ class EmblemLayerTest(unittest.TestCase):
         aussteigenden aiv-Zweig -- kein anderes Preset kann ihn erreichen."""
         emblem = self.html[self.html.index("function drawEmblem(){"):]
         emblem = emblem[: emblem.index("// ---------- live badge")]
-        self.assertIn("ctx.shadowColor = EMBLEM_GLOW.color;", emblem)
+        self.assertIn("ctx.shadowColor = emblemGlowColor();", emblem)
         # Der Schein wird erst gezeichnet, nachdem emblemRect() eine Flaeche
         # geliefert hat -- und die gibt es nur bei aiv.
         self.assertLess(emblem.index("if (!rect) return;"), emblem.index("EMBLEM_GLOW"))

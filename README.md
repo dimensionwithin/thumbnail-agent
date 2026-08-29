@@ -130,12 +130,16 @@ weiterhin täglich für neue Videos verwendet, unabhängig von der abgeschlossen
   Reihenfolge ist festgelegt: erst sucht `autoPlace()` die Titelposition, dann
   folgt die Seite, dann höchstens **ein** zweiter Durchgang gegen die verschobene
   Sperrfläche — Seite und Position können einander so nicht im Kreis jagen.
-- **Mehrere Emblem-Varianten.** Im Compositor wählbar, gedacht für verschiedene
-  Stimmungen. Eine Variante ergänzen heißt: PNG mit Alpha in
+- **Mehrere Emblem-Varianten, zur Laufzeit geladen.** Im Compositor wählbar, für
+  verschiedene Stimmungen. Eine Variante ergänzen heißt: PNG mit Alpha in
   `assets/branding/emblems/` ablegen und `node scripts/embed-aiv-emblem.cjs` laufen
   lassen — kein Manifest, keine Liste im Quelltext. Der Dateiname ohne Endung ist der
-  Schlüssel und liefert die Beschriftung im Auswahlfeld. Das Skript prüft dabei Alpha,
-  Größe und ob das Motiv an einer Kante angeschnitten ist, die frei sein sollte.
+  Schlüssel und liefert die Beschriftung im Auswahlfeld. Das Skript prüft Alpha,
+  Größe und Anschnitt und misst die Helligkeit, aus der sich die Scheinfarbe ergibt.
+  Die Bilddaten selbst wandern **nicht** in die HTML: der Compositor holt sie über
+  `GET /api/emblem?slug=…` vom lokalen Dienst, eingebettet bleibt nur eine
+  Rückfall-Variante für den Betrieb ohne Dienst. Details in
+  `assets/branding/README.md`.
 - **Grenze der Auto-Platzierung: helle Fotos.** `autoPlace()` baut eine Belegungskarte
   aus der absoluten Helligkeit (`luma > 0.15` gilt als Inhalt). Bei einem hellen,
   formatfüllenden Foto sind damit praktisch alle Zellen belegt — gemessen 96 % bei

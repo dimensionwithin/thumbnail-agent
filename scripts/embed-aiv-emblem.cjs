@@ -1,12 +1,15 @@
-// Bettet die Emblem-Varianten aus assets/branding/emblems/ als data:-URIs in
-// thumbnail-compositor.html ein.
+// Schreibt den Emblem-Block in thumbnail-compositor.html: eine Liste aller
+// Varianten mit ihrer gemessenen Helligkeit, plus EINE eingebettete
+// Rueckfall-Variante.
 //
-// Warum ueberhaupt einbetten: Der lokale Dienst liefert keine statischen
-// Dateien aus (thumbnail_service.py kennt nur /, /api/health,
-// /api/source/latest, /api/series-registry) und die Render-Harness laedt den
-// Compositor ueber file:// mit hartem Offline-Routing -- ein <img src="assets/...">
-// wuerde dort gar nicht laden bzw. das Canvas "tainten", womit toBlob() wirft.
-// Die PNG-Dateien bleiben die Quelle der Wahrheit, dieser Schritt ist wiederholbar.
+// CJ1: Frueher wurden ALLE Varianten als data:-URI eingebettet. Bei 14 Stueck
+// waren das ~4,7 MB base64 in einer Datei, die bei jedem Start komplett geparst
+// wird -- und die Bibliothek waechst weiter. Der Compositor holt die Varianten
+// jetzt zur Laufzeit ueber /api/emblem vom lokalen Dienst; eingebettet bleibt nur
+// der Rueckfall, damit ohne Dienst nicht emblemlos gerendert wird.
+//
+// Die Render-Harness laeuft ueber file:// ohne Dienst und bekommt die gewaehlte
+// Variante als cfg.emblemDataUri mitgegeben (siehe render-harness.cjs).
 //
 // EINE VARIANTE ERGAENZEN: Datei in assets/branding/emblems/ ablegen, dieses
 // Skript laufen lassen. Sonst nichts -- kein Manifest, keine Liste im Code. Der
@@ -22,9 +25,15 @@ const fs = require('fs'), path = require('path');
 // HTML um Megabytes aufblaehen wuerden. assets/branding/emblems/ bleibt die
 // volle Quelle.
 const MAX_EDGE = 640;
-// Ab hier wird gewarnt: jede Variante kostet dauerhaft Platz in der HTML, die
-// bei jedem Start des Compositors komplett geparst wird.
-const WARN_TOTAL_KB = 1500;
+// Welche Variante eingebettet wird, wenn der Dienst nicht erreichbar ist.
+const FALLBACK_SLUG = 'neutral';
+// Ab dieser Helligkeit (Median der sichtbaren Pixel, 0-255) gilt ein Motiv als
+// HELL und bekommt einen dunklen Schein statt eines hellen. CJ2: Die Kalibrierung
+// wurde zweimal von Hand gemacht (Teufel dunkel -> heller Schein, Avatar fast
+// schwarz -> heller Schein); mit den Jahreszeiten kommen helle Motive dazu.
+// Gemessen liegen die Graustufen-Varianten bei 13-21, christkind bei 221 -- die
+// Schwelle liegt weit von beiden Gruppen entfernt.
+const HELL_SCHWELLE = 90;
 
 const ROOT = path.resolve(__dirname, '..');
 const DIR = path.join(ROOT, 'assets', 'branding', 'emblems');
@@ -97,7 +106,8 @@ async function processAll(list) {
   try {
     const page = await browser.newPage();
     for (const v of list) {
-      v.touching = await page.evaluate(async ({ src }) => {
+      // Helligkeit UND Randberuehrung in einem Durchgang.
+      v.mess = await page.evaluate(async ({ src }) => {
         const img = new Image();
         await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('decode')); img.src = src; });
         const cv = document.createElement('canvas');
@@ -110,8 +120,17 @@ async function processAll(list) {
         const top = [], bottom = [], left = [], right = [];
         for (let x = 0; x < cv.width; x++) { top.push(alphaAt(x, 0)); bottom.push(alphaAt(x, cv.height - 1)); }
         for (let y = 0; y < cv.height; y++) { left.push(alphaAt(0, y)); right.push(alphaAt(cv.width - 1, y)); }
-        return { oben: share(top), unten: share(bottom), links: share(left), rechts: share(right) };
+        // Median der Helligkeit ueber die deckenden Pixel
+        const lums = [];
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] > 250) lums.push(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+        }
+        lums.sort((a, b) => a - b);
+        const median = lums.length ? lums[Math.floor(lums.length / 2)] : 0;
+        return { median, kanten: { oben: share(top), unten: share(bottom), links: share(left), rechts: share(right) } };
       }, { src: 'data:image/png;base64,' + v.buffer.toString('base64') });
+      v.touching = v.mess.kanten;
+      v.median = Math.round(v.mess.median);
     }
     for (const v of list) {
       if (Math.max(v.width, v.height) <= MAX_EDGE) continue;
@@ -156,21 +175,36 @@ async function processAll(list) {
     process.exit(1);
   }
 
-  const lines = variants.map(v =>
-    "  '" + v.slug + "': 'data:image/png;base64," + v.buffer.toString('base64') + "',");
-  const block = [BEGIN, 'const EMBLEMS = {', ...lines, '};', ''].join('\n');
+  const fallback = variants.find(v => v.slug === FALLBACK_SLUG) || variants[0];
+  if (!variants.some(v => v.slug === FALLBACK_SLUG)) {
+    console.warn('WARNUNG: ' + FALLBACK_SLUG + '.png fehlt -- eingebettet wird stattdessen "'
+      + fallback.slug + '". Ohne Dienst zeigt der Compositor dann diese Variante.');
+  }
+
+  const meta = variants.map(v =>
+    "  '" + v.slug + "': { median: " + v.median + ", hell: " + (v.median > HELL_SCHWELLE) + " },");
+  const block = [
+    BEGIN,
+    '// Alle Varianten mit gemessener Helligkeit. Die Bilddaten holt der Compositor',
+    '// zur Laufzeit ueber /api/emblem; hier steht nur, WELCHE es gibt und wie hell',
+    '// sie sind (fuer die Wahl der Scheinfarbe).',
+    'const EMBLEM_META = {',
+    ...meta,
+    '};',
+    "// Rueckfall fuer den Betrieb ohne Dienst (file://, Render-Harness ohne Config).",
+    "const EMBLEM_FALLBACK_SLUG = '" + fallback.slug + "';",
+    "const EMBLEM_FALLBACK_URI = 'data:image/png;base64," + fallback.buffer.toString('base64') + "';",
+    '',
+  ].join('\n');
   fs.writeFileSync(HTML, html.slice(0, begin) + block + html.slice(end), 'utf8');
 
-  let totalKb = 0;
+  console.log('Varianten (Helligkeit -> Schein):');
   for (const v of variants) {
-    const kb = Math.round(v.buffer.toString('base64').length / 1024);
-    totalKb += kb;
-    console.log('  ' + v.slug.padEnd(16) + v.width + 'x' + v.height +
-      (v.scaled ? ' -> max ' + MAX_EDGE : ' (unveraendert)') + ', ' + kb + ' KB base64');
+    console.log('  ' + v.slug.padEnd(16) + String(v.median).padStart(4)
+      + '  -> ' + (v.median > HELL_SCHWELLE ? 'DUNKLER Schein (helles Motiv)' : 'heller Schein'));
   }
-  console.log('eingebettet: ' + variants.length + ' Variante(n), zusammen ' + totalKb + ' KB base64');
-  if (totalKb > WARN_TOTAL_KB) {
-    console.warn('WARNUNG: ueber ' + WARN_TOTAL_KB + ' KB. Die HTML wird bei jedem Start komplett geparst --');
-    console.warn('bei weiteren Varianten MAX_EDGE senken oder selten genutzte auslagern.');
-  }
+  const kb = Math.round(fallback.buffer.toString('base64').length / 1024);
+  console.log('');
+  console.log('eingebettet: nur ' + fallback.slug + ' als Rueckfall (' + kb + ' KB base64)');
+  console.log('zur Laufzeit ueber /api/emblem: ' + variants.length + ' Variante(n)');
 })().catch(error => { console.error(error); process.exit(1); });

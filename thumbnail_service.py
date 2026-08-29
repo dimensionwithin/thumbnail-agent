@@ -63,7 +63,13 @@ STABILITY_DELAY_SECONDS = 0.25
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 SERVICE_ID = "dimensionwithin-thumbnail-compositor"
-SERVICE_PROTOCOL_VERSION = 1
+# 2 (2026-08-29): /api/emblem kam dazu. Die Version MUSS steigen, sobald sich das
+# Routenangebot aendert -- sonst kann der Compositor einen noch laufenden Dienst
+# aelterer Fassung nicht von einem passenden unterscheiden. Genau das ist einmal
+# passiert: der Dienst lief weiter, lieferte die NEUE HTML (sie wird pro Anfrage
+# von der Platte gelesen), kannte /api/emblem aber nicht -- alle Varianten kamen
+# als 404 zurueck und der Compositor zeichnete stumm seinen Rueckfall.
+SERVICE_PROTOCOL_VERSION = 2
 STARTUP_SIGNAL_TIMEOUT_SECONDS = 5.0
 BROWSER_OPEN_DELAY_SECONDS = 0.35
 WINDOWS_ERROR_ALREADY_EXISTS = 183

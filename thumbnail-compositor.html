@@ -209,7 +209,8 @@
 
     <div class="field" id="emblemControls" hidden>
       <label class="lbl" for="emblemVariant">Emblem-Variante</label>
-      <select id="emblemVariant" class="mono" style="width:100%;margin-bottom:14px;"></select>
+      <select id="emblemVariant" class="mono" style="width:100%;margin-bottom:6px;"></select>
+      <div class="mono" id="emblemWarnung" style="margin-bottom:14px;font-size:12px;color:#d08a5a;display:none;"></div>
       <label class="lbl" for="emblemSize">Emblem-Größe (längere Kante)</label>
       <div class="sizeRow">
         <input type="range" id="emblemSize" min="120" max="640" step="2" value="480">
@@ -363,6 +364,9 @@ const localService = {
   available: (pageURL.protocol === 'http:' && pageURL.hostname === '127.0.0.1' && sessionToken.length >= 24),
   token: sessionToken,
 };
+// Welche Protokollversion dieser Compositor erwartet. Steigt, sobald er auf eine
+// Route angewiesen ist, die es vorher nicht gab.
+const REQUIRED_PROTOCOL_VERSION = 2;
 const sourceState = {
   phase: localService.available ? 'idle' : 'unavailable',
   identity: null,
@@ -884,15 +888,45 @@ async function fetchEmblem(slug){
 // Dienst aus oder laeuft der Compositor ueber file://, wird dadurch nie emblemlos
 // gerendert -- currentEmblem() greift auf ihn zurueck. Erst danach werden die
 // uebrigen Varianten nachgeladen und ersetzen ihn fuer ihren eigenen Slug.
+// Ist der laufende Dienst alt genug, dass er /api/emblem noch nicht kennt? Das
+// laesst sich nur an der Protokollversion erkennen: die HTML wird pro Anfrage von
+// der Platte gelesen, ein weiterlaufender alter Dienst liefert also die NEUE
+// Oberflaeche mit einem ALTEN Routenangebot. Ohne diese Pruefung faellt das nur
+// in der Browserkonsole auf -- sichtbar bleibt der stumme Rueckfall.
+let emblemLoadWarnung = '';
+async function checkProtocolVersion(){
+  try {
+    const response = await fetch('/api/health', { cache:'no-store', credentials:'same-origin' });
+    if (!response.ok) return null;
+    const health = await response.json();
+    return (typeof health.protocol_version === 'number') ? health.protocol_version : null;
+  } catch (error){ return null; }
+}
+
 function loadEmblem(){
   if (emblemLoad) return emblemLoad;
   emblemLoad = (async () => {
     if (EMBLEM_FALLBACK_URI) await decodeEmblem(EMBLEM_FALLBACK_SLUG, EMBLEM_FALLBACK_URI);
     if (!localService.available) return;
+    const version = await checkProtocolVersion();
+    if (version !== null && version < REQUIRED_PROTOCOL_VERSION){
+      emblemLoadWarnung = 'Der laufende Dienst ist aelter als diese Oberflaeche (Protokoll '
+        + version + ', erwartet ' + REQUIRED_PROTOCOL_VERSION + '). Die Emblem-Varianten '
+        + 'lassen sich nicht laden -- bitte den Dienst neu starten. Gezeichnet wird solange '
+        + 'die Rueckfall-Variante.';
+      console.error(emblemLoadWarnung);
+      return;
+    }
+    const fehler = [];
     await Promise.all(EMBLEM_SLUGS.map(async slug => {
       try { await fetchEmblem(slug); }
-      catch (error){ console.error('Emblem "'+slug+'" nicht vom Dienst ladbar.', error); }
+      catch (error){ fehler.push(slug); console.error('Emblem "'+slug+'" nicht vom Dienst ladbar.', error); }
     }));
+    if (fehler.length){
+      emblemLoadWarnung = fehler.length + ' von ' + EMBLEM_SLUGS.length
+        + ' Emblem-Varianten konnten nicht geladen werden (' + fehler.slice(0,3).join(', ')
+        + (fehler.length>3 ? ' …' : '') + '). Gezeichnet wird die Rueckfall-Variante.';
+    }
   })();
   return emblemLoad;
 }
@@ -1045,6 +1079,7 @@ const imageOffsetYEl = document.getElementById('imageOffsetY'), imageOffsetYVal 
 const imageTransformReset = document.getElementById('imageTransformReset');
 const emblemControls = document.getElementById('emblemControls');
 const emblemVariantEl = document.getElementById('emblemVariant');
+const emblemWarnungEl = document.getElementById('emblemWarnung');
 const emblemSizeEl = document.getElementById('emblemSize'), emblemSizeVal = document.getElementById('emblemSizeVal');
 const emblemShowSeg = document.getElementById('emblemShowSeg');
 const emblemSideSeg = document.getElementById('emblemSideSeg');
@@ -1525,6 +1560,8 @@ function buildEmblemVariantUI(){
 }
 
 function syncEmblemUI(){
+  emblemWarnungEl.textContent = emblemLoadWarnung;
+  emblemWarnungEl.style.display = emblemLoadWarnung ? '' : 'none';
   // Ohne eingebettete Variante gibt es nichts einzustellen.
   emblemControls.hidden = !EMBLEM_PRESETS.has(state.preset) || EMBLEM_SLUGS.length === 0;
   emblemVariantEl.value = state.emblemVariant;

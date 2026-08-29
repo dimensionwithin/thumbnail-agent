@@ -682,7 +682,22 @@ class EmblemFallbackTests(unittest.TestCase):
     def test_service_failure_per_variant_is_caught(self) -> None:
         """Ein Ausfall bei EINER Variante darf nicht den ganzen Ladevorgang
         abbrechen -- sonst faellt auch der Rueckfall aus."""
-        self.assertIn("catch (error){ console.error('Emblem \"'+slug+'\" nicht vom Dienst ladbar.'", self.html)
+        self.assertIn("catch (error){ fehler.push(slug);", self.html)
+        self.assertIn("nicht vom Dienst ladbar.", self.html)
+
+    def test_a_stale_service_is_detected_and_shown(self) -> None:
+        """Die HTML wird pro Anfrage von der Platte gelesen -- ein weiterlaufender
+        Dienst aelterer Fassung liefert also die NEUE Oberflaeche mit einem ALTEN
+        Routenangebot. Ohne Versionspruefung faellt das nur in der Browserkonsole
+        auf, waehrend sichtbar stumm der Rueckfall gezeichnet wird."""
+        self.assertIn("const REQUIRED_PROTOCOL_VERSION = 2;", self.html)
+        self.assertIn("if (version !== null && version < REQUIRED_PROTOCOL_VERSION){", self.html)
+        self.assertIn("bitte den Dienst neu starten", self.html)
+        self.assertEqual(2, SERVICE_PROTOCOL_VERSION)
+
+    def test_load_failures_reach_the_user_interface(self) -> None:
+        self.assertIn("emblemWarnungEl.textContent = emblemLoadWarnung;", self.html)
+        self.assertIn('id="emblemWarnung"', self.html)
 
     def test_token_travels_in_a_header_not_in_the_url(self) -> None:
         self.assertIn("headers: { 'X-Session-Token': localService.token }", self.html)

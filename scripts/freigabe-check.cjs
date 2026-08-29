@@ -11,6 +11,11 @@
 //   4. Tokens und Geheimnisse
 //   5. .env-Schluessel, die als Vorgabewert im Quelltext stehen
 //
+// Vor jeder Pruefung laeuft eine Selbstpruefung (selbstpruefung()): jedes Muster
+// muss einen erfundenen Vertreter melden und darf auf keine Negativkontrolle
+// anschlagen. Faellt sie durch, bricht der Check mit Exit 2 ab und prueft gar
+// nichts -- ein Check, der stillschweigend blind ist, ist schlimmer als keiner.
+//
 // Aufruf: node scripts/freigabe-check.cjs
 
 require('dotenv').config();
@@ -54,9 +59,16 @@ function bekannteIds() {
 }
 
 const MUSTER = [
-  { name: 'absoluter Windows-Pfad', re: /[A-Za-z]:\\{1,2}(?:Users|Dimension|Git)\b/g },
-  { name: 'absoluter Unix-Heimpfad', re: /\/(?:home|Users)\/[A-Za-z0-9_.-]+\//g },
-  { name: 'Laufwerkspfad P:/ oder C:/', re: /\b[A-Za-z]:\/(?:Users|Dimension|Git)\b/g },
+  // DB (2026-08-29): KEIN \b hinter der Alternation. Der Projektordner heisst
+  // "Dimensionwithin-..."; auf "Dimension" folgt ein Wortzeichen, also gab es
+  // dort keine Wortgrenze -- genau der Pfad DIESES Rechners fiel durch. Das ist
+  // der dritte Fehler dieser Art (nach dem .trim() und dem leeren Literal); die
+  // Selbstpruefung unten faengt einen vierten ab, bevor irgendetwas geprueft wird.
+  { name: 'absoluter Windows-Pfad', re: /[A-Za-z]:\\{1,2}(?:Users|Dimension|Git)/g },
+  // Ebenso ohne abschliessenden Schraegstrich: ein Heimatordner unter /home
+  // oder /Users ist bereits ein absoluter Pfad, auch wenn nichts dahinter steht.
+  { name: 'absoluter Unix-Heimpfad', re: /\/(?:home|Users)\/[A-Za-z0-9_.-]+/g },
+  { name: 'Laufwerkspfad P:/ oder C:/', re: /\b[A-Za-z]:\/(?:Users|Dimension|Git)/g },
   // Echte Playlist-/Kanal-IDs enthalten Klein- UND Grossbuchstaben. Ein reiner
   // Grossbuchstaben-Bezeichner wie PLAYLIST_SIZE_WARN ist ein Konstantenname und
   // kein Geheimnis -- ohne diese Bedingung meldet der Check ihn als Fund und
@@ -69,7 +81,115 @@ const MUSTER = [
   { name: 'Client-ID', re: /\b\d{10,}-[a-z0-9]{20,}\.apps\.googleusercontent\.com\b/g },
 ];
 
+// Der Pruefkern. Selbstpruefung und echter Lauf gehen durch GENAU diese
+// Funktion -- eine Selbstpruefung, die ihren eigenen Code prueft statt den
+// benutzten, belegt nichts.
+function pruefeInhalt(inhalt, ids) {
+  const funde = [];
+  for (const id of ids) {
+    if (inhalt.includes(id)) funde.push({ muster: "bekannte ID", text: `ID/Geheimnis aus .env oder Messdaten (${id.slice(0, 4)}…)` });
+  }
+  for (const m of MUSTER) {
+    const g = inhalt.match(m.re);
+    if (g) funde.push({ muster: m.name, text: `${m.name}: ${[...new Set(g)].slice(0, 3).join(", ")}` });
+  }
+  // .env-Schluessel duerfen GELESEN werden (process.env.X), aber nicht als
+  // Vorgabewert dastehen: X = "irgendwas".
+  for (const k of ENV_SCHLUESSEL) {
+    // DA (2026-08-29): Ein LEERES Literal ist kein Vorgabewert, sondern das
+    // Gegenteil -- es macht den Schluessel im Kindprozess unsichtbar (siehe
+    // scripts/verify-publish.cjs). Gemeldet wird deshalb nur noch ein Literal
+    // MIT Inhalt: auf das oeffnende Anfuehrungszeichen muss ein anderes
+    // Zeichen als das schliessende folgen.
+    const re = new RegExp(`${k}\\s*[:=]\\s*('[^']|"[^"]|\`[^\`])`, "g");
+    if (re.test(inhalt)) funde.push({ muster: ".env-Vorgabewert", text: `.env-Schluessel ${k} mit Vorgabewert im Quelltext` });
+  }
+  return funde;
+}
+
+// DB (2026-08-29): Selbstpruefung. Ein Freigabe-Check, der stillschweigend
+// blind ist, ist schlimmer als keiner -- dreimal in dieser Reihe hat er sauber
+// gemeldet und dabei nicht hingesehen (.trim() in CX, leeres Literal in DA,
+// die Wortgrenze hier in DB). Vor jeder Pruefung laeuft deshalb jedes Muster
+// gegen einen eigenen Vertreter. ALLE Werte unten sind erfunden; kein einziger
+// stammt aus .env, Messdaten oder Fixtures.
+// SELBSTPRUEFUNG-VERTRETER ANFANG -- siehe ohneVertreterBlock()
+const VERTRETER = {
+  'absoluter Windows-Pfad': [
+    'P:\\Dimensionwithin-Erfunden\\unterordner',
+    'C:\\Users\\erfunden\\x',
+    'D:\\\\Git\\\\erfunden',
+  ],
+  'absoluter Unix-Heimpfad': ['/home/erfunden/repo/', '/home/erfunden', '/Users/erfunden/repo'],
+  'Laufwerkspfad P:/ oder C:/': ['P:/Dimensionwithin-Erfunden/unterordner', 'C:/Users/erfunden/x'],
+  'Playlist-ID': ['PLerfundenErfundenErfundenAb'],
+  'Kanal-ID': ['UCerfundenErfundenErfun2'],
+  'OAuth-Zugriffstoken': ['ya29.erfundenErfundenErfunden'],
+  'Google-Client-Secret': ['GOCSPX-erfundenErfunden'],
+  'Anthropic-Schluessel': ['sk-ant-erfundenErfundenErfunden'],
+  'Client-ID': ['1234567890123-erfundenabcdefghijklmno.apps.googleusercontent.com'],
+  '.env-Vorgabewert': ["YOUTUBE_CLIENT_SECRET = 'erfunden'", 'INNER_CIRCLE_PLAYLIST_ID: "erfunden"'],
+};
+
+// Gegenrichtung: Zeilen, die KEIN Muster melden darf. Jeder Fehlalarm hier
+// kostet den Check seine Glaubwuerdigkeit, und ein Check, dem man nicht mehr
+// glaubt, wird uebergangen.
+const NEGATIVKONTROLLEN = [
+  'const PLAYLIST_SIZE_WARN = 200;',
+  'const UC_STATE_MAX = 5;',
+  'https://i.ytimg.com/vi/${videoId}/hqdefault.jpg',
+  'const env = { YOUTUBE_CLIENT_ID: "" };',
+  'const id = process.env.INNER_CIRCLE_PLAYLIST_ID;',
+];
+// SELBSTPRUEFUNG-VERTRETER ENDE
+
+// Die Vertreter oben sehen absichtlich aus wie das, was sie fangen sollen --
+// beim Lauf ueber DIESE Datei meldet der Check sonst seine eigene Tabelle und
+// koennte nie sauber sein. Fuer die Musterpruefung wird der markierte Block
+// deshalb nur in dieser einen Datei ausgeblendet. Der Abgleich gegen die
+// bekannten IDs aus .env und Messdaten laeuft weiterhin ueber den GANZEN Text,
+// damit sich hier drin nichts Echtes verstecken kann.
+const EIGENE_DATEI = 'scripts/freigabe-check.cjs';
+function ohneVertreterBlock(text) {
+  return text.replace(/\/\/ SELBSTPRUEFUNG-VERTRETER ANFANG[\s\S]*?\/\/ SELBSTPRUEFUNG-VERTRETER ENDE/, '');
+}
+
+function selbstpruefung() {
+  const fehler = [];
+  for (const m of MUSTER) {
+    const vs = VERTRETER[m.name];
+    if (!vs || !vs.length) { fehler.push(`Muster "${m.name}" hat keinen Vertreter in VERTRETER`); continue; }
+    for (const v of vs) {
+      if (!pruefeInhalt(v, []).some((f) => f.muster === m.name)) {
+        fehler.push(`Muster "${m.name}" meldet seinen eigenen Vertreter nicht: ${v}`);
+      }
+    }
+  }
+  for (const v of VERTRETER[".env-Vorgabewert"] || []) {
+    if (!pruefeInhalt(v, []).some((f) => f.muster === ".env-Vorgabewert")) {
+      fehler.push(`.env-Vorgabewert wird nicht gemeldet: ${v}`);
+    }
+  }
+  for (const v of NEGATIVKONTROLLEN) {
+    const f = pruefeInhalt(v, []);
+    if (f.length) fehler.push(`Fehlalarm auf "${v}": ${f.map((x) => x.muster).join(", ")}`);
+  }
+  // Und der Abgleich gegen bekannte IDs selbst -- mit einer erfundenen ID.
+  if (!pruefeInhalt("const x = " + String.fromCharCode(39) + "ERFUNDEN1234" + String.fromCharCode(39) + ";", ["ERFUNDEN1234"]).length) {
+    fehler.push("Abgleich gegen bekannte IDs greift nicht");
+  }
+  if (fehler.length) {
+    console.error("SELBSTPRUEFUNG FEHLGESCHLAGEN -- es wurde NICHTS geprueft:");
+    for (const f of fehler) console.error("  " + f);
+    process.exit(2);
+  }
+  console.log(`Selbstpruefung: ${MUSTER.length} Muster + ${NEGATIVKONTROLLEN.length} Negativkontrollen bestanden.`);
+}
+
 function main() {
+  // Erst beweisen, dass die Muster sehen -- dann erst pruefen.
+  selbstpruefung();
+
   // Alles, was git als geaendert oder neu meldet -- also der Commit-Kandidat.
   //
   // KEIN .trim() auf die Gesamtausgabe: Porcelain-Zeilen beginnen bei
@@ -97,27 +217,12 @@ function main() {
 
   let treffer = 0;
   for (const f of dateien) {
-    const inhalt = fs.readFileSync(f, 'utf8');
-    const funde = [];
-
-    for (const id of ids) {
-      if (inhalt.includes(id)) funde.push(`ID/Geheimnis aus .env oder Messdaten (${id.slice(0, 4)}…)`);
-    }
-    for (const m of MUSTER) {
-      const g = inhalt.match(m.re);
-      if (g) funde.push(`${m.name}: ${[...new Set(g)].slice(0, 3).join(', ')}`);
-    }
-    // .env-Schluessel duerfen GELESEN werden (process.env.X), aber nicht als
-    // Vorgabewert dastehen: X = 'irgendwas' oder X="irgendwas".
-    for (const k of ENV_SCHLUESSEL) {
-      // DA (2026-08-29): Ein LEERES Literal ist kein Vorgabewert, sondern das
-      // Gegenteil -- es macht den Schluessel im Kindprozess unsichtbar (siehe
-      // scripts/verify-publish.cjs). Gemeldet wird deshalb nur noch ein Literal
-      // MIT Inhalt: auf das oeffnende Anfuehrungszeichen muss ein anderes
-      // Zeichen als das schliessende folgen.
-      const re = new RegExp(`${k}\\s*[:=]\\s*('[^']|"[^"]|\`[^\`])`, 'g');
-      if (re.test(inhalt)) funde.push(`.env-Schluessel ${k} mit Vorgabewert im Quelltext`);
-    }
+    const roh = fs.readFileSync(f, 'utf8');
+    const text = f.split('\\').join('/').endsWith(EIGENE_DATEI) ? ohneVertreterBlock(roh) : roh;
+    const funde = [
+      ...pruefeInhalt(text, []),
+      ...pruefeInhalt(roh, ids).filter((x) => x.muster === 'bekannte ID'),
+    ].map((x) => x.text);
 
     if (funde.length) {
       treffer += funde.length;

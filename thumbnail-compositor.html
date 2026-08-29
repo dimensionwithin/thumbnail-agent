@@ -215,6 +215,12 @@
         <input type="range" id="emblemSize" min="120" max="640" step="2" value="480">
         <output id="emblemSizeVal">480 px</output>
       </div>
+      <label class="lbl">Emblem zeigen</label>
+      <div class="seg" id="emblemShowSeg" style="margin-bottom:14px;">
+        <button data-show="on"   aria-pressed="false">Ein</button>
+        <button data-show="off"  aria-pressed="false">Aus</button>
+        <button data-show="auto" aria-pressed="true">Automatisch</button>
+      </div>
       <label class="lbl">Emblem-Seite</label>
       <div class="seg" id="emblemSideSeg" style="margin-bottom:14px;">
         <button data-side="left"  aria-pressed="false">Links</button>
@@ -334,6 +340,7 @@ const state = {
   img: null,
   emblemVariant: '',      // Schluessel aus EMBLEMS; leer = erste vorhandene
   emblemSize: 480,
+  emblemShow: 'auto',   // 'auto' (bei Titel 'bottom' aus) | 'on' | 'off'
   emblemSide: 'auto',   // 'auto' | 'left' | 'right'
   emblemMargin: 40,     // Abstand zur AEUSSEREN Bildkante -- spiegelt sich mit
   emblemY: 720,         // Unterkante -- buendig mit dem Bildrand
@@ -720,25 +727,83 @@ const EMBLEMS = {
 // Seitenwechsel spiegelt er sich dann von selbst mit.
 const EMBLEM_DEFAULT = { size: 480, margin: 40, y: 720 };
 
+// CG5: Welche Formate tragen das Emblem. Es ist ein kanalweites Erkennungszeichen,
+// kein AIV-Sonderfall. Ohne Emblem bleiben nur nonchart (freies Topic-Bild ohne
+// feste Marke) und memberlive (Ad-hoc-Streams).
+const EMBLEM_PRESETS = new Set(['aiv', 'standard', 'livestream', 'innercircle']);
+
+// CG1: Wird das Emblem ueberhaupt gezeichnet?
+//
+// Bei Titelposition 'bottom' NICHT. Der Grund steht in boxFor(): 'bottom' ist
+// eine ganzbreite Box (x = M bis W-M) mit linksbuendigem Satz. Eine laengere
+// Headline laeuft dort von Rand zu Rand, und das Emblem sitzt auf derselben
+// Hoehe -- es gibt keine Seite, auf die es ausweichen koennte. Statt einer
+// Kollision oder eines Kompromisses entfaellt es dort ganz.
+//
+// NUR 'bottom'. Bei 'top' ist die untere Haelfte frei, dort gehoert es hin.
+// 'bottom-left' und 'bottom-right' benutzen dieselbe ganzbreite Box und
+// unterscheiden sich nur in der Ausrichtung des Satzes -- bei kurzem Titel ist
+// die Gegenseite frei, das Emblem wandert dorthin. Reicht der Satz doch bis zum
+// Emblem, faengt das die regulaere Suche in autoPlace() ab, die mit der echten
+// Textbreite rechnet.
+function emblemVisible(){
+  if (!EMBLEM_PRESETS.has(state.preset)) return false;
+  if (state.emblemShow === 'off') return false;
+  if (state.emblemShow === 'on') return true;
+  return state.pos !== 'bottom';
+}
+
 // CD1/CD3: Auf welcher Seite steht das Emblem? Im Automatikbetrieb auf der dem
 // Titel gegenueberliegenden -- steht der Titel rechts, weicht das Emblem nach
 // links. Reine Funktion von state.pos: waehrend eines autoPlace()-Durchgangs
 // liefert sie die Seite aus der VORHERIGEN Position, und genau darauf beruht
 // das Zwei-Durchgang-Verfahren in applyAuto(). Ein eigener Zustand waere hier
 // eine zweite Wahrheit, die auseinanderlaufen kann.
+// CH3: Welche Seite laesst der HINTERGRUND freier? Beide Kandidatenflaechen
+// werden in derselben Belegungskarte ausgezaehlt, die auch autoPlace() benutzt.
+// Gemessen statt geraten: bei einem steigenden Chart liegt die Kurve rechts
+// unten, bei einem fallenden endet sie dort -- eine feste Vorgabe waere in einem
+// der beiden Faelle falsch.
+//
+// BEWUSST OHNE ZWISCHENSPEICHER. Ein erster Anlauf merkte sich das Ergebnis unter
+// einem Schluessel aus state.img.src, Groesse und Emblem-Geometrie. Ein per
+// genChartCanvas() erzeugter Hintergrund ist aber eine Canvas OHNE src, und alle
+// Chartformen sind 1280x720 -- alle drei bekamen denselben Schluessel und damit
+// die zuerst berechnete Antwort. Gemessen fiel das auf: bei fallendem Chart war
+// links mit 22 Zellen belegt und rechts mit 0, gewaehlt wurde trotzdem links.
+// Die Karte ist 120x67 Zellen und wird pro Render hoechstens zweimal gebaut --
+// der Zwischenspeicher sparte fast nichts und kostete die Richtigkeit.
+function freeSide(){
+  if (!state.img) return 'right';
+  const links = emblemRect('left'), rechts = emblemRect('right');
+  if (!links || !rechts) return 'right';
+  const occ = occupancyMap(state.img);
+  const nL = occupancyIn(occ, links), nR = occupancyIn(occ, rechts);
+  // Gleichstand bleibt rechts: das ist die bisherige Standardseite, und ohne
+  // messbaren Unterschied gibt es keinen Grund zu wechseln.
+  return (nL < nR) ? 'left' : 'right';
+}
+
 function resolvedEmblemSide(){
   if (state.emblemSide !== 'auto') return state.emblemSide;
-  return (state.pos === 'right' || state.pos === 'bottom-right') ? 'left' : 'right';
+  // Der Titel hat Vorrang, wo er eine Seite belegt.
+  if (state.pos === 'right' || state.pos === 'bottom-right') return 'left';
+  if (state.pos === 'left'  || state.pos === 'bottom-left')  return 'right';
+  // 'top' und 'bottom' laufen ueber die volle Breite und belegen keine Seite --
+  // hier entscheidet der freiere Hintergrund.
+  return freeSide();
 }
 // Gezeichnete Flaeche des Emblems im 1280x720-Raum, oder null.
-function emblemRect(){
-  const img = (state.preset === 'aiv') ? currentEmblem() : null;
+// forceSide dient nur der Messung in freeSide() -- der normale Aufruf laesst sie weg.
+function emblemRect(forceSide){
+  const img = emblemVisible() ? currentEmblem() : null;
   if (!img) return null;
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
   if (!iw || !ih) return null;
   const s = state.emblemSize / Math.max(iw, ih);
   const dw = iw*s, dh = ih*s;
-  const dx = (resolvedEmblemSide() === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);
+  const side = forceSide || resolvedEmblemSide();
+  const dx = (side === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);
   return { img, dx, dy: state.emblemY - dh, dw, dh };
 }
 // Schmaler Schein hinter dem Emblem, damit es auf beliebigem Material steht.
@@ -858,13 +923,24 @@ function drawEmblem(){
 // ---------- live badge (bottom-right, live formats only) ----------
 function drawLiveBadge(){
   if (state.preset !== 'livestream' && state.preset !== 'innercircle' && state.preset !== 'memberlive') return;
-  const label = 'LIVE', dotR = 10, gap = 12, padRight = 40, yMid = H - 42;
+  const label = 'LIVE', dotR = 10, gap = 12, pad = 40, yMid = H - 42;
   ctx.textBaseline = 'middle';
   ctx.font = '500 24px JetBrains Mono, monospace';
   ctx.letterSpacing = '2px';
   ctx.textAlign = 'left';
   const tw = ctx.measureText(label).width;
-  const x = W - padRight - (dotR*2 + gap + tw);
+  const bw = dotR*2 + gap + tw;
+  // CH3: Das Abzeichen sass fest unten rechts -- genau dort, wo seit CG5 auch das
+  // Emblem steht (Ueberlappung in 3 von 5 Stellungen). Es weicht deshalb auf die
+  // Gegenseite aus.
+  //
+  // Warum ausweichen statt die Abzeichenflaeche in die Seitenwahl einzurechnen:
+  // die Seite wird bei 'left'/'right'-Titeln vom Titel bestimmt, nicht von der
+  // Messung. Eine Gewichtung in der Messung wuerde die Ueberlappung also in genau
+  // den Faellen NICHT verhindern, in denen sie am haeufigsten auftrat. Die
+  // Ausweichregel gilt dagegen immer und ist eine einzige Bedingung.
+  const emblem = emblemRect();
+  const x = (emblem && emblem.dx + emblem.dw > W/2) ? pad : (W - pad - bw);
   // red dot with a soft glow so it reads on black
   ctx.save();
   ctx.shadowColor = C.oxblood; ctx.shadowBlur = 9;
@@ -908,6 +984,7 @@ const imageTransformReset = document.getElementById('imageTransformReset');
 const emblemControls = document.getElementById('emblemControls');
 const emblemVariantEl = document.getElementById('emblemVariant');
 const emblemSizeEl = document.getElementById('emblemSize'), emblemSizeVal = document.getElementById('emblemSizeVal');
+const emblemShowSeg = document.getElementById('emblemShowSeg');
 const emblemSideSeg = document.getElementById('emblemSideSeg');
 const emblemMarginEl = document.getElementById('emblemMargin'), emblemMarginVal = document.getElementById('emblemMarginVal');
 const emblemYEl = document.getElementById('emblemY'), emblemYVal = document.getElementById('emblemYVal');
@@ -1264,23 +1341,39 @@ function emblemBlockRect(){
   };
 }
 
-function autoPlace(img){
-  const GW = 120, GH = Math.round(GW*9/16);
-  const c = document.createElement('canvas'); c.width = GW; c.height = GH;
+// Belegungskarte des HINTERGRUNDS. Eine Zelle gilt als "Inhalt", wenn sie hell
+// ODER farbig ist -- also alles, was nicht der fast schwarze Grund ist.
+// CH3: aus autoPlace() herausgeloest, weil die Emblem-Seitenwahl dieselbe Karte
+// braucht. Eine zweite, leicht abweichende Rechnung waere eine Fehlerquelle.
+const OCC_GW = 120, OCC_GH = Math.round(120*9/16);
+function occupancyMap(img){
+  const c = document.createElement('canvas'); c.width = OCC_GW; c.height = OCC_GH;
   const g = c.getContext('2d');
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-  const s = Math.max(GW/iw, GH/ih);
-  g.drawImage(img, (GW-iw*s)/2, (GH-ih*s)/2, iw*s, ih*s);
-  const d = g.getImageData(0,0,GW,GH).data;
-  // occupancy map: a cell counts as "content" if it is bright OR colored
-  // (i.e. anything that isn't the near-black background)
-  const occ = new Uint8Array(GW*GH);
-  for (let i=0;i<GW*GH;i++){
+  const s = Math.max(OCC_GW/iw, OCC_GH/ih);
+  g.drawImage(img, (OCC_GW-iw*s)/2, (OCC_GH-ih*s)/2, iw*s, ih*s);
+  const d = g.getImageData(0,0,OCC_GW,OCC_GH).data;
+  const occ = new Uint8Array(OCC_GW*OCC_GH);
+  for (let i=0;i<OCC_GW*OCC_GH;i++){
     const r=d[i*4], gg=d[i*4+1], b=d[i*4+2];
     const luma=(0.2126*r+0.7152*gg+0.0722*b)/255;
     const chroma=(Math.max(r,gg,b)-Math.min(r,gg,b))/255;
     occ[i] = (luma>0.15 || chroma>0.16) ? 1 : 0;
   }
+  return occ;
+}
+// Belegte Zellen innerhalb eines Rechtecks im 1280x720-Raum.
+function occupancyIn(occ, rect){
+  const x0=Math.max(0,Math.floor(rect.dx/W*OCC_GW)), x1=Math.min(OCC_GW,Math.ceil((rect.dx+rect.dw)/W*OCC_GW));
+  const y0=Math.max(0,Math.floor(rect.dy/H*OCC_GH)), y1=Math.min(OCC_GH,Math.ceil((rect.dy+rect.dh)/H*OCC_GH));
+  let n=0;
+  for (let y=y0;y<y1;y++) for (let x=x0;x<x1;x++) if (occ[y*OCC_GW+x]) n++;
+  return n;
+}
+
+function autoPlace(img){
+  const GW = OCC_GW, GH = OCC_GH;
+  const occ = occupancyMap(img);
   // BK2: Emblem-Zone als belegt markieren, damit die Headline daran
   // vorbeigeplant wird. Ausserhalb von aiv ist block === null und diese
   // Schleife laeuft gar nicht erst an -- die Karte bleibt bitgleich.
@@ -1336,24 +1429,15 @@ function autoPlace(img){
       }
     }
   }
-  // Rueckfall, wenn KEINE Stellung frei ist. Bisher wurde blind 'bottom' gewaehlt.
-  // Mit dem Emblem unten rechts liefe die Headline dann mitten hindurch -- der
-  // Rueckfall kannte die Sperrflaeche nicht, nur die regulaere Suche darueber.
-  // Gibt es eine Sperrflaeche (ausschliesslich bei aiv), nehmen wir stattdessen
-  // die Stellung mit der GERINGSTEN Ueberdeckung. Ohne Sperrflaeche ist block
-  // null und es bleibt exakt beim bisherigen {bottom, 50}.
-  if (!best && block){
-    let least = null;
-    for (const pos of order){
-      const bb = textBBox(pos, 50);
-      if (!bb) continue;
-      const ox = Math.max(0, Math.min(bb.x1, block.x1) - Math.max(bb.x0, block.x0));
-      const oy = Math.max(0, Math.min(bb.y1, block.y1) - Math.max(bb.y0, block.y0));
-      const overlap = ox * oy;
-      if (!least || overlap < least.overlap) least = {pos, scalePct:50, overlap};
-    }
-    if (least) best = {pos: least.pos, scalePct: least.scalePct};
-  }
+  // Rueckfall, wenn KEINE Stellung frei ist: die kleinste Titelgroesse unten.
+  //
+  // CH2 (2026-08-29): Hier stand einmal eine Sonderlogik, die bei vorhandener
+  // Sperrflaeche die Stellung mit der geringsten Ueberdeckung waehlte. Sie ist
+  // ersatzlos entfernt, und das ist KEINE Luecke: seit CG1 entfaellt das Emblem
+  // bei Titelposition 'bottom' vollstaendig. Damit ist 'bottom' die garantiert
+  // kollisionsfreie Stellung -- die alte Logik haette ausgerechnet sie gemieden,
+  // weil sie die Ueberdeckung gegen eine Sperrflaeche rechnete, die es nach der
+  // Wahl gar nicht mehr gibt. Ein Mechanismus, der gegen sich selbst arbeitet.
   if (!best) best = {pos:'bottom', scalePct:50};
   return { pos: best.pos, scalePct: best.scalePct };
 }
@@ -1380,11 +1464,12 @@ function buildEmblemVariantUI(){
 
 function syncEmblemUI(){
   // Ohne eingebettete Variante gibt es nichts einzustellen.
-  emblemControls.hidden = (state.preset !== 'aiv') || EMBLEM_SLUGS.length === 0;
+  emblemControls.hidden = !EMBLEM_PRESETS.has(state.preset) || EMBLEM_SLUGS.length === 0;
   emblemVariantEl.value = state.emblemVariant;
   emblemSizeEl.value = state.emblemSize; emblemSizeVal.textContent = state.emblemSize + ' px';
   emblemMarginEl.value = state.emblemMargin; emblemMarginVal.textContent = state.emblemMargin + ' px';
   [...emblemSideSeg.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.side === state.emblemSide)));
+  [...emblemShowSeg.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.show === state.emblemShow)));
   emblemYEl.value = state.emblemY;       emblemYVal.textContent = state.emblemY + ' px';
 }
 // Verschiebt oder skaliert man das Emblem, wandert die Sperrflaeche mit --
@@ -1401,13 +1486,17 @@ emblemSideSeg.addEventListener('click', e => {
   const btn = e.target.closest('button'); if (!btn) return;
   state.emblemSide = btn.dataset.side; emblemChanged();
 });
+emblemShowSeg.addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  state.emblemShow = btn.dataset.show; emblemChanged();
+});
 emblemYEl.addEventListener('input',    e => { state.emblemY    = +e.target.value; emblemChanged(); });
 // Ein Variantenwechsel aendert die Sperrflaeche (anderes Seitenverhaeltnis),
 // deshalb derselbe Weg wie Groesse und Position.
 emblemVariantEl.addEventListener('change', e => { state.emblemVariant = e.target.value; emblemChanged(); });
 emblemResetBtn.addEventListener('click', () => {
   state.emblemSize = EMBLEM_DEFAULT.size; state.emblemMargin = EMBLEM_DEFAULT.margin;
-  state.emblemY = EMBLEM_DEFAULT.y; state.emblemSide = 'auto';
+  state.emblemY = EMBLEM_DEFAULT.y; state.emblemSide = 'auto'; state.emblemShow = 'auto';
   emblemChanged();
 });
 
@@ -1423,10 +1512,12 @@ function applyAuto(){
   //      Nur wenn sie das tut, wird ein zweites Mal gesucht.
   // Danach wird bewusst NICHT weitergerechnet: Seite und Position koennten
   // einander sonst im Kreis jagen. Der zweite Durchgang ist die Obergrenze.
-  const sideBefore = resolvedEmblemSide();
+  const sideBefore = resolvedEmblemSide(), visibleBefore = emblemVisible();
   let r = autoPlace(state.img);
   state.pos = r.pos;
-  if (resolvedEmblemSide() !== sideBefore){
+  // Zweiter Durchgang, wenn sich die Seite ODER die Sichtbarkeit geaendert hat --
+  // faellt das Emblem weg (Titel 'bottom'), verschwindet auch seine Sperrflaeche.
+  if (resolvedEmblemSide() !== sideBefore || emblemVisible() !== visibleBefore){
     r = autoPlace(state.img);
     state.pos = r.pos;
   }
@@ -1828,6 +1919,7 @@ function applyConfig(cfg){
   if (cfg.emblemSize != null) state.emblemSize = +cfg.emblemSize;
   if (cfg.emblemMargin != null) state.emblemMargin = +cfg.emblemMargin;
   if (cfg.emblemSide != null) state.emblemSide = cfg.emblemSide;
+  if (cfg.emblemShow != null) state.emblemShow = cfg.emblemShow;
   if (cfg.emblemY != null) state.emblemY = +cfg.emblemY;
   if (cfg.label != null){ state.meta.labelNC = cfg.label; }
   if (cfg.chartForm){

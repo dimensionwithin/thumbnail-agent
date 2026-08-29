@@ -1296,11 +1296,12 @@ class EmblemLayerTest(unittest.TestCase):
         self.assertIn("const EMBLEM_GLOW = { color: 'rgba(236,232,224,", self.html)
 
     def test_draw_emblem_returns_early_for_every_other_preset(self) -> None:
-        """Der Preset-Test sitzt jetzt in emblemRect(), das drawEmblem() UND
+        """Der Preset-Test sitzt in emblemRect(), das drawEmblem() UND
         emblemBlockRect() speist -- eine Stelle statt zweier, die auseinander
-        laufen koennen. Fuer jedes andere Preset ist der Rueckgabewert null."""
+        laufen koennen. Ausserhalb von EMBLEM_PRESETS ist der Rueckgabewert null."""
+        self.assertIn("const img = emblemVisible() ? currentEmblem() : null;", self.html)
         self.assertIn(
-            "const img = (state.preset === 'aiv') ? currentEmblem() : null;", self.html
+            "  if (!EMBLEM_PRESETS.has(state.preset)) return false;", self.html
         )
         draw = self.html[self.html.index("function drawEmblem(){"):]
         draw = draw[: draw.index("\n}")]
@@ -1313,13 +1314,40 @@ class EmblemLayerTest(unittest.TestCase):
         self.assertLess(order.index("drawVignette()"), order.index("drawEmblem()"))
         self.assertLess(order.index("drawEmblem()"), order.index("drawWatermark()"))
 
-    def test_block_rect_is_null_without_aiv_and_without_a_loaded_emblem(self) -> None:
+    def test_block_rect_is_null_without_an_emblem(self) -> None:
         """Kern der BK2-Zusage: liefert emblemBlockRect() null, bleibt die
-        Belegungskarte in autoPlace() unveraendert."""
-        self.assertIn(
-            "const img = (state.preset === 'aiv') ? currentEmblem() : null;", self.html
-        )
+        Belegungskarte in autoPlace() unveraendert. Das gilt jetzt fuer jedes
+        Preset ausserhalb von EMBLEM_PRESETS und zusaetzlich bei Titel 'bottom'."""
+        self.assertIn("const img = emblemVisible() ? currentEmblem() : null;", self.html)
         self.assertIn("  if (!img) return null;", self.html)
+
+    def test_only_nonchart_and_memberlive_have_no_emblem(self) -> None:
+        """CG5/CH1: kanalweites Erkennungszeichen. Ohne Emblem bleiben nur
+        nonchart (freies Topic-Bild ohne feste Marke) und memberlive (Ad-hoc)."""
+        self.assertIn(
+            "const EMBLEM_PRESETS = new Set(['aiv', 'standard', 'livestream', 'innercircle']);",
+            self.html,
+        )
+
+    def test_emblem_is_dropped_for_a_full_width_bottom_title(self) -> None:
+        """CG1: 'bottom' ist eine ganzbreite Box -- eine laengere Headline laeuft
+        von Rand zu Rand, das Emblem sitzt auf derselben Hoehe und hat keine
+        Seite zum Ausweichen. NUR 'bottom': bei 'top' ist unten alles frei."""
+        self.assertIn("  return state.pos !== 'bottom';", self.html)
+        visible = self.html[self.html.index("function emblemVisible(){"):]
+        visible = visible[: visible.index("\n}")]
+        self.assertNotIn("'top'", visible)
+
+    def test_emblem_visibility_is_overridable(self) -> None:
+        """CG2: ein / aus / automatisch, Vorgabe automatisch. Das Preset-Gatter
+        bleibt aber staerker -- nonchart laesst sich nicht einschalten."""
+        self.assertIn("if (state.emblemShow === 'off') return false;", self.html)
+        self.assertIn("if (state.emblemShow === 'on') return true;", self.html)
+        visible = self.html[self.html.index("function emblemVisible(){"):]
+        visible = visible[: visible.index("\n}")]
+        self.assertLess(
+            visible.index("EMBLEM_PRESETS"), visible.index("state.emblemShow")
+        )
 
     def test_auto_place_only_stamps_the_map_when_a_block_exists(self) -> None:
         self.assertIn("const block = emblemBlockRect();\n  if (block){", self.html)
@@ -1336,20 +1364,42 @@ class EmblemLayerTest(unittest.TestCase):
         mit), senkrecht die Unterkante. Mit einem Mittelpunkt-Anker wanderte die
         buendige Unterkante bei jeder Groessenaenderung -- der Anschnitt wuerde
         dann zur Kartenkante."""
+        self.assertIn("const side = forceSide || resolvedEmblemSide();", self.html)
         self.assertIn(
-            "const dx = (resolvedEmblemSide() === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);",
+            "const dx = (side === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);",
             self.html,
         )
         self.assertIn("const EMBLEM_DEFAULT = { size: 480, margin: 40, y: 720 };", self.html)
 
-    def test_side_follows_the_title_position_when_automatic(self) -> None:
-        """CD1: Titel rechts -> Emblem links. Sonst rechts. 'top' und 'bottom'
-        haben keine Seite und behalten deshalb die Standardseite."""
+    def test_side_follows_the_title_and_otherwise_the_free_background(self) -> None:
+        """CD1/CH3: Der Titel hat Vorrang, wo er eine Seite belegt. 'top' und
+        'bottom' laufen ueber die volle Breite und belegen keine -- dort
+        entscheidet die gemessene freiere Seite des Hintergrunds."""
+        self.assertIn("if (state.emblemSide !== 'auto') return state.emblemSide;", self.html)
         self.assertIn(
-            "return (state.pos === 'right' || state.pos === 'bottom-right') ? 'left' : 'right';",
+            "if (state.pos === 'right' || state.pos === 'bottom-right') return 'left';", self.html
+        )
+        self.assertIn(
+            "if (state.pos === 'left'  || state.pos === 'bottom-left')  return 'right';", self.html
+        )
+        self.assertIn("  return freeSide();", self.html)
+
+    def test_free_side_uses_the_same_occupancy_map_as_auto_place(self) -> None:
+        """Eine zweite, leicht abweichende Belegungsrechnung waere eine
+        Fehlerquelle -- beide benutzen occupancyMap()."""
+        self.assertIn("function occupancyMap(img){", self.html)
+        self.assertIn("const occ = occupancyMap(state.img);", self.html)
+        auto = self.html[self.html.index("function autoPlace(img){"):]
+        auto = auto[: auto.index("  const hasContent")]
+        self.assertIn("const occ = occupancyMap(img);", auto)
+
+    def test_live_badge_moves_away_from_the_emblem(self) -> None:
+        """CH3: Das Abzeichen sass fest unten rechts, wo seit CG5 auch das Emblem
+        steht -- Ueberlappung in 3 von 5 Stellungen."""
+        self.assertIn(
+            "const x = (emblem && emblem.dx + emblem.dw > W/2) ? pad : (W - pad - bw);",
             self.html,
         )
-        self.assertIn("if (state.emblemSide !== 'auto') return state.emblemSide;", self.html)
 
     def test_mirror_wraps_the_emblem_itself_not_only_the_glow(self) -> None:
         """CF1: DER Fehler, der eine Positionspruefung ueberlebt hat.
@@ -1397,7 +1447,10 @@ class EmblemLayerTest(unittest.TestCase):
         block = self.html[self.html.index("function applyAuto(){"):]
         block = block[: block.index("\n}")]
         self.assertEqual(2, block.count("autoPlace(state.img)"))
-        self.assertIn("if (resolvedEmblemSide() !== sideBefore){", block)
+        self.assertIn(
+            "if (resolvedEmblemSide() !== sideBefore || emblemVisible() !== visibleBefore){",
+            block,
+        )
 
     def test_block_rect_and_drawing_share_one_geometry(self) -> None:
         """Sperrflaeche und gezeichnete Flaeche duerfen nicht auseinanderlaufen --
@@ -1407,13 +1460,14 @@ class EmblemLayerTest(unittest.TestCase):
         block = block[: block.index("\n}")]
         self.assertNotIn("emblemSize", block)
 
-    def test_fallback_placement_knows_the_block_rect(self) -> None:
-        """Fand die Suche keine freie Stellung, waehlte autoPlace() blind
-        'bottom' -- genau dort sitzt jetzt das Emblem. Der Rueckfall nimmt bei
-        vorhandener Sperrflaeche die Stellung mit der geringsten Ueberdeckung;
-        ohne Sperrflaeche (jedes andere Preset) bleibt es bei {bottom, 50}."""
-        self.assertIn("if (!best && block){", self.html)
+    def test_fallback_is_plain_again_after_the_bottom_rule(self) -> None:
+        """CH2: Die Sonderlogik im Rueckfall ist ERSATZLOS entfernt, und das ist
+        keine Luecke. Seit CG1 entfaellt das Emblem bei Titelposition 'bottom' --
+        damit ist 'bottom' die garantiert kollisionsfreie Stellung. Die alte
+        Logik haette ausgerechnet sie gemieden, weil sie gegen eine Sperrflaeche
+        rechnete, die es nach der Wahl nicht mehr gibt."""
         self.assertIn("if (!best) best = {pos:'bottom', scalePct:50};", self.html)
+        self.assertNotIn("if (!best && block){", self.html)
 
     def test_bottom_edge_crop_is_allowed_by_the_embed_script(self) -> None:
         """CB2: Der Avatar sitzt buendig am unteren Bildrand, der Anschnitt dort

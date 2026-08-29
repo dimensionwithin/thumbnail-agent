@@ -108,38 +108,93 @@ Sollte je eine Variante mit gedrehtem Kopf oder sichtbaren Augen dazukommen,
 liefert dieselbe Mechanik dann auch eine echte Blickrichtung — geändert werden
 muss dafür nichts.
 
-## Die Varianten sitzen im selben Rahmen
+## Ausgerichtet wird an der Silhouette, nicht am Rahmen
 
-Gemessen an den fertigen Renders aller sechs Varianten (identische Einstellungen,
-nur die Datei getauscht) liegt die Kopfmitte innerhalb von **x 10,1 px und
-y 10,4 px** — 0,8 % der Bildbreite. Der Avatar springt zwischen den Thumbnails
-also nicht, auch nicht bei `verwirrt`, obwohl deren erhobener Arm die Silhouette
-deutlich verbreitert (deckende Bounding-Box bis x 1508 statt ~1345).
+Die Vorlagen tragen unterschiedlich viel transparenten Rand. Gemessen an der
+Alphakante aller 14 Dateien (1536 x 1024):
 
-Eine Verankerung am Kopf statt am Bildrahmen ist deshalb nicht nötig. Wer neue
-Varianten erzeugt, sollte den Rahmen aber beibehalten — der Wert oben ist der
-Maßstab, an dem sich eine neue Datei messen lassen muss.
+    links   66 (feiern)   bis 326 (verwirrt) Quellpixel
+    rechts  21 (verwirrt) bis 256 (verliebt) Quellpixel
+    unten   bei allen 14 exakt 0 -- die Figur ist angeschnitten
 
-## Kopfposition: 25 × 33 px Streuung, kein Handlungsbedarf
+Wer den RAHMEN an den Bildrand setzt, setzt damit bei jeder Variante etwas
+anderes an den Rand. Bei Randabstand 0 endete der Rahmen zwar ueberall auf
+x 1280, das aeusserste sichtbare Pixel aber:
 
-Gemessen über alle 14 Varianten per Schablonensuche nach der **Sonnenbrille**
-(die alle tragen — der frühere Finder „größter heller Fleck" hätte bei
-`christkind` das Gewand und bei `weihnachtsmann` den Bart als Gesicht gezählt):
+    verwirrt      1273,4    Luecke  6,6 px   (der erhobene Arm fuellt den Rand)
+    sensenmann    1225,6    Luecke 54,4 px
+    neutral       1222,2    Luecke 57,8 px
+    verliebt      1200,0    Luecke 80,0 px
 
-    Streuung ueber alle 14: x 25,0 px, y 32,5 px   (fruehere sechs: 10 x 10)
+`verwirrt` sass dadurch sichtbar weiter aussen als alle anderen -- im Betrieb
+aufgefallen, nicht in der Theorie. Seit CO1 haengt der Randabstand deshalb am
+aeussersten SICHTBAREN Pixel: bei allen 14 Varianten liegt es jetzt auf 1280,00
+rechts und 0,00 links. Weil `drawEmblem()` auf der linken Seite um die
+Rahmenmitte spiegelt, faellt dort die RECHTE Alphakante nach aussen -- beide
+Seiten haengen an derselben Kante, der Randabstand wirkt seitengleich.
 
-    weihnachtsmann  dy +21,6     Muetze drueckt das Gesicht nach unten
-    cowboyhut       dy +21,6     Hutkrempe, dasselbe
-    feiern          dx +19,7     erhobenes Glas verschiebt die Figur
-    lachen          dx +19,1
-    christkind      dx +16,6  dy +12,2   Heiligenschein oben, Gewand breiter
-    die uebrigen neun            unter 9 px
+Senkrecht gilt dieselbe Regel, sie ist heute aber ein Nulldurchgang: alle 14
+Vorlagen laufen unten bis zur letzten Zeile. Die Regel steht trotzdem im Code,
+damit eine kuenftige Vorlage mit Luft unten nicht ueber der Kante schwebt.
 
-**Das ist kein Fehler und keine Vorlage muss nachgeschnitten werden.** 22 px
-senkrecht sind 3 % der Bildhöhe — im direkten A/B sichtbar, beim normalen
-Durchscrollen nicht. Und es ist bauartbedingt: eine Mütze muss irgendwo hin, ein
-Heiligenschein auch. Wer es enger will, muss die Vorlagen mit gleichem
-Kopfmittelpunkt erzeugen; am Code ist nichts zu ändern.
+Die Alphakanten werden zur Laufzeit je Bild einmal gemessen und
+zwischengespeichert, nicht als Tabelle gepflegt -- eine Tabelle liefe
+auseinander, sobald eine Vorlage nachgeschaerft wird. Ist das Canvas nicht
+lesbar, faellt die Messung auf den vollen Rahmen zurueck, also auf das
+Verhalten von vorher.
+
+Dieselbe Silhouette speist auch die Sperrflaeche fuer die Auto-Platzierung, die
+Seitenwahl in `freeSide()` und das Ausweichen des LIVE-Abzeichens. Vorher galt
+dort bis zu 80 px transparenter Rand als belegte Flaeche.
+
+## Randkonstanz und Kopfkonstanz sind nicht gleichzeitig erfuellbar
+
+**Bitte nicht erneut versuchen.** Die Ausrichtung an der Silhouette kostet
+Konstanz der Kopfposition, und das laesst sich nicht wegrechnen.
+
+Gemessen ueber alle 14 Varianten per Schablonensuche nach der **Sonnenbrille**
+-- normierte Kreuzkorrelation gegen die Brillenpartie aus `neutral`, zusaetzlich
+ueber die Groesse, weil `sensenmann` ein kleineres Gesicht im Rahmen traegt und
+eine starre Schablone dort um rund 200 px verrutscht. Schwellwert-Finder taugen
+hier nicht: ein reiner Dunkelfilter faengt bei `cowboyhut` 295 796 Pixel
+Kapuzenmasse, und eine Gesichts-Bounding-Box wird von `christkind`s Gewand
+aufgeblaeht.
+
+    am Rahmen ausgerichtet:      Streuung x 21,9 px
+    an der Silhouette (heute):   Streuung x 69,8 px
+
+Sechs Kriterienfamilien wurden durchgemessen, um beides zu bekommen. Keine hilft:
+
+    Rahmen (frueher)                     21,9    Randluecke 6,6 - 80,0 px
+    volle Bounding-Box (heute)           69,8    Randluecke 0
+    Spaltenmasse > 5...60 % der Hoehe    70,8 - 85,8
+    aeussere 0,5...5 % der Flaeche weg   70,2 - 71,7
+    groesste Masse nach Erosion 10...60  71,4 - 81,1
+    nur unterster Rumpf 30...50 %        69,8 - 73,0
+
+Der Grund: wie weit der Kopf von der Silhouettenkante entfernt ist, ist eine
+Eigenschaft der jeweiligen Zeichnung. Sie schwankt um genau die 73 px, um die
+auch die transparenten Raender auseinanderliegen. Die frueheren 21,9 px waren
+keine Systemeigenschaft, sondern ein Nebeneffekt des geteilten Rahmens --
+erkauft mit der Randstreuung oben.
+
+**Wo der Hebel sitzt, falls es doch stoert:** `verwirrt` traegt allein die
+Haelfte. Sein Kopf liegt bei x 1012,5, alle uebrigen dreizehn zwischen 1049,8
+und 1082,3 -- ohne diese eine Variante waeren es **32,5 px**. Automatisch ist
+das nicht zu trennen: bei 40 px Erosion steht `verwirrt` immer noch bei 8,1 px
+gegen 45 - 99 px bei allen anderen, der erhobene Arm ist kein duenner Fortsatz
+und reicht bis in die untere Bildhaelfte.
+
+**Warum trotzdem die Silhouette gewaehlt wurde (29.08.2026):** Die Randstreuung
+ist im Betrieb aufgefallen, die Kopfstreuung nicht -- das sagt, was im fertigen
+Bild zaehlt. Die Alternative waere eine von Hand gesetzte Ankerkante je Variante
+gewesen (haette 32,5 px gebracht), aber jede neue Variante braeuchte dann eine
+Entscheidung. Mit weiteren Jahreszeiten waere das dauerhafte Handarbeit -- genau
+das, was die Laufzeitmessung abschafft.
+
+Wer neue Varianten erzeugt, muss den Rahmen also NICHT mehr einhalten; der
+transparente Rand darf beliebig sein. Ein gleicher Kopfmittelpunkt bleibt aber
+wuenschenswert, denn nur die Vorlage selbst kann die Kopfstreuung senken.
 
 ## _verworfen/
 

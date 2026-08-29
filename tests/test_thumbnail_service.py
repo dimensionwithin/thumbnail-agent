@@ -1635,9 +1635,19 @@ class EmblemLayerTest(unittest.TestCase):
     def test_block_rect_follows_the_ui_values(self) -> None:
         """Sperrflaeche aus emblemX/emblemY/emblemSize plus Rand -- verschiebt
         man das Emblem, wandert sie mit."""
-        for token in ("rect.dx - pad", "rect.dy - pad",
-                      "rect.dx + rect.dw + pad", "rect.dy + rect.dh + pad"):
+        # CO3: aus der SILHOUETTE, nicht aus dem Rahmen -- der transparente Rand
+        # ist je nach Vorlage bis zu 80 px breit und drueckte die Headline als
+        # scheinbar belegte Flaeche weiter weg als noetig.
+        for token in ("rect.sx - pad", "rect.sy - pad",
+                      "rect.sx + rect.sw + pad", "rect.sy + rect.sh + pad"):
             self.assertIn(token, self.html)
+        self.assertNotIn("rect.dx + rect.dw + pad", self.html)
+
+    def test_free_side_counts_over_the_silhouette(self) -> None:
+        """CO3: Sonst entscheidet transparenter Rand mit darueber, welche Seite
+        der Hintergrund freier laesst."""
+        self.assertIn("occupancyIn(occ, emblemSilhouetteRect(links))", self.html)
+        self.assertIn("occupancyIn(occ, emblemSilhouetteRect(rechts))", self.html)
 
     def test_anchor_is_the_outer_bottom_corner(self) -> None:
         """CB1/CD1: waagerecht ein RANDABSTAND (spiegelt sich beim Seitenwechsel
@@ -1645,11 +1655,36 @@ class EmblemLayerTest(unittest.TestCase):
         buendige Unterkante bei jeder Groessenaenderung -- der Anschnitt wuerde
         dann zur Kartenkante."""
         self.assertIn("const side = forceSide || resolvedEmblemSide();", self.html)
-        self.assertIn(
-            "const dx = (side === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);",
-            self.html,
-        )
-        self.assertIn("const EMBLEM_DEFAULT = { size: 480, margin: 40, y: 720 };", self.html)
+        # CO1: Der Anker haengt jetzt am aeussersten SICHTBAREN Pixel statt am
+        # Rahmen. Die Vorlagen tragen unterschiedlich breiten transparenten Rand
+        # (rechts 21 bis 256 Quellpixel) -- am Rahmen ausgerichtet sass deshalb
+        # jede Variante woanders, bei "verwirrt" fuellt der erhobene Arm den Rand
+        # aus und die Figur stand sichtbar weiter aussen.
+        self.assertIn("const aussen = (iw - box.r) * s;", self.html)
+        self.assertIn("? state.emblemMargin - aussen", self.html)
+        self.assertIn("W - state.emblemMargin - dw + aussen;", self.html)
+        # CO2: Senkrecht dieselbe Regel. Bei allen heutigen Vorlagen ist der Term
+        # 0 (die Figur ist unten angeschnitten), er haelt aber eine kuenftige
+        # Vorlage mit Luft unten davon ab, ueber der Kante zu schweben.
+        self.assertIn("const dy = state.emblemY - dh + (ih - box.b) * s;", self.html)
+        self.assertIn("const EMBLEM_DEFAULT = { size: 480, margin: 16, y: 720 };", self.html)
+
+    def test_reset_restores_the_documented_default_margin(self) -> None:
+        """Die Zurueck-Schaltfluche darf keinen anderen Wert herstellen als den,
+        mit dem der Regler startet -- sonst sprang der Randabstand beim
+        Zuruecksetzen von 16 auf 40."""
+        self.assertIn('id="emblemMargin" min="0" max="400" step="2" value="16"', self.html)
+        self.assertIn("emblemMargin: 16,", self.html)
+        self.assertIn("const EMBLEM_DEFAULT = { size: 480, margin: 16, y: 720 };", self.html)
+
+    def test_alpha_box_is_measured_not_maintained_by_hand(self) -> None:
+        """Eine Tabelle mit Alphakanten liefe auseinander, sobald eine Vorlage
+        nachgeschaerft wird. Gemessen wird einmal je Bild und zwischengespeichert;
+        ein nicht lesbares Canvas faellt auf den vollen Rahmen zurueck, also auf
+        das Verhalten von vorher."""
+        self.assertIn("const emblemBoxes = new WeakMap();", self.html)
+        self.assertIn("let box = { l: 0, t: 0, r: iw, b: ih, iw, ih };", self.html)
+        self.assertIn("emblemBoxes.set(img, box);", self.html)
 
     def test_side_follows_the_title_and_otherwise_the_free_background(self) -> None:
         """CD1/CH3: Der Titel hat Vorrang, wo er eine Seite belegt. 'top' und
@@ -1676,8 +1711,9 @@ class EmblemLayerTest(unittest.TestCase):
     def test_live_badge_moves_away_from_the_emblem(self) -> None:
         """CH3: Das Abzeichen sass fest unten rechts, wo seit CG5 auch das Emblem
         steht -- Ueberlappung in 3 von 5 Stellungen."""
+        # CO3: an der sichtbaren Figur ausweichen, nicht am Rahmen.
         self.assertIn(
-            "const x = (emblem && emblem.dx + emblem.dw > W/2) ? pad : (W - pad - bw);",
+            "const x = (emblem && emblem.sx + emblem.sw > W/2) ? pad : (W - pad - bw);",
             self.html,
         )
 

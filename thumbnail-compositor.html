@@ -743,7 +743,7 @@ const EMBLEM_FALLBACK_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoAAA
 //
 // Waagerecht wird ein RANDABSTAND gefuehrt, keine absolute Kante: beim
 // Seitenwechsel spiegelt er sich dann von selbst mit.
-const EMBLEM_DEFAULT = { size: 480, margin: 40, y: 720 };
+const EMBLEM_DEFAULT = { size: 480, margin: 16, y: 720 };
 
 // CG5: Welche Formate tragen das Emblem. Es ist ein kanalweites Erkennungszeichen,
 // kein AIV-Sonderfall. Ohne Emblem bleiben nur nonchart (freies Topic-Bild ohne
@@ -796,7 +796,10 @@ function freeSide(){
   const links = emblemRect('left'), rechts = emblemRect('right');
   if (!links || !rechts) return 'right';
   const occ = occupancyMap(state.img);
-  const nL = occupancyIn(occ, links), nR = occupancyIn(occ, rechts);
+  // CO3: ueber der Silhouette auszaehlen, nicht ueber dem Rahmen -- sonst
+  // entscheidet transparenter Rand mit darueber, welche Seite freier ist.
+  const nL = occupancyIn(occ, emblemSilhouetteRect(links)),
+        nR = occupancyIn(occ, emblemSilhouetteRect(rechts));
   // Gleichstand bleibt rechts: das ist die bisherige Standardseite, und ohne
   // messbaren Unterschied gibt es keinen Grund zu wechseln.
   return (nL < nR) ? 'left' : 'right';
@@ -811,8 +814,52 @@ function resolvedEmblemSide(){
   // hier entscheidet der freiere Hintergrund.
   return freeSide();
 }
+// CO1: Die Alphakanten des Motivs, in QUELLPIXELN, je Bild einmal gemessen.
+//
+// Die Vorlagen tragen unterschiedlich viel transparenten Rand: links 66 bis 326,
+// rechts 21 bis 256 Pixel. Wer den RAHMEN an den Bildrand setzt, setzt damit bei
+// jeder Variante etwas anderes an den Rand -- bei "verwirrt" fuellt der erhobene
+// Arm den Rand aus und die Figur sitzt sichtbar weiter aussen als bei den
+// anderen. Gemessen statt gepflegt: eine Tabelle in EMBLEM_META liefe
+// auseinander, sobald eine Vorlage nachgeschaerft wird.
+const emblemBoxes = new WeakMap();
+function emblemAlphaBox(img){
+  const treffer = emblemBoxes.get(img);
+  if (treffer) return treffer;
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  // Rueckfall ist der volle Rahmen -- also exakt das Verhalten von vorher.
+  let box = { l: 0, t: 0, r: iw, b: ih, iw, ih };
+  try {
+    const c = document.createElement('canvas');
+    c.width = iw; c.height = ih;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const data = g.getImageData(0, 0, iw, ih).data;
+    let l = iw, t = ih, r = -1, b = -1;
+    for (let y = 0; y < ih; y++){
+      for (let x = 0; x < iw; x++){
+        if (data[(y*iw + x)*4 + 3] <= 8) continue;
+        if (x < l) l = x; if (x > r) r = x;
+        if (y < t) t = y; if (y > b) b = y;
+      }
+    }
+    if (r >= 0) box = { l, t, r: r+1, b: b+1, iw, ih };
+  } catch (error) {
+    // Ein "getaintetes" Canvas wirft hier. Dann bleibt es beim vollen Rahmen;
+    // die Ausrichtung ist dann wie frueher, aber nichts bricht.
+    console.warn('Alphakanten des Emblems nicht messbar, Rahmen wird verwendet.', error);
+  }
+  emblemBoxes.set(img, box);
+  return box;
+}
+
 // Gezeichnete Flaeche des Emblems im 1280x720-Raum, oder null.
 // forceSide dient nur der Messung in freeSide() -- der normale Aufruf laesst sie weg.
+//
+// dx/dy/dw/dh sind der RAHMEN, den drawImage() braucht. sx/sy/sw/sh sind die
+// SILHOUETTE darin -- alles, was eine Flaeche beurteilt (Sperrflaeche, freie
+// Seite, Ausweichen des LIVE-Abzeichens), muss die Silhouette nehmen, sonst
+// rechnet es den transparenten Rand als belegt mit.
 function emblemRect(forceSide){
   const img = emblemVisible() ? currentEmblem() : null;
   if (!img) return null;
@@ -821,8 +868,31 @@ function emblemRect(forceSide){
   const s = state.emblemSize / Math.max(iw, ih);
   const dw = iw*s, dh = ih*s;
   const side = forceSide || resolvedEmblemSide();
-  const dx = (side === 'left') ? state.emblemMargin : (W - state.emblemMargin - dw);
-  return { img, dx, dy: state.emblemY - dh, dw, dh };
+  const box = emblemAlphaBox(img);
+
+  // Waagerecht haengt der Randabstand am aeussersten SICHTBAREN Pixel, nicht am
+  // Rahmen. Auf der linken Seite spiegelt drawEmblem() um die Rahmenmitte --
+  // dort faellt die RECHTE Alphakante nach aussen. Beide Seiten haengen deshalb
+  // an box.r, und der Randabstand wirkt seitengleich.
+  const aussen = (iw - box.r) * s;
+  const dx = (side === 'left')
+    ? state.emblemMargin - aussen
+    : W - state.emblemMargin - dw + aussen;
+
+  // CO2: Senkrecht dieselbe Regel. Bei allen heutigen Vorlagen reicht das Alpha
+  // bis zur letzten Zeile (die Figur ist unten angeschnitten), unten ist der
+  // Term also 0 und die Unterkante bleibt, wo sie war. Die Regel steht hier
+  // trotzdem, damit eine kuenftige Vorlage mit Luft unten nicht schwebt.
+  const dy = state.emblemY - dh + (ih - box.b) * s;
+
+  const sw = (box.r - box.l) * s, sh = (box.b - box.t) * s;
+  const sx = dx + ((side === 'left') ? (iw - box.r) : box.l) * s;
+  return { img, dx, dy, dw, dh, sx, sy: dy + box.t * s, sw, sh };
+}
+// Die Silhouette als Rechteck in der Form, die occupancyIn() und autoPlace()
+// erwarten. Eine eigene Rechnung beim Aufrufer waere eine zweite Wahrheit.
+function emblemSilhouetteRect(rect){
+  return rect && { dx: rect.sx, dy: rect.sy, dw: rect.sw, dh: rect.sh };
 }
 // Schmaler Schein hinter dem Emblem, damit es auf beliebigem Material steht.
 //
@@ -1036,7 +1106,8 @@ function drawLiveBadge(){
   // den Faellen NICHT verhindern, in denen sie am haeufigsten auftrat. Die
   // Ausweichregel gilt dagegen immer und ist eine einzige Bedingung.
   const emblem = emblemRect();
-  const x = (emblem && emblem.dx + emblem.dw > W/2) ? pad : (W - pad - bw);
+  // CO3: Die sichtbare Figur entscheidet, welche Haelfte belegt ist.
+  const x = (emblem && emblem.sx + emblem.sw > W/2) ? pad : (W - pad - bw);
   // red dot with a soft glow so it reads on black
   ctx.save();
   ctx.shadowColor = C.oxblood; ctx.shadowBlur = 9;
@@ -1446,9 +1517,12 @@ function emblemBlockRect(){
   const rect = emblemRect();
   if (!rect) return null;
   const pad = EMBLEM_BLOCK_PAD;
+  // CO3: Die SILHOUETTE sperren, nicht den Rahmen. Der transparente Rand ist je
+  // nach Vorlage bis zu 80 px breit -- als belegt gerechnet drueckte er die
+  // Headline weiter weg als noetig.
   return {
-    x0: rect.dx - pad,           y0: rect.dy - pad,
-    x1: rect.dx + rect.dw + pad, y1: rect.dy + rect.dh + pad,
+    x0: rect.sx - pad,           y0: rect.sy - pad,
+    x1: rect.sx + rect.sw + pad, y1: rect.sy + rect.sh + pad,
   };
 }
 

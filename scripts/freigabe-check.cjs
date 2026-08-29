@@ -110,7 +110,12 @@ function main() {
     // .env-Schluessel duerfen GELESEN werden (process.env.X), aber nicht als
     // Vorgabewert dastehen: X = 'irgendwas' oder X="irgendwas".
     for (const k of ENV_SCHLUESSEL) {
-      const re = new RegExp(`${k}\\s*[:=]\\s*['"\`]`, 'g');
+      // DA (2026-08-29): Ein LEERES Literal ist kein Vorgabewert, sondern das
+      // Gegenteil -- es macht den Schluessel im Kindprozess unsichtbar (siehe
+      // scripts/verify-publish.cjs). Gemeldet wird deshalb nur noch ein Literal
+      // MIT Inhalt: auf das oeffnende Anfuehrungszeichen muss ein anderes
+      // Zeichen als das schliessende folgen.
+      const re = new RegExp(`${k}\\s*[:=]\\s*('[^']|"[^"]|\`[^\`])`, 'g');
       if (re.test(inhalt)) funde.push(`.env-Schluessel ${k} mit Vorgabewert im Quelltext`);
     }
 

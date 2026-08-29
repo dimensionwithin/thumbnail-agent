@@ -1691,6 +1691,15 @@ function buildWeeklyLastText(summary, exitCode, csvPath, execute) {
 }
 
 async function runWeekly(args, yt, channel, targetPlaylistId, targetPlaylist, rawTargetItems, counters, onListCall) {
+  // DA (2026-08-29): Das Protokollverzeichnis wird als ALLERERSTES angelegt --
+  // vor jedem API-Aufruf und lange vor dem ersten playlistItems.insert.
+  // backups/ ist gitignored und kann fehlen (in CZ hat ein Pruefskript es
+  // geloescht). Ein Schreibproblem soll deshalb hier auffallen, solange noch
+  // nichts passiert ist -- nicht erst, nachdem Playlist-Eintraege gesetzt sind
+  // und das Protokoll dazu nicht mehr geschrieben werden kann.
+  const outDir = path.resolve(args.out);
+  fs.mkdirSync(outDir, { recursive: true });
+
   const icPlaylistId = process.env.INNER_CIRCLE_PLAYLIST_ID;
   if (!icPlaylistId) {
     console.error('Abbruch: INNER_CIRCLE_PLAYLIST_ID fehlt in .env. Der Wochenlauf braucht BEIDE Playlists (Do -> IC, So -> Archiv).');
@@ -1739,8 +1748,7 @@ async function runWeekly(args, yt, channel, targetPlaylistId, targetPlaylist, ra
   console.log(`in Ausschlussdatei (uebersprungen):        ${excluded.length}`);
   console.log(`NEUE Kandidaten:                          ${candidates.length}`);
 
-  const outDir = path.resolve(args.out);
-  fs.mkdirSync(outDir, { recursive: true });
+  // outDir steht schon oben (DA): backups/ wurde vor dem ersten API-Aufruf angelegt.
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const csvPath = path.join(outDir, `livestream-weekly-${stamp}.csv`);
   const lastPath = path.join(outDir, WEEKLY_LAST_RUN_FILE);

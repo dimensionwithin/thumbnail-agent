@@ -25,11 +25,18 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { darfThumbnailGesetztWerden, sperreShortsOderWirf } = require('./short-guard');
+const { pruefeArgumenteStrikt, TROCKENLAUF_FLAG } = require('./cli-args');
+
+// CY: Jedes Argument, das hier nicht steht, bricht den Lauf ab (Exit 2).
+const ERLAUBTE_ARGUMENTE = ['--execute', '--yes', TROCKENLAUF_FLAG,
+  '--in=', '--thumbs=', '--backups=', '--batch=', '--delay=', '--only='];
 
 function parseArgs(argv) {
-  const a = { execute: false, in: null, thumbs: 'data/thumbnails', backups: 'backups', batch: 5, delay: 1500, yes: false, only: null };
+  const a = { execute: false, nurPruefen: false, in: null, thumbs: 'data/thumbnails', backups: 'backups', batch: 5, delay: 1500, yes: false, only: null };
   for (const t of argv.slice(2)) {
     if (t === '--execute') a.execute = true;
+    else if (t === TROCKENLAUF_FLAG) a.nurPruefen = true;
     else if (t === '--yes') a.yes = true;
     else if (t.startsWith('--in=')) a.in = t.slice(5);
     else if (t.startsWith('--thumbs=')) a.thumbs = t.slice(9);
@@ -68,23 +75,46 @@ function ask(question) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Plan pro Ziel-Video bauen.
-function buildPlan(targets, manifest, doneSet, thumbsDir) {
-  return targets.map(it => {
+// CX: async, weil die Short-Sperre eine Sonde auf das Bild-CDN braucht. Die
+// Pruefung gehoert in die PLANUNG und nicht erst vor den Schreibaufruf -- sonst
+// sieht der Trockenlauf ein READY, das in Wahrheit gesperrt ist, und der Bericht
+// luegt. Vor dem Schreibaufruf steht trotzdem noch einmal eine harte Zusicherung
+// (sperreShortsOderWirf), damit kein Pfad daran vorbeikommt.
+async function buildPlan(targets, manifest, doneSet, thumbsDir) {
+  const plan = [];
+  for (const it of targets) {
     const id = it.videoId;
     const thumbFile = path.resolve(thumbsDir, `adw-${id}.png`);
     const hasBackup = !!(manifest.videos && manifest.videos[id]);
     const hasThumb = fs.existsSync(thumbFile);
     let status;
+    let shortGrund = null;
     if (doneSet.has(id)) status = 'DONE';
     else if (!hasBackup) status = 'BLOCKED:no-backup';
     else if (!hasThumb) status = 'BLOCKED:no-thumbnail';
-    else status = 'READY';
-    return { id, thumbFile, hasBackup, hasThumb, status };
-  });
+    else {
+      const e = await darfThumbnailGesetztWerden(id);
+      shortGrund = e.grund;
+      if (e.erlaubt) status = 'READY';
+      else status = e.status === 'short' ? 'BLOCKED:short' : 'BLOCKED:short-unauswertbar';
+    }
+    plan.push({ id, thumbFile, hasBackup, hasThumb, status, shortGrund });
+  }
+  return plan;
 }
 
 async function main() {
+  // CY: VOR allem anderen -- kein Netzaufruf, kein Schreibzugriff davor.
+  pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/publish/publish.js');
   const args = parseArgs(process.argv);
+  if (args.nurPruefen && args.execute) {
+    console.error(`Abbruch: ${TROCKENLAUF_FLAG} und --execute schliessen einander aus.`);
+    process.exit(2);
+  }
+  if (args.nurPruefen) {
+    args.execute = false; // Trockenlauf gewinnt immer
+    console.log(`TROCKENLAUF (${TROCKENLAUF_FLAG}): es wird geplant, aber nichts gesetzt.`);
+  }
   let uploads = 0; // ZAEHLER echter thumbnails.set-Aufrufe — am Ende immer ausgegeben.
 
   const inPath = resolveDecisions(args.in);
@@ -120,11 +150,15 @@ async function main() {
   const progress = loadJSON(progressPath, { done: [] });
   const doneSet = new Set(progress.done || []);
 
-  const plan = buildPlan(targets, manifest, doneSet, args.thumbs);
+  const plan = await buildPlan(targets, manifest, doneSet, args.thumbs);
   for (const row of plan) {
     const tag = row.status === 'READY' ? 'READY ' : row.status === 'DONE' ? 'DONE  ' : 'BLOCK ';
     console.log(`  [${tag}] ${row.id} <- ${path.relative(process.cwd(), row.thumbFile)}` +
       (row.status.startsWith('BLOCKED') ? `   (${row.status})` : ''));
+    // CX: Bei der Short-Sperre ist der Grund die eigentliche Information --
+    // "BLOCKED" allein laesst den Leser raten, ob das Video ein Short ist oder
+    // ob nur die Sonde nicht durchkam.
+    if (row.shortGrund && row.status.startsWith('BLOCKED:short')) console.log(`           ${row.shortGrund}`);
   }
   const ready = plan.filter(r => r.status === 'READY');
   const blocked = plan.filter(r => r.status.startsWith('BLOCKED'));
@@ -173,6 +207,8 @@ async function main() {
     console.log(`\nBatch ${Math.floor(i / args.batch) + 1}: ${batch.map(b => b.id).join(', ')}`);
     for (const row of batch) {
       try {
+        // CX: zweite Verteidigungslinie unmittelbar vor dem Schreibaufruf.
+        await sperreShortsOderWirf(row.id);
         await yt.thumbnails.set({ videoId: row.id, media: { mimeType: 'image/png', body: fs.createReadStream(row.thumbFile) } });
         uploads += 1;
         doneSet.add(row.id);

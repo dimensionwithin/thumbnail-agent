@@ -24,11 +24,18 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { darfThumbnailGesetztWerden, sperreShortsOderWirf } = require('./short-guard');
+const { pruefeArgumenteStrikt, TROCKENLAUF_FLAG } = require('./cli-args');
+
+// CY: Jedes Argument, das hier nicht steht, bricht den Lauf ab (Exit 2).
+const ERLAUBTE_ARGUMENTE = ['--execute', '--yes', TROCKENLAUF_FLAG,
+  '--backups=', '--only=', '--batch=', '--delay='];
 
 function parseArgs(argv) {
-  const a = { execute: false, backups: 'backups', only: null, batch: 5, delay: 1500, yes: false };
+  const a = { execute: false, nurPruefen: false, backups: 'backups', only: null, batch: 5, delay: 1500, yes: false };
   for (const t of argv.slice(2)) {
     if (t === '--execute') a.execute = true;
+    else if (t === TROCKENLAUF_FLAG) a.nurPruefen = true;
     else if (t === '--yes') a.yes = true;
     else if (t.startsWith('--backups=')) a.backups = t.slice(10);
     else if (t.startsWith('--only=')) a.only = t.slice(7).split(',').map(s => s.trim()).filter(Boolean);
@@ -58,24 +65,46 @@ function ask(question) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Plan pro Video aus dem Manifest.
-function buildPlan(manifest, only, doneSet) {
+async function buildPlan(manifest, only, doneSet) {
   const entries = Object.entries(manifest.videos || {});
   const filtered = only ? entries.filter(([id]) => only.includes(id)) : entries;
-  return filtered.map(([id, e]) => {
-    const localFile = e.localFile;
+  // CX: Schleife statt map(), weil die Short-Sperre eine Sonde braucht und der
+  // Plan deshalb asynchron entsteht.
+  const plan = [];
+  for (const [id, eintrag] of filtered) {
+    const localFile = eintrag.localFile;
     const hasFile = !!localFile && fs.existsSync(localFile);
-    const simulated = e.simulated === true;
+    const simulated = eintrag.simulated === true;
     let status;
+    let shortGrund = null;
     if (doneSet.has(id)) status = 'DONE';
     else if (!hasFile) status = 'BLOCKED:no-backup-file';
     else if (simulated) status = 'BLOCKED:simulated';
-    else status = 'READY';
-    return { id, localFile, originalUrl: e.originalUrl, hasFile, simulated, status };
-  });
+    else {
+      // CX: Auch die Wiederherstellung ist ein thumbnails.set. Bei einem Short
+      // wuerde sie dieselbe Zwei-Bilder-Lage erzeugen wie das Setzen (siehe CV).
+      const entscheidung = await darfThumbnailGesetztWerden(id);
+      shortGrund = entscheidung.grund;
+      if (entscheidung.erlaubt) status = 'READY';
+      else status = entscheidung.status === 'short' ? 'BLOCKED:short' : 'BLOCKED:short-unauswertbar';
+    }
+    plan.push({ id, localFile, originalUrl: eintrag.originalUrl, hasFile, simulated, status, shortGrund });
+  }
+  return plan;
 }
 
 async function main() {
+  // CY: VOR allem anderen -- kein Netzaufruf, kein Schreibzugriff davor.
+  pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/publish/restore.js');
   const args = parseArgs(process.argv);
+  if (args.nurPruefen && args.execute) {
+    console.error(`Abbruch: ${TROCKENLAUF_FLAG} und --execute schliessen einander aus.`);
+    process.exit(2);
+  }
+  if (args.nurPruefen) {
+    args.execute = false;
+    console.log(`TROCKENLAUF (${TROCKENLAUF_FLAG}): es wird geplant, aber nichts gesetzt.`);
+  }
   let uploads = 0; // ZAEHLER echter thumbnails.set-Aufrufe.
 
   const backupsDir = path.resolve(args.backups);
@@ -95,7 +124,7 @@ async function main() {
   const progress = loadJSON(progressPath, { done: [] });
   const doneSet = new Set(progress.done || []);
 
-  const plan = buildPlan(manifest, args.only, doneSet);
+  const plan = await buildPlan(manifest, args.only, doneSet);
   if (plan.length === 0) { console.log('Keine passenden Videos im Manifest.'); console.log('UPLOADS: 0'); return; }
 
   for (const row of plan) {
@@ -146,6 +175,8 @@ async function main() {
     console.log(`\nBatch ${Math.floor(i / args.batch) + 1}: ${batch.map(b => b.id).join(', ')}`);
     for (const row of batch) {
       try {
+        // CX: zweite Verteidigungslinie unmittelbar vor dem Schreibaufruf.
+        await sperreShortsOderWirf(row.id);
         await yt.thumbnails.set({ videoId: row.id, media: { mimeType: mimeFor(row.localFile), body: fs.createReadStream(row.localFile) } });
         uploads += 1;
         doneSet.add(row.id);

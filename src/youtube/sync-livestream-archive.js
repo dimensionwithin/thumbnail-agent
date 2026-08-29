@@ -446,13 +446,85 @@ function extractPlayabilityStatus(html) {
   if (!m) return null;
   try { return JSON.parse(m[1]).playabilityStatus; } catch (e) { return null; }
 }
-async function checkMembersGatedHttp(id) {
+// Das Sponsoren-Angebot im Fehlerbildschirm -- das einzige positive Kennzeichen
+// eines Mitglieder-Videos, das die Watch-Seite unauthentifiziert hergibt.
+function sponsorsOfferId(ps) {
+  return ps && ps.errorScreen && ps.errorScreen.playerLegacyDesktopYpcOfferRenderer
+    && ps.errorScreen.playerLegacyDesktopYpcOfferRenderer.offerId;
+}
+
+// CX (2026-08-29): Die Entscheidung faellt jetzt NUR NOCH POSITIV.
+//
+//   status === 'OK'                    -> false (sicher nicht gated)
+//   offerId === 'sponsors_only_video'  -> true  (sicher gated)
+//   alles Uebrige                      -> null  (weiss nicht -> fail-closed)
+//
+// Vorher (siehe decideGatedLegacy) fiel alles, was weder 'OK' noch das
+// Sponsoren-Angebot war, auf `false` -- also auf die POSITIVE Aussage "nicht
+// gated" mit Ziel OEFFENTLICHE Archiv-Playlist. In CW gemessen: ein privates
+// Video liefert status='LOGIN_REQUIRED' und damit `false`, eine unbekannte
+// videoId liefert status='ERROR' und ebenfalls `false`. Die Funktion wusste in
+// beiden Faellen nichts und behauptete trotzdem etwas.
+//
+// Der Unterschied traegt genau dort, wo es zaehlt: Eine Zustimmungsseite
+// (consent.youtube.com) traegt weder 'OK' noch den Sponsoren-Renderer und faellt
+// damit zwingend auf null. Bisher haette sie, sofern ueberhaupt parsebar, ein
+// `false` ergeben -- und ein gated Stream waere oeffentlich gelandet.
+//
+// Umgestellt nach einer Schattenmessung ueber 309 Videos (Archiv-Playlist,
+// IC-Playlist, letzte 15 Streams): KEIN einziges Video wechselte das Ergebnis.
+// Alle 44 UNPLAYABLE trugen das Sponsoren-Angebot, alle 265 uebrigen waren 'OK'.
+// Beleg: data/gating-repair/ (scripts/gating-shadow-audit.cjs).
+function decideGatedStrict(ps) {
+  if (!ps) return null;
+  if (ps.status === 'OK') return false;
+  if (sponsorsOfferId(ps) === 'sponsors_only_video') return true;
+  return null;
+}
+
+// Die Fassung VOR der Umstellung. Wird produktiv NICHT mehr aufgerufen und steht
+// nur noch hier, damit der Schattenvergleich aus CX reproduzierbar bleibt
+// (scripts/gating-shadow-audit.cjs vergleicht legacy gegen strict). Nicht
+// benutzen: der letzte Ausdruck macht aus "weiss nicht" ein "nicht gated".
+function decideGatedLegacy(ps) {
+  if (!ps) return null;
+  if (ps.status === 'OK') return false;
+  return sponsorsOfferId(ps) === 'sponsors_only_video';
+}
+
+// CY: Der Grund landet im Wochenbericht, den auch ein Vorlesetask ausgibt.
+// "playabilityStatus=LOGIN_REQUIRED" ist dort unbrauchbar -- wer das liest, muss
+// wissen, was ein playabilityStatus ist. Deshalb Klartext zuerst, der technische
+// Wert in Klammern hinterher (fuer die Fehlersuche bleibt er noetig).
+const STATUS_KLARTEXT = {
+  LOGIN_REQUIRED: 'nicht oeffentlich abspielbar (Anmeldung noetig — privat oder eingeschraenkt)',
+  ERROR: 'Video nicht auffindbar (geloescht oder falsche ID)',
+  UNPLAYABLE: 'nicht abspielbar',
+  AGE_VERIFICATION_REQUIRED: 'Alterspruefung noetig',
+  CONTENT_CHECK_REQUIRED: 'Inhaltswarnung — Bestaetigung noetig',
+  LIVE_STREAM_OFFLINE: 'Livestream derzeit offline',
+};
+function klartextStatus(status) {
+  return STATUS_KLARTEXT[status] || `unbekannter Zustand "${status || '?'}"`;
+}
+
+// Liefert zusaetzlich, WARUM die Entscheidung so ausfiel. Der Grund wird fuer den
+// UNVERIFIED-Abschnitt im Wochenbericht gebraucht: "nicht auswertbar" allein sagt
+// dem Leser nicht, ob das Video privat ist, geloescht, oder ob der Abruf scheiterte.
+async function checkMembersGatedHttpDetailed(id) {
   const r = await fetchWatchPageHtml(id);
   const ps = extractPlayabilityStatus(r.body);
-  if (!ps) return null; // nicht auswertbar (Netzfehler, Seitenstruktur geaendert)
-  if (ps.status === 'OK') return false;
-  const offerId = ps.errorScreen && ps.errorScreen.playerLegacyDesktopYpcOfferRenderer && ps.errorScreen.playerLegacyDesktopYpcOfferRenderer.offerId;
-  return offerId === 'sponsors_only_video';
+  const gated = decideGatedStrict(ps);
+  let grund;
+  if (gated === true) grund = 'nur fuer Mitglieder — Mitglieder-Angebot auf der Videoseite erkannt';
+  else if (gated === false) grund = 'oeffentlich abspielbar';
+  else if (!ps) grund = `Videoseite nicht auswertbar — Abruf lieferte HTTP ${r.code} mit ${(r.body || '').length} Bytes`;
+  else grund = `${klartextStatus(ps.status)}${ps.reason ? ' — ' + String(ps.reason).slice(0, 120) : ''} [playabilityStatus=${ps.status || '?'}]`;
+  return { gated, grund, status: ps ? (ps.status || null) : null, httpCode: r.code };
+}
+
+async function checkMembersGatedHttp(id) {
+  return (await checkMembersGatedHttpDetailed(id)).gated;
 }
 
 // Retry/Backoff-Helfer fuer schreibende Calls (insert/delete). Analog zu
@@ -1464,8 +1536,8 @@ async function measureWeeklyCandidates(candidates, label) {
   const out = [];
   let n = 0;
   for (const c of candidates) {
-    const gated = await checkMembersGatedHttp(c.id);
-    out.push({ ...c, gated, ...classifyWeeklyCandidate(c.weekday, c.berlinTime, gated) });
+    const { gated, grund } = await checkMembersGatedHttpDetailed(c.id);
+    out.push({ ...c, gated, gatedGrund: grund, ...classifyWeeklyCandidate(c.weekday, c.berlinTime, gated) });
     n++;
     if (n % 25 === 0) console.log(`  ... ${n}/${candidates.length} gemessen`);
     await sleep(150);
@@ -1562,6 +1634,62 @@ async function runWeeklySimulate(args, yt, channel, onListCall) {
 // playlistItems.insert und nur, wenn Sendeplan und Messung uebereinstimmen.
 // G4: kein videos.update, kein playlistItems.delete. G5: Dry-Run ist Default.
 // ---------------------------------------------------------------------------
+// CY: aus der writeLast-Closure herausgeloest, damit derselbe Text auch ausserhalb
+// eines scharfen Wochenlaufs erzeugt werden kann -- die UNVERIFIED-Sonde
+// (scripts/gating-unverified-probe.cjs) rendert damit GENAU den Text, der im
+// Ernstfall in LAST.txt landet, statt einen nachgebauten. Reine Funktion: sie
+// schreibt nichts, sie liefert den Text.
+function buildWeeklyLastText(summary, exitCode, csvPath, execute) {
+  const lines = [
+    `Letzter Wochenlauf: ${new Date().toISOString()}`,
+    `Modus:              ${execute ? 'EXECUTE' : 'DRY-RUN'}`,
+    `Ergebnis:           ${summary.status}`,
+    `Exit-Code:          ${exitCode}${exitCode === EXIT_ATTENTION ? '  <-- BITTE PRUEFEN' : ''}`,
+  ];
+  // CX: UNVERIFIED steht GANZ OBEN, direkt unter dem Kopf. Ein Stream, den der
+  // Check nicht einstufen konnte, ist der einzige Posten, der eine Handlung
+  // verlangt -- er darf nicht unter Zahlenkolonnen und der UNGEWOEHNLICH-Liste
+  // begraben sein. Seit der Umstellung auf decideGatedStrict landet hier auch,
+  // was frueher stillschweigend ins oeffentliche Archiv gewandert waere.
+  if (summary.unverified.length) {
+    lines.push(
+      '',
+      `!!! UNVERIFIED: ${summary.unverified.length} Stream(s) NICHT einsortiert — bitte von Hand pruefen`,
+      '    Grund: Der Mitglieder-Check konnte das Video nicht eindeutig einstufen.',
+      '    Fail-closed: im Zweifel wird NICHT eingefuegt, weder ins Archiv noch in die IC-Playlist.',
+    );
+    for (const r of summary.unverified) {
+      lines.push(`    - ${r.berlinDate} ${r.berlinTime} ${r.weekday} | ${r.title}`);
+      lines.push(`      ${r.gatedGrund || 'Grund nicht erfasst'}`);
+      lines.push(`      ${r.id}`);
+    }
+  }
+  lines.push(
+    '',
+    `Neue Kandidaten:    ${summary.candidates}`,
+    `Eingefuegt Archiv:  ${summary.insertedArchive}`,
+    `Eingefuegt IC:      ${summary.insertedIC}`,
+    `Ungewoehnlich:      ${summary.unusual}  (nicht Do/So-Abend, aber trotzdem eingefuegt -- Signal B war eindeutig)`,
+    `Ungeprueft:         ${summary.unverified.length}`,
+    `Quota verbraucht:   ~${summary.quota}/${QUOTA_BUDGET}`,
+    '',
+    `Archiv-Playlist danach: ${summary.archiveTotal} Eintraege`,
+    `IC-Playlist danach:     ${summary.icTotal} Eintraege`,
+    '',
+    `CSV: ${csvPath}`,
+  );
+  if (summary.unusualRows && summary.unusualRows.length) {
+    lines.push('', 'UNGEWOEHNLICH (trotzdem eingefuegt, nur zur Kenntnis):');
+    for (const r of summary.unusualRows) lines.push(`  ${r.berlinDate} ${r.berlinTime} ${r.weekday}: ${r.note} -> ${signalLabel(r.target)} | ${r.id} | ${r.title}`);
+  }
+  // Die UNVERIFIED-Liste steht bewusst OBEN (siehe dort) und nicht mehr hier.
+  if (summary.icSuggestions && summary.icSuggestions.length) {
+    lines.push('', 'U2: NUMMERN-VORSCHLAEGE (nichts geschrieben, bitte bestaetigen):');
+    for (const line of summary.icSuggestions) lines.push(`  ${line}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
 async function runWeekly(args, yt, channel, targetPlaylistId, targetPlaylist, rawTargetItems, counters, onListCall) {
   const icPlaylistId = process.env.INNER_CIRCLE_PLAYLIST_ID;
   if (!icPlaylistId) {
@@ -1620,37 +1748,7 @@ async function runWeekly(args, yt, channel, targetPlaylistId, targetPlaylist, ra
   // K4: LAST.txt wird IMMER geschrieben (auch bei 0 Kandidaten und bei Abbruch),
   // damit "Datei ist alt" ein zuverlaessiges Zeichen fuer "Task lief nicht" ist.
   const writeLast = (summary, exitCode) => {
-    const lines = [
-      `Letzter Wochenlauf: ${new Date().toISOString()}`,
-      `Modus:              ${args.execute ? 'EXECUTE' : 'DRY-RUN'}`,
-      `Ergebnis:           ${summary.status}`,
-      `Exit-Code:          ${exitCode}${exitCode === EXIT_ATTENTION ? '  <-- BITTE PRUEFEN' : ''}`,
-      '',
-      `Neue Kandidaten:    ${summary.candidates}`,
-      `Eingefuegt Archiv:  ${summary.insertedArchive}`,
-      `Eingefuegt IC:      ${summary.insertedIC}`,
-      `Ungewoehnlich:      ${summary.unusual}  (nicht Do/So-Abend, aber trotzdem eingefuegt -- Signal B war eindeutig)`,
-      `Ungeprueft:         ${summary.unverified.length}`,
-      `Quota verbraucht:   ~${summary.quota}/${QUOTA_BUDGET}`,
-      '',
-      `Archiv-Playlist danach: ${summary.archiveTotal} Eintraege`,
-      `IC-Playlist danach:     ${summary.icTotal} Eintraege`,
-      '',
-      `CSV: ${csvPath}`,
-    ];
-    if (summary.unusualRows && summary.unusualRows.length) {
-      lines.push('', 'UNGEWOEHNLICH (trotzdem eingefuegt, nur zur Kenntnis):');
-      for (const r of summary.unusualRows) lines.push(`  ${r.berlinDate} ${r.berlinTime} ${r.weekday}: ${r.note} -> ${signalLabel(r.target)} | ${r.id} | ${r.title}`);
-    }
-    if (summary.unverified.length) {
-      lines.push('', 'UNGEPRUEFT (HTTP-Check nicht auswertbar, fail-closed):');
-      for (const r of summary.unverified) lines.push(`  ${r.berlinDate} ${r.berlinTime} ${r.weekday} | ${r.id} | ${r.title}`);
-    }
-    if (summary.icSuggestions && summary.icSuggestions.length) {
-      lines.push('', 'U2: NUMMERN-VORSCHLAEGE (nichts geschrieben, bitte bestaetigen):');
-      for (const line of summary.icSuggestions) lines.push(`  ${line}`);
-    }
-    fs.writeFileSync(lastPath, lines.join('\n') + '\n');
+    fs.writeFileSync(lastPath, buildWeeklyLastText(summary, exitCode, csvPath, args.execute));
   };
 
   const baseSummary = {
@@ -2282,6 +2380,8 @@ module.exports = {
   parseArgs, youtubeAvailable, listUploadIds, listTargetPlaylistRaw, fetchVideoDetails,
   listCompletedBroadcastIds, loadMembersExcludeFile, berlinDateParts, isPreMigrationModoMeeting,
   computeModoCandidates, checkMembersGatedHttp, loadMemberMeetingDates, detectPastLivestreams,
+  decideGatedStrict, decideGatedLegacy, extractPlayabilityStatus, fetchWatchPageHtml, buildWeeklyLastText,
+  checkMembersGatedHttpDetailed,
   classifyWeeklyCandidate, collectWeeklyCandidates, runWeekly, runWeeklySimulate,
   runAssignEpisode, loadSeriesRegistryFull,
   isAuthError, writeAuthFailureLast,

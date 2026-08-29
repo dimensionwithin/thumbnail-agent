@@ -9,6 +9,15 @@ const COLORS = ['brass', 'sage', 'oxblood'];
 const CHART_FORMS = ['collapse', 'expansion', 'fractal'];
 const POSITIONS = ['auto', 'top', 'bottom', 'left', 'right'];
 const STANCES = ['bullish', 'bearish', 'neutral'];
+// CN3: Die 14 Emblem-Varianten -- Dateiname ohne Endung in
+// assets/branding/emblems/, gespiegelt aus EMBLEM_META im Compositor.
+const EMBLEM_VARIANTS = [
+  'christkind', 'cowboyhut', 'ernst', 'feiern', 'lachen', 'neutral', 'schock',
+  'sensenmann', 'skeptisch', 'triumphierend', 'ueberrascht', 'verliebt',
+  'verwirrt', 'weihnachtsmann',
+];
+const EMBLEM_SHOW = ['auto', 'on', 'off'];
+const EMBLEM_SIDES = ['auto', 'left', 'right'];
 
 // Stance -> Farbe + Chart-Form (im Compositor verankert):
 // bearish -> Collapse/Oxblood, bullish -> Expansion/Sage, neutral -> Fractal/Brass.
@@ -74,6 +83,25 @@ function normalizeConfig(raw) {
     cfg.titleScale = 'auto';
   }
 
+  // CN3: Ohne diese Felder filterte toEngineConfig jede Emblem-Wahl weg -- die
+  // Harness las cfg.emblemVariant, das da nie ankam, und zeichnete still den
+  // eingebetteten Rueckfall. Die Warnung "Variante nicht gefunden" konnte
+  // deshalb nie ausloesen.
+  cfg.emblemShow = pickEnum('emblemShow', EMBLEM_SHOW, 'auto');
+  cfg.emblemSide = pickEnum('emblemSide', EMBLEM_SIDES, 'auto');
+  if (raw.emblemVariant != null) {
+    if (EMBLEM_VARIANTS.includes(raw.emblemVariant)) {
+      cfg.emblemVariant = raw.emblemVariant;
+    } else {
+      warnings.push(`emblemVariant="${raw.emblemVariant}" unbekannt -> Rueckfall wird gezeichnet`);
+    }
+  }
+  for (const key of ['emblemSize', 'emblemMargin', 'emblemY']) {
+    if (raw[key] == null) continue;
+    if (Number.isFinite(+raw[key])) cfg[key] = +raw[key];
+    else warnings.push(`${key}="${raw[key]}" ist keine Zahl -> Vorgabe der Engine gilt`);
+  }
+
   cfg.approved = raw.approved === true;
 
   // headline-Hinweis: genau ein *Akzentwort* erwartet (nur Warnung, nicht blockierend).
@@ -86,7 +114,14 @@ function normalizeConfig(raw) {
 }
 
 // Nur die Felder, die die Engine konsumiert — ohne Agent-Metadaten (Konfidenz etc.).
-const ENGINE_KEYS = ['videoId', 'preset', 'color', 'chartForm', 'chartSeed', 'headline', 'episode', 'date', 'label', 'position', 'titleScale'];
+const ENGINE_KEYS = [
+  'videoId', 'preset', 'color', 'chartForm', 'chartSeed', 'headline', 'episode',
+  'date', 'label', 'position', 'titleScale',
+  // CN3: Emblem-Felder gehoeren zum Vertrag -- applyConfig() im Compositor liest
+  // sie. 'emblemDataUri' steht bewusst NICHT hier: das ist kein Config-Feld,
+  // sondern setzt die Harness selbst, nachdem sie die PNG-Datei gelesen hat.
+  'emblemVariant', 'emblemShow', 'emblemSide', 'emblemSize', 'emblemMargin', 'emblemY',
+];
 
 function toEngineConfig(cfg) {
   const out = {};
@@ -96,6 +131,7 @@ function toEngineConfig(cfg) {
 
 module.exports = {
   PRESETS, COLORS, CHART_FORMS, POSITIONS, STANCES,
+  EMBLEM_VARIANTS, EMBLEM_SHOW, EMBLEM_SIDES,
   STANCE_MAP, DEFAULTS, ENGINE_KEYS,
   stanceToConfig, normalizeConfig, toEngineConfig,
 };

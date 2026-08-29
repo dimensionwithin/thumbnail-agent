@@ -5,6 +5,7 @@
   "license": "MIT",
   "description": "Back-Catalog Thumbnail Agent fuer 'at dimension within' — YouTube-Metadaten -> Configs -> Render -> Review -> Publish.",
   "scripts": {
+    "test": "node --test tests/*.test.cjs",
     "auth": "node src/youtube/auth.js",
     "inventory": "node src/youtube/inventory.js",
     "decide": "node src/decision/decide.js",

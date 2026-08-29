@@ -230,8 +230,8 @@
       </div>
       <label class="lbl" for="emblemMargin">Emblem Randabstand</label>
       <div class="sizeRow">
-        <input type="range" id="emblemMargin" min="0" max="400" step="5" value="40">
-        <output id="emblemMarginVal">40 px</output>
+        <input type="range" id="emblemMargin" min="0" max="400" step="2" value="16">
+        <output id="emblemMarginVal">16 px</output>
       </div>
       <label class="lbl" for="emblemY">Emblem Unterkante</label>
       <div class="sizeRow">
@@ -343,7 +343,7 @@ const state = {
   emblemSize: 480,
   emblemShow: 'auto',   // 'auto' (bei Titel 'bottom' aus) | 'on' | 'off'
   emblemSide: 'auto',   // 'auto' | 'left' | 'right'
-  emblemMargin: 40,     // Abstand zur AEUSSEREN Bildkante -- spiegelt sich mit
+  emblemMargin: 16,     // Abstand zur AEUSSEREN Bildkante -- spiegelt sich mit
   emblemY: 720,         // Unterkante -- buendig mit dem Bildrand
   color: 'brass',
   title: 'Der Markt *kippt.*',
@@ -1183,6 +1183,9 @@ function setSourcePhase(nextPhase, details){
     loaded: 'QUELLE: ',
     unchanged: 'QUELLE: BEREITS AKTUELL',
     empty: 'QUELLE: KEIN BILD GEFUNDEN',
+    missing: 'QUELLE: ORDNER NICHT GEFUNDEN',
+    unreadable: 'QUELLE: ORDNER NICHT LESBAR',
+    invalid: 'QUELLE: NUR UNGEEIGNETE PNG-DATEIEN',
     unstable: 'QUELLE: ROHDOWNLOAD NOCH NICHT FERTIG',
     error: 'QUELLE: FEHLER',
   };
@@ -1262,8 +1265,15 @@ function loadFile(f, options){
 }
 
 function sourceFailurePhase(code){
+  // CN2: Jede Ursache bekommt ihre eigene Anzeige. Vorher fielen 'source_missing'
+  // (Ordner gibt es nicht), 'source_invalid' (nur unbrauchbare PNGs) und
+  // 'source_empty' (Ordner ist leer) auf dieselbe Zeile "KEIN BILD GEFUNDEN" --
+  // ein falsch konfigurierter Ordner sah damit aus wie ein leerer.
   if (code === 'source_unstable') return 'unstable';
-  if (code === 'source_empty' || code === 'source_invalid' || code === 'source_missing') return 'empty';
+  if (code === 'source_missing') return 'missing';
+  if (code === 'source_unreadable') return 'unreadable';
+  if (code === 'source_invalid') return 'invalid';
+  if (code === 'source_empty') return 'empty';
   if (code === 'invalid_token') return 'unavailable';
   return 'error';
 }
@@ -1365,7 +1375,11 @@ async function loadLatestSource(){
     if (error && error.name === 'AbortError') return false;
     if (generation !== sourceState.requestGeneration) return false;
     const phase = sourceFailurePhase(error && error.sourceCode);
-    setSourcePhase(phase);
+    // CN2: Ein unbekannter Code darf nicht wortlos zu "FEHLER" werden -- sonst
+    // entsteht genau die naechste Sammelmeldung. Der Klartext des Dienstes
+    // wird deshalb angehaengt statt nur in die Konsole geschrieben.
+    const detail = phase === 'error' && error && error.message ? ' · '+error.message : '';
+    setSourcePhase(phase, detail);
     console.error('TradingView source load failed.', {
       code: error && error.sourceCode ? error.sourceCode : 'client_error',
       message: error && error.message ? error.message : String(error),
@@ -1820,7 +1834,12 @@ function downloadExportBlob(blob, filename){
   setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
 
+// CN2: Traegt die Begruendung des Dienstes vom fehlgeschlagenen Versuch bis zur
+// Statuszeile. Wird vor jedem Versuch zurueckgesetzt.
+let exportServiceFailure = null;
+
 async function writeExportToLocalService(blob, filename){
+  exportServiceFailure = null;
   if (!localService.available) return false;
   try {
     // U1: Der Export ist der einzige Moment, in dem der Registry-Zaehler
@@ -1848,7 +1867,9 @@ async function writeExportToLocalService(blob, filename){
     });
     if (!response.ok){
       const failure = await responseError(response);
-      throw new Error(failure.message);
+      const error = new Error(failure.message);
+      error.exportCode = failure.code;
+      throw error;
     }
     const result = await response.json();
     const expectedExtension = blob.type === 'image/jpeg' ? '.jpg' : '.png';
@@ -1860,6 +1881,11 @@ async function writeExportToLocalService(blob, filename){
     return { filename: result.filename, warning: typeof result.registry_warning === 'string' ? result.registry_warning : null };
   } catch (error) {
     console.error('Local export service failed for "'+filename+'".', error);
+    // CN2: Bisher verschwand hier die Begruendung des Dienstes und der Aufrufer
+    // fiel stumm auf den Browserdownload zurueck -- ein fehlender Exportordner
+    // war von "kein Dateisystemzugriff" nicht zu unterscheiden. Die Meldung
+    // wird jetzt weitergereicht und angezeigt.
+    exportServiceFailure = error && error.message ? error.message : null;
     return false;
   }
 }
@@ -1915,7 +1941,9 @@ exportBtn.addEventListener('click', async () => {
       meta.textContent = 'Gespeichert im Export-Ordner: '+filename;
     } else {
       downloadExportBlob(blob, filename);
-      meta.textContent = 'Direktes Speichern nicht verfügbar – Browserdownload gestartet.';
+      meta.textContent = exportServiceFailure
+        ? 'Speichern im Export-Ordner fehlgeschlagen: '+exportServiceFailure+' – Browserdownload gestartet.'
+        : 'Direktes Speichern nicht verfügbar – Browserdownload gestartet.';
     }
   } catch (error) {
     console.error('Export failed.', error);

@@ -31,8 +31,11 @@ from thumbnail_service import (
     _console_print,
     _health_is_expected,
     create_server,
+    describe_directory,
     normalized_last_assigned,
+    read_env_file,
     record_series_registry_export,
+    resolve_directory,
     run_server,
     select_latest_png,
     series_floor_number,
@@ -774,6 +777,62 @@ class ClientContractTests(unittest.TestCase):
         self.assertIn("serviceResult.warning", self.html)
         self.assertIn("— ACHTUNG: '+serviceResult.warning", self.html)
 
+    def test_every_source_error_code_has_its_own_label(self) -> None:
+        """CN2: Verschiedene Ursachen duerfen nicht gleich aussehen.
+
+        'source_missing' (Ordner gibt es nicht), 'source_invalid' (nur
+        unbrauchbare PNGs) und 'source_empty' (Ordner ist leer) fielen frueher
+        gemeinsam auf "KEIN BILD GEFUNDEN". Ein falsch konfigurierter Ordner war
+        dadurch von einem leeren nicht zu unterscheiden -- genau die Faehrte,
+        die die Fehlersuche zweimal in die Irre geschickt hat.
+        """
+        for code, phase in (
+            ("source_missing", "missing"),
+            ("source_unreadable", "unreadable"),
+            ("source_invalid", "invalid"),
+            ("source_empty", "empty"),
+            ("source_unstable", "unstable"),
+        ):
+            with self.subTest(code=code):
+                self.assertIn(f"if (code === '{code}') return '{phase}';", self.html)
+
+        for phase, label in (
+            ("missing", "QUELLE: ORDNER NICHT GEFUNDEN"),
+            ("unreadable", "QUELLE: ORDNER NICHT LESBAR"),
+            ("invalid", "QUELLE: NUR UNGEEIGNETE PNG-DATEIEN"),
+            ("empty", "QUELLE: KEIN BILD GEFUNDEN"),
+        ):
+            with self.subTest(phase=phase):
+                self.assertIn(f"{phase}: '{label}'", self.html)
+
+    def test_no_source_codes_are_folded_onto_one_label(self) -> None:
+        """Die alte Sammelzeile darf nicht zurueckkehren."""
+        self.assertNotIn(
+            "code === 'source_empty' || code === 'source_invalid'", self.html
+        )
+
+    def test_unknown_source_code_still_shows_the_service_message(self) -> None:
+        """Ein neuer Code darf nicht wortlos zu "FEHLER" werden."""
+        self.assertIn(
+            "phase === 'error' && error && error.message", self.html
+        )
+        self.assertIn("setSourcePhase(phase, detail);", self.html)
+
+    def test_failed_service_export_names_the_reason(self) -> None:
+        """CN2, zweiter Fall: Der Grund verschwand im console.error.
+
+        Schlug der Dienst-Export fehl, fiel der Aufrufer stumm auf den
+        Browserdownload zurueck und meldete "Direktes Speichern nicht
+        verfuegbar" -- ein fehlender Exportordner sah damit aus wie ein
+        fehlender Dateisystemzugriff.
+        """
+        self.assertIn("exportServiceFailure = error && error.message", self.html)
+        self.assertIn(
+            "'Speichern im Export-Ordner fehlgeschlagen: '+exportServiceFailure",
+            self.html,
+        )
+        self.assertIn("exportServiceFailure = null;", self.html)
+
     def test_export_button_keeps_single_flight_guard_and_finally_reset(self) -> None:
         self.assertIn(
             "if (!state.img || exportDirectory.busy) return;", self.html
@@ -986,6 +1045,102 @@ class BrowserReopenTests(unittest.TestCase):
         channel.close()
         self.assertIsNotNone(coordinator.thread)
         self.assertFalse(coordinator.thread.is_alive())
+
+
+class DirectoryResolutionTests(unittest.TestCase):
+    """CM1: Der Quellordner kam bis hierher aus einem RELATIVEN Fallback.
+
+    Damit suchte der Dienst still im Projektordner statt im TradingView-Ordner
+    und meldete "kein Bild gefunden". Diese Tests halten die Rangfolge fest und
+    schuetzen die Konsolenzeile, die den Irrtum sichtbar macht.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.env_file = self.directory / ".env"
+
+    def test_reads_only_the_directory_keys(self) -> None:
+        self.env_file.write_text(
+            "\n".join(
+                [
+                    "YOUTUBE_CLIENT_SECRET=streng-geheim",
+                    "THUMBNAIL_SOURCE_DIR=ordner-quelle",
+                    "THUMBNAIL_EXPORT_DIR=ordner-ziel",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        values = read_env_file(self.env_file)
+        self.assertEqual(
+            values,
+            {"THUMBNAIL_SOURCE_DIR": "ordner-quelle", "THUMBNAIL_EXPORT_DIR": "ordner-ziel"},
+        )
+        self.assertNotIn("YOUTUBE_CLIENT_SECRET", values)
+
+    def test_ignores_comments_blank_lines_and_quotes(self) -> None:
+        self.env_file.write_text(
+            "\n".join(
+                [
+                    "",
+                    "# Kommentar",
+                    '  THUMBNAIL_SOURCE_DIR = "ordner mit leerzeichen"  ',
+                    "THUMBNAIL_EXPORT_DIR=",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        values = read_env_file(self.env_file)
+        self.assertEqual(values, {"THUMBNAIL_SOURCE_DIR": "ordner mit leerzeichen"})
+
+    def test_missing_file_is_not_an_error(self) -> None:
+        self.assertEqual(read_env_file(self.directory / "fehlt.env"), {})
+
+    def test_precedence_argument_beats_environment_beats_file(self) -> None:
+        values = {"THUMBNAIL_SOURCE_DIR": "ordner-aus-datei"}
+        with patch.dict(os.environ, {"THUMBNAIL_SOURCE_DIR": "ordner-aus-umgebung"}):
+            self.assertEqual(
+                resolve_directory(
+                    "THUMBNAIL_SOURCE_DIR",
+                    Path("ordner-aus-argument"),
+                    Path("fallback"),
+                    values,
+                ),
+                Path("ordner-aus-argument"),
+            )
+            self.assertEqual(
+                resolve_directory(
+                    "THUMBNAIL_SOURCE_DIR", None, Path("fallback"), values
+                ),
+                Path("ordner-aus-umgebung"),
+            )
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                resolve_directory(
+                    "THUMBNAIL_SOURCE_DIR", None, Path("fallback"), values
+                ),
+                Path("ordner-aus-datei"),
+            )
+            self.assertEqual(
+                resolve_directory("THUMBNAIL_SOURCE_DIR", None, Path("fallback"), {}),
+                Path("fallback"),
+            )
+
+    def test_description_is_absolute_and_reports_existence(self) -> None:
+        line = describe_directory("Quellordner", self.directory)
+        self.assertIn(str(self.directory.resolve()), line)
+        self.assertTrue(line.endswith("[ok]"))
+
+        missing = self.directory / "gibt-es-nicht"
+        line = describe_directory("Quellordner", missing)
+        self.assertIn(str(missing.resolve()), line)
+        self.assertTrue(line.endswith("[FEHLT]"))
+
+    def test_description_resolves_relative_paths_absolutely(self) -> None:
+        """Der eigentliche Stolperstein: relativ sieht harmlos aus."""
+        line = describe_directory("Quellordner", Path("thumbnail-source"))
+        self.assertIn(str(Path("thumbnail-source").resolve()), line)
 
 
 class LauncherContractTests(unittest.TestCase):

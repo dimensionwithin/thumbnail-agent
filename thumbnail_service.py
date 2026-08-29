@@ -35,6 +35,16 @@ EXPORT_DIRECTORY_ENV = "THUMBNAIL_EXPORT_DIR"
 # Fallback ohne festen Rechnerpfad: Unterordner des Arbeitsverzeichnisses.
 SOURCE_DIRECTORY = Path("thumbnail-source")
 EXPORT_DIRECTORY = Path("thumbnail-export")
+# CM1: Die .env liegt neben dem Skript und ist gitignored -- dort stehen die
+# Ordnerpfade dieses Rechners. Bis hierher las nur der Node-Teil des Projekts
+# diese Datei; der Dienst fiel deshalb still auf den RELATIVEN Fallback oben
+# zurueck und suchte im Projektordner statt im TradingView-Ordner. Bewusst kein
+# dotenv-Paket und bewusst kein Durchreichen nach os.environ: gelesen werden nur
+# die beiden Ordnerschluessel, alles andere in der Datei (u.a. das OAuth-Secret)
+# bleibt unberuehrt.
+ENV_FILE = Path(__file__).with_name(".env")
+DIRECTORY_ENV_KEYS = (SOURCE_DIRECTORY_ENV, EXPORT_DIRECTORY_ENV)
+MAX_ENV_FILE_BYTES = 1 * 1024 * 1024
 HTML_FILE = Path(__file__).with_name("thumbnail-compositor.html")
 # T1: Persistente Folgennummerierung je Serie (innercircle|livestream|standard).
 # Nur lesend fuer die Anzeige
@@ -1348,16 +1358,81 @@ def create_server(
     )
 
 
+def read_env_file(path: Path = ENV_FILE) -> dict[str, str]:
+    """Liest NUR die Ordnerschlüssel aus einer KEY=VALUE-Datei.
+
+    Absichtlich anspruchslos: keine Interpolation, keine ``export``-Praefixe,
+    keine mehrzeiligen Werte. Umgebende Anfuehrungszeichen werden entfernt,
+    damit ein Windows-Pfad mit Leerzeichen zitiert werden kann. Fehlt die Datei
+    oder ist sie unlesbar, ist das kein Fehler -- dann gelten Umgebung und
+    Fallback wie bisher.
+    """
+    try:
+        if path.stat().st_size > MAX_ENV_FILE_BYTES:
+            return {}
+        raw = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return {}
+
+    values: dict[str, str] = {}
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if key not in DIRECTORY_ENV_KEYS:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        value = value.strip()
+        if value:
+            values[key] = value
+    return values
+
+
 def resolve_directory(
-    variable: str, override: Path | None, fallback: Path
+    variable: str,
+    override: Path | None,
+    fallback: Path,
+    env_file_values: dict[str, str] | None = None,
 ) -> Path:
-    """Löst ein Arbeitsverzeichnis auf: Argument vor Umgebung vor Fallback."""
+    """Löst ein Arbeitsverzeichnis auf: Argument vor Umgebung vor .env vor Fallback.
+
+    Die echte Prozessumgebung schlaegt die Datei, damit ein einmaliges
+    ``set THUMBNAIL_SOURCE_DIR=...`` zum Testen weiterhin greift.
+    """
     if override is not None:
         return Path(override).expanduser()
     configured = os.environ.get(variable, "").strip()
     if configured:
         return Path(configured).expanduser()
+    from_file = (env_file_values or {}).get(variable, "").strip()
+    if from_file:
+        return Path(from_file).expanduser()
     return fallback
+
+
+def describe_directory(label: str, directory: Path) -> str:
+    """Eine Konsolenzeile: aufgeloester ABSOLUTER Pfad plus Existenzbefund.
+
+    CM1: Zweimal ist uns entgangen, dass der Dienst anderswo suchte als
+    erwartet. Der konfigurierte Wert allein sagt das nicht -- ein relativer
+    Pfad sieht harmlos aus und zeigt trotzdem in den Projektordner. Darum
+    hier immer absolut und immer mit Existenzbefund.
+    """
+    try:
+        absolute = Path(directory).resolve()
+    except OSError:
+        absolute = Path(directory).absolute()
+    if not absolute.exists():
+        state = "FEHLT"
+    elif not absolute.is_dir():
+        state = "IST KEIN ORDNER"
+    else:
+        state = "ok"
+    return f"{label}: {absolute}  [{state}]"
 
 
 def run_server(
@@ -1392,15 +1467,24 @@ def run_server(
     try:
         try:
             channel.create()
+            env_file_values = read_env_file()
+            resolved_source = resolve_directory(
+                SOURCE_DIRECTORY_ENV,
+                source_directory,
+                SOURCE_DIRECTORY,
+                env_file_values,
+            )
+            resolved_export = resolve_directory(
+                EXPORT_DIRECTORY_ENV,
+                export_directory,
+                EXPORT_DIRECTORY,
+                env_file_values,
+            )
             server = create_server(
                 port=port,
                 session_token=session_token,
-                source_directory=resolve_directory(
-                    SOURCE_DIRECTORY_ENV, source_directory, SOURCE_DIRECTORY
-                ),
-                export_directory=resolve_directory(
-                    EXPORT_DIRECTORY_ENV, export_directory, EXPORT_DIRECTORY
-                ),
+                source_directory=resolved_source,
+                export_directory=resolved_export,
             )
         except OSError as error:
             _startup_error(
@@ -1421,6 +1505,8 @@ def run_server(
         coordinator.start()
         _console_print("DimensionWithin Thumbnail-Compositor")
         _console_print(f"Lokaler Dienst: http://{HOST}:{actual_port}/")
+        _console_print(describe_directory("Quellordner", resolved_source))
+        _console_print(describe_directory("Exportordner", resolved_export))
         _console_print("Beenden mit Strg+C.")
         if open_browser:
             coordinator.schedule_initial_open(browser_open_delay)

@@ -1233,3 +1233,126 @@ test('DJb: die Feldschleifen benutzen die Konstanten, nicht ihre eigene Liste', 
   assert.deepEqual(L.GANZZAHL_FELDER, ['breite', 'hoehe', 'quelle_von_ms', 'quelle_bis_ms']);
   assert.deepEqual(L.TEXT_FELDER, ['titel_vorschlag', 'transkript']);
 });
+
+// ---------------------------------------------------------------------------
+// DNa Punkt 2: DIE EINE TABELLE DER RUECKGABEWERTE
+// ---------------------------------------------------------------------------
+
+test('DNa: keine zwei Bedeutungen tragen denselben Wert', () => {
+  // Der Kern von Punkt 2. Vor DNa hiess 3 beim Planer "gesperrte Aufnahme" und
+  // in der archivierten upload-probe "konnte nicht fragen". Dieser Test laesst
+  // das nicht wieder entstehen.
+  const werte = L.EXIT_CODES.map((c) => c.wert);
+  assert.equal(new Set(werte).size, werte.length,
+    'zwei Eintraege der Tabelle tragen denselben Wert: ' + werte.join(', '));
+  const namen = L.EXIT_CODES.map((c) => c.name);
+  assert.equal(new Set(namen).size, namen.length, 'ein Name kommt zweimal vor');
+  const bedeutungen = L.EXIT_CODES.map((c) => c.bedeutung);
+  assert.equal(new Set(bedeutungen).size, bedeutungen.length, 'eine Bedeutung kommt zweimal vor');
+});
+
+test('DNa: jeder Eintrag ist vollstaendig und sagt, wann der Code faellt', () => {
+  for (const c of L.EXIT_CODES) {
+    assert.ok(Number.isInteger(c.wert) && c.wert >= 0 && c.wert < 126,
+      'unbrauchbarer Wert: ' + JSON.stringify(c.wert));
+    assert.match(c.name, /^[A-Z][A-Z_]*$/, 'unbrauchbarer Name: ' + JSON.stringify(c.name));
+    assert.ok(typeof c.bedeutung === 'string' && c.bedeutung.trim().length >= 40,
+      'Code ' + c.wert + ' hat keine brauchbare Bedeutung');
+  }
+});
+
+test('DNa: EXIT wird aus der Tabelle gebaut und ist eingefroren', () => {
+  assert.ok(Object.isFrozen(L.EXIT));
+  assert.deepEqual(L.EXIT, { OK: 0, BEFUND: 1, AUFRUF: 2, GESPERRT: 3, KEINE_ANTWORT: 4 });
+  for (const c of L.EXIT_CODES) assert.equal(L.EXIT[c.name], c.wert);
+  assert.equal(Object.keys(L.EXIT).length, L.EXIT_CODES.length,
+    'EXIT und EXIT_CODES sind auseinandergelaufen');
+});
+
+test('DNa: 0, 1 und 2 sind Vertrag und tragen die zugesagten Werte', () => {
+  // Bericht ZUSAGE-freigabedienst-aufruf.md, Abschnitt 5.
+  assert.equal(L.EXIT.OK, 0);
+  assert.equal(L.EXIT.BEFUND, 1);
+  assert.equal(L.EXIT.AUFRUF, 2);
+  // Und die gewohnten Namen dieses Skripts zeigen auf dieselben Zahlen.
+  assert.equal(L.EXIT_OK, L.EXIT.OK);
+  assert.equal(L.EXIT_MANGEL, L.EXIT.BEFUND);
+  assert.equal(L.EXIT_AUFRUFFEHLER, L.EXIT.AUFRUF);
+});
+
+test('DNa: die Zahl steht in src/upload/ nur an dieser einen Stelle', () => {
+  // Kein `const EXIT_... = <Zahl>` mehr in einer der drei Dateien -- alle
+  // beziehen sich auf EXIT.*. Die Tabelle selbst ist ausgenommen, sie IST die
+  // eine Stelle.
+  for (const datei of ['uebergabe-leser.js', 'freigabe-server.js', 'planer.js']) {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'src', 'upload', datei), 'utf8');
+    const nurCode = text.split('\n').filter((z) => !/^\s*\/\//.test(z)).join('\n');
+    const nackt = [...nurCode.matchAll(/const (EXIT_[A-Z_]+)\s*=\s*(\d+)\s*;/g)];
+    assert.deepEqual(nackt.map((m) => m[1] + '=' + m[2]), [],
+      datei + ' vergibt eine Exit-Zahl selbst, statt sie aus EXIT zu beziehen');
+  }
+});
+
+test('DNa: die beiden anderen Skripte beziehen die Zahlen aus dieser Tabelle', () => {
+  const S = require('../src/upload/freigabe-server.js');
+  const P = require('../src/upload/planer.js');
+  assert.equal(S.EXIT_OK, L.EXIT.OK);
+  assert.equal(S.EXIT_ABBRUCH, L.EXIT.BEFUND);
+  assert.equal(S.EXIT_AUFRUFFEHLER, L.EXIT.AUFRUF);
+  assert.equal(P.EXIT_OK, L.EXIT.OK);
+  assert.equal(P.EXIT_MANGEL, L.EXIT.BEFUND);
+  assert.equal(P.EXIT_AUFRUFFEHLER, L.EXIT.AUFRUF);
+  assert.equal(P.EXIT_GESPERRT, L.EXIT.GESPERRT);
+});
+
+// ---------------------------------------------------------------------------
+// DNa Punkt 1: DER FLAGNAME IST EIN PARAMETER
+// ---------------------------------------------------------------------------
+
+test('DNa: pruefeKeineFreienArgumente verlangt den Flagnamen', () => {
+  // Ein Aufrufer, der ihn vergisst, faellt sofort auf -- auch dann, wenn es
+  // gar keine freien Argumente gibt und die Funktion sonst nichts taete.
+  assert.throws(() => L.pruefeKeineFreienArgumente(['node', 'x'], 'x.js'),
+    /flagname fehlt oder endet nicht auf/);
+  assert.throws(() => L.pruefeKeineFreienArgumente(['node', 'x'], 'x.js', '--freigabe'),
+    /endet nicht auf/);
+  // Mit Flagnamen und ohne freie Argumente kehrt sie still zurueck.
+  assert.equal(L.pruefeKeineFreienArgumente(['node', 'x', '--json'], 'x.js', '--aufnahme='),
+    undefined);
+});
+
+test('DNa: der Beispielname wird aus dem gebaut, was getippt wurde', () => {
+  assert.equal(
+    L.beispielAufnahme(['node', 'x', '--freigabe=2026-08-31', '17-36-21'], '--freigabe=', '17-36-21'),
+    '2026-08-31 17-36-21');
+  assert.equal(
+    L.beispielAufnahme(['node', 'x', '--aufnahme=2026-01-02', '03-04-05'], '--aufnahme=', '03-04-05'),
+    '2026-01-02 03-04-05');
+  // Laesst sich nichts zusammensetzen, kommt ein erkennbarer Platzhalter --
+  // kein erfundener Name, den jemand fuer echt haelt.
+  assert.equal(L.beispielAufnahme(['node', 'x', '11-22-33'], '--freigabe=', '11-22-33'),
+    'JJJJ-MM-TT HH-MM-SS');
+  assert.equal(
+    L.beispielAufnahme(['node', 'x', '--freigabe=unsinn', '11-22-33'], '--freigabe=', '11-22-33'),
+    'JJJJ-MM-TT HH-MM-SS');
+});
+
+test('DNa: jedes der drei Skripte schlaegt SEIN eigenes Argument vor', () => {
+  const faelle = [
+    { skript: 'src/upload/uebergabe-leser.js', flag: '--aufnahme=', datum: '2026-08-29', rest: '18-18-19' },
+    { skript: 'src/upload/freigabe-server.js', flag: '--aufnahme=', datum: '2026-08-29', rest: '18-18-19' },
+    { skript: 'src/upload/planer.js', flag: '--freigabe=', datum: '2026-08-31', rest: '17-36-21' },
+  ];
+  for (const f of faelle) {
+    const r = require('node:child_process').spawnSync(process.execPath,
+      [path.join(__dirname, '..', f.skript), f.flag + f.datum, f.rest], { encoding: 'utf8' });
+    assert.equal(r.status, L.EXIT.AUFRUF, f.skript);
+    const erwartet = '  node ' + f.skript + ' ' + f.flag + '"' + f.datum + ' ' + f.rest + '"';
+    assert.ok(r.stderr.includes(erwartet),
+      f.skript + ' schlaegt nicht sein eigenes Argument vor.\nErwartet: ' + erwartet +
+      '\nBekommen:\n' + r.stderr);
+    // Und kein Skript nennt mehr ein fremdes Argument.
+    const fremd = f.flag === '--aufnahme=' ? '--freigabe=' : '--aufnahme=';
+    assert.ok(!r.stderr.includes(fremd), f.skript + ' nennt das fremde Argument ' + fremd);
+  }
+});

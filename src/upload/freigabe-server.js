@@ -89,10 +89,12 @@ const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port=', '--no-browser
 //
 // Beide Pruefungen stehen VOR jedem anderen require: pruefeArgumenteStrikt fuer
 // alles mit '-' davor, pruefeKeineFreienArgumente fuer alles ohne.
+// DNa Punkt 1: der Flagname wird mitgegeben. Diese Funktion bedient drei
+// Skripte, und zwei davon heissen --aufnahme=, eines --freigabe=.
 const { pruefeKeineFreienArgumente } = require('./uebergabe-leser');
 if (require.main === module) {
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/upload/freigabe-server.js');
-  pruefeKeineFreienArgumente(process.argv, 'src/upload/freigabe-server.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/upload/freigabe-server.js', '--aufnahme=');
 }
 
 require('dotenv').config();
@@ -107,9 +109,16 @@ const { baueSeite } = require('./freigabe-seite');
 // derselben Regel, und zwei Fassungen einer Regel sind auf Dauer eineinhalb.
 const { neueSperre } = require('./uebergabe-leser');
 
-const EXIT_OK = 0;
-const EXIT_ABBRUCH = 1;
-const EXIT_AUFRUFFEHLER = 2;
+// DNa Punkt 2c: die Zahlen stehen an EINER Stelle -- in der Tabelle EXIT_CODES
+// in uebergabe-leser.js. Die drei Namen hier bleiben, weil sie die Faelle
+// DIESES Dienstes benennen und weil sie so in der Zusage stehen
+// (Bericht ZUSAGE-freigabedienst-aufruf.md, Abschnitt 5):
+//   0 geordnetes Sitzungsende, 1 lief und lehnte den START ab, 2 lief nicht.
+// Diese drei Werte sind Vertrag und werden nicht angetastet.
+const { EXIT } = require('./uebergabe-leser');
+const EXIT_OK = EXIT.OK;
+const EXIT_ABBRUCH = EXIT.BEFUND;
+const EXIT_AUFRUFFEHLER = EXIT.AUFRUF;
 
 const HOST = '127.0.0.1';
 // 8791 und nicht 8787: 8787 ist auf dem Rechner, auf dem dieser Dienst laufen

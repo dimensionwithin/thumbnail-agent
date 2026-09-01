@@ -1399,3 +1399,33 @@ test('unbekannte Argumente beenden den Aufruf, statt ignoriert zu werden', () =>
     unbekannteArgumente(['node', 'x', '--aufnahme=a', '--nur-pruefen'], S.ERLAUBTE_ARGUMENTE),
     ['--nur-pruefen']);
 });
+
+// ---------------------------------------------------------------------------
+// DNa: Flagname und Rueckgabewerte
+// ---------------------------------------------------------------------------
+
+test('DNa: der Dienst gibt seinen eigenen Flagnamen mit', () => {
+  assert.match(NURCODE,
+    /pruefeKeineFreienArgumente\(process\.argv, 'src\/upload\/freigabe-server\.js', '--aufnahme='\)/);
+});
+
+test('DNa: die Rueckgabewerte kommen aus der Tabelle im Leser', () => {
+  const L = require('../src/upload/uebergabe-leser.js');
+  const S = require('../src/upload/freigabe-server.js');
+  assert.equal(S.EXIT_OK, L.EXIT.OK);
+  assert.equal(S.EXIT_ABBRUCH, L.EXIT.BEFUND);
+  assert.equal(S.EXIT_AUFRUFFEHLER, L.EXIT.AUFRUF);
+  // Keine eigene Zahl mehr im Quelltext.
+  assert.ok(!/const EXIT_[A-Z_]+\s*=\s*\d+\s*;/.test(NURCODE),
+    'der Dienst vergibt eine Exit-Zahl selbst');
+  assert.match(NURCODE, /const \{ EXIT \} = require\('\.\/uebergabe-leser'\)/);
+});
+
+test('DNa: die zugesagten Werte 0, 1 und 2 stehen unveraendert', () => {
+  // Bericht ZUSAGE-freigabedienst-aufruf.md, Abschnitt 5. Diese drei sind
+  // Vertrag gegenueber der aufrufenden Seite und werden nicht angetastet.
+  const S = require('../src/upload/freigabe-server.js');
+  assert.equal(S.EXIT_OK, 0);
+  assert.equal(S.EXIT_ABBRUCH, 1);
+  assert.equal(S.EXIT_AUFRUFFEHLER, 2);
+});

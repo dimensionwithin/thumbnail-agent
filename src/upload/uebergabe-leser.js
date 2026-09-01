@@ -22,6 +22,73 @@
 
 const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 
+// ---------------------------------------------------------------------------
+// DIE RUECKGABEWERTE VON src/upload/ -- DIE EINE STELLE (DNa Punkt 2)
+// ---------------------------------------------------------------------------
+//
+// WARUM SIE HIER STEHT UND NICHT DREIMAL: Vor DNa hatte jede der drei Dateien
+// ihre eigenen Konstanten. Dieselbe Zahl stand dreimal da, unter drei Namen
+// (EXIT_MANGEL im Leser, EXIT_ABBRUCH im Freigabedienst, EXIT_MANGEL im
+// Planer), und niemand konnte sehen, ob sie noch dasselbe bedeuteten. Genau so
+// ist die Doppelbelegung entstanden, die DNa aufraeumt: Der Planer vergab 3
+// fuer "gesperrte Aufnahme", die inzwischen archivierte upload-probe vergab 3
+// fuer "konnte nicht fragen" (Berichte DGa Abschnitt 7, DGb Abschnitt 2).
+// Zwei Bedeutungen unter einer Zahl sind der Anfang einer Verwechslung.
+//
+// Diese Datei ist der Ort dafuer, weil die beiden anderen sie ohnehin schon
+// laden (freigabe-server.js und planer.js holen hier pruefeKeineFreienArgumente
+// und AUFNAHME_FORM). Es entsteht also keine neue Abhaengigkeit.
+//
+// 0, 1 UND 2 SIND VERTRAG UND WERDEN NICHT ANGETASTET. Sie sind im Bericht
+// ZUSAGE-freigabedienst-aufruf.md, Abschnitt 5, gegenueber der
+// aufrufenden Seite zugesagt. Die Beschreibungen hier verallgemeinern die
+// Zusage auf alle drei Skripte, ohne die Bedeutung zu verschieben:
+//
+//   Zusage (Freigabedienst)        ->  hier (alle drei)
+//   0 geordnetes Sitzungsende      ->  0 fertig, nichts zu beanstanden
+//   1 lief und lehnte den START ab ->  1 lief, sah nach, lehnte ab
+//   2 lief nicht (Aufruf falsch)   ->  2 der Aufruf war falsch
+//
+// WIE EIN CODE DAZUKOMMT: hier eintragen, mit Wert, Name und einem Satz, der
+// sagt WANN er faellt -- nicht, was das Programm dabei tut. Ein Test in
+// tests/uebergabe-leser.test.cjs haelt fest, dass kein Wert, kein Name und
+// keine Bedeutung zweimal vorkommt.
+const EXIT_CODES = [
+  {
+    wert: 0, name: 'OK',
+    bedeutung: 'Fertig. Das Programm ist geordnet zu Ende gekommen und hat nichts zu beanstanden.',
+  },
+  {
+    wert: 1, name: 'BEFUND',
+    bedeutung: 'Das Programm lief, hat die Lage angesehen und lehnt ab. Der Grund liegt in den ' +
+      'Daten oder im Zustand der Platte, nicht im Aufruf.',
+  },
+  {
+    wert: 2, name: 'AUFRUF',
+    bedeutung: 'Der Aufruf war falsch. Es wurde nichts gelesen, nichts geschrieben und kein ' +
+      'Netzaufruf gemacht -- alle Pruefungen dieser Gruppe laufen vor dem ersten Zugriff.',
+  },
+  {
+    wert: 3, name: 'GESPERRT',
+    bedeutung: 'Eine benannte, begruendete Sperre im Quelltext greift. Das Programm weigert ' +
+      'sich aus einer eingetragenen Regel heraus, nicht wegen der Daten.',
+  },
+  {
+    // Reserviert, nicht in Gebrauch: heute vergibt keines der drei Skripte
+    // diesen Wert. Er steht hier, damit die zweite Bedeutung von 3 einen
+    // eigenen Platz hat: die archivierte upload-probe meldete mit 3, dass sie
+    // den Menschen nicht fragen konnte (Eingabe weggefallen). Kommt so etwas
+    // zurueck, bekommt es 4 und nicht wieder 3.
+    wert: 4, name: 'KEINE_ANTWORT',
+    bedeutung: 'Es konnte nicht gefragt werden -- die Eingabe ist weggefallen. Das Programm hat ' +
+      'weder eine Zustimmung noch eine Ablehnung gehoert.',
+  },
+];
+
+// Der Nachschlagewert: EXIT.OK, EXIT.BEFUND, ... Aus der Tabelle gebaut, damit
+// die Zahl genau einmal im Projekt steht.
+const EXIT = Object.freeze(Object.fromEntries(EXIT_CODES.map((c) => [c.name, c.wert])));
+
 // pruefeArgumenteStrikt als ALLERERSTE Anweisung des Programms -- vor jedem
 // Lesen, vor jedem Kindprozess. Nur so kann ein Tippfehler im Aufruf nicht
 // mehr als "ist halt durchgelaufen" enden (CY Teil B).
@@ -44,7 +111,29 @@ const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--json', '--ohne-platte
 // Die Aufzaehlung im Kopf von cli-args.js nennt fuer diesen Fall ein
 // maxPositional -- das gibt es dort nicht, es steht nur im Kommentar
 // (gemessen in DJb). Bis es das gibt, steht die Pruefung hier.
-function pruefeKeineFreienArgumente(argv, skriptname) {
+// DNa Punkt 1: DER FLAGNAME IST EIN PARAMETER, KEINE KONSTANTE.
+//
+// Bis DNa stand hier '--aufnahme=' fest verdrahtet. Das war fuer die beiden
+// ersten Aufrufer richtig und fuer den dritten falsch: der Planer heisst
+// --freigabe=. Wer den Aufnahmenamen ohne Anfuehrungszeichen tippte, bekam von
+// ihm einen Vorschlag mit einem Argument, das er nicht kennt -- eine Meldung,
+// die den Fehler benennt und dann in die Irre schickt. Gemessen in DN,
+// Abschnitt 7.
+//
+// Der Beispielname kommt jetzt ausserdem aus dem, was der Mensch WIRKLICH
+// getippt hat, und nicht aus einem festen Namen im Quelltext. Das feste
+// Beispiel war '2026-08-29 18-18-19' -- ausgerechnet die Aufnahme, die der
+// Planer seit DN sperrt. Ein Vorschlag, der auf eine gesperrte Aufnahme zeigt,
+// ist schlechter als keiner.
+function pruefeKeineFreienArgumente(argv, skriptname, flagname) {
+  // Diese Pruefung laeuft bei JEDEM Aufruf, auch beim erfolgreichen: ein
+  // Aufrufer, der den Flagnamen vergisst, soll sofort auffallen und nicht erst
+  // an dem Tag, an dem jemand die Anfuehrungszeichen vergisst.
+  if (typeof flagname !== 'string' || !flagname.endsWith('=')) {
+    throw new Error('pruefeKeineFreienArgumente: flagname fehlt oder endet nicht auf "=" (' +
+      JSON.stringify(flagname) + '). Der Aufrufer muss sein eigenes Argument benennen -- ' +
+      'diese Funktion bedient drei Skripte mit drei verschiedenen Namen.');
+  }
   const frei = argv.slice(2).filter((t) => !t.startsWith('-'));
   if (!frei.length) return;
   console.error('\nAbbruch: freie Argumente gibt es hier nicht: ' +
@@ -52,28 +141,36 @@ function pruefeKeineFreienArgumente(argv, skriptname) {
   // Der haeufigste Fall bekommt seinen eigenen Satz. Ein loses "18-18-19"
   // ratlos zu melden waere richtig und trotzdem nutzlos -- wer es sieht, sucht
   // dann im Skript statt in seiner eigenen Zeile.
-  if (frei.some((t) => /^\d{2}-\d{2}-\d{2}$/.test(t))) {
+  const rest = frei.find((t) => /^\d{2}-\d{2}-\d{2}$/.test(t));
+  if (rest !== undefined) {
     console.error('');
     console.error('Das sieht aus wie der Rest eines Aufnahmenamens. Ein Aufnahmename');
     console.error('enthaelt ein Leerzeichen und muss darum in Anfuehrungszeichen stehen --');
     console.error('ohne sie zerfaellt er in zwei Argumente, und der zweite landet hier.');
     console.error('');
     console.error('So geht es, ohne npm dazwischen:');
-    console.error('  node ' + skriptname + ' --aufnahme="2026-08-29 18-18-19"');
+    console.error('  node ' + skriptname + ' ' + flagname + '"' +
+      beispielAufnahme(argv, flagname, rest) + '"');
   }
   console.error('');
   console.error('Es wurde NICHTS geschrieben und kein Netzaufruf gemacht.\n');
-  process.exit(EXIT_AUFRUFFEHLER_FRUEH);
+  process.exit(EXIT.AUFRUF);
 }
 
-// EXIT_AUFRUFFEHLER steht weiter unten, hinter den Konstanten. Diese Pruefung
-// laeuft aber vor allem anderen, darum die eigene Zahl hier oben -- sie ist
-// dieselbe (2), und ein Test haelt fest, dass sie es bleibt.
-const EXIT_AUFRUFFEHLER_FRUEH = 2;
+// Setzt den zerfallenen Aufnahmenamen wieder zusammen: aus dem Datumsteil, der
+// noch am Flag haengt, und dem Uhrzeitteil, der als freies Argument uebrig
+// blieb. Geht das nicht, bleibt es bei der Form -- ein erfundener Name waere
+// hier schlechter als ein Platzhalter, den man als Platzhalter erkennt.
+function beispielAufnahme(argv, flagname, rest) {
+  const traeger = argv.slice(2).find((t) => t.startsWith(flagname));
+  const datum = traeger === undefined ? null : traeger.slice(flagname.length);
+  if (datum !== null && /^\d{4}-\d{2}-\d{2}$/.test(datum)) return datum + ' ' + rest;
+  return 'JJJJ-MM-TT HH-MM-SS';
+}
 
 if (require.main === module) {
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/upload/uebergabe-leser.js');
-  pruefeKeineFreienArgumente(process.argv, 'src/upload/uebergabe-leser.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/upload/uebergabe-leser.js', '--aufnahme=');
 }
 
 require('dotenv').config();
@@ -82,9 +179,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
-const EXIT_OK = 0;
-const EXIT_MANGEL = 1;
-const EXIT_AUFRUFFEHLER = 2;
+// Die gewohnten Namen dieses Skripts, aus der EINEN Tabelle oben bezogen. Der
+// Name bleibt, weil er hier den Fall besser beschreibt als der allgemeine
+// ("Mangel" ist im Leser genauer als "Befund"); die Zahl steht nur einmal.
+const EXIT_OK = EXIT.OK;
+const EXIT_MANGEL = EXIT.BEFUND;
+const EXIT_AUFRUFFEHLER = EXIT.AUFRUF;
 
 // ---------------------------------------------------------------------------
 // Der Vertrag in Zahlen und Zeichenketten.
@@ -1150,6 +1250,7 @@ module.exports = {
   ARTIFACT_TYPE, BEKANNTE_SCHEMA_VERSIONEN, PFLICHTFELDER, TOLERANZ_MS, ZUSICHERUNG,
   MANGEL_CODES, DURCHGEREICHTE_FELDER, nutzdaten, mangel,
   DATEINAME, ERLAUBTE_ARGUMENTE, EXIT_OK, EXIT_MANGEL, EXIT_AUFRUFFEHLER,
+  EXIT_CODES, EXIT, beispielAufnahme,
   VERNUNFT_MIN_MS, VERNUNFT_MAX_MS, BEOBACHTET_MIN_MS, BEOBACHTET_MAX_MS,
   BEOBACHTET_STICHPROBEN,
   GANZZAHL_POSITIV_FELDER, GANZZAHL_FELDER, TEXT_FELDER, FELDSCHLEIFEN,

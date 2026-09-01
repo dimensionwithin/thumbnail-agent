@@ -11,13 +11,21 @@
 // nichts und ruft nichts auf -- ein Trockenlauf waere von einem scharfen Lauf
 // nicht zu unterscheiden, also gibt es die Unterscheidung nicht. Das Fehlen der
 // beiden projektueblichen Flags ist Absicht, kein Versehen.
+//
+// WARUM --ohne-platte TROTZDEM DAZUGEHOERT (DIb): Es ist kein Trockenlauf. Ein
+// Trockenlauf tut so, als taete er etwas; --ohne-platte tut WENIGER und sagt
+// das laut. Die beiden Laeufe sind an der Ausgabe zu unterscheiden --
+// plattenpruefung:false, eine Anmerkung im Klartext, eine eigene
+// Ergebniszeile, und `daten` bleibt bei jedem Eintrag leer. Genau daran
+// haengt der Unterschied: was der Leser nicht nachgesehen hat, reicht er auch
+// nicht weiter.
 
 const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 
 // pruefeArgumenteStrikt als ALLERERSTE Anweisung des Programms -- vor jedem
 // Lesen, vor jedem Kindprozess. Nur so kann ein Tippfehler im Aufruf nicht
 // mehr als "ist halt durchgelaufen" enden (CY Teil B).
-const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--json'];
+const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--json', '--ohne-platte'];
 if (require.main === module) {
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/upload/uebergabe-leser.js');
 }
@@ -56,6 +64,29 @@ const PFLICHTFELDER = [
   'kennung', 'pfad', 'sha256', 'groesse_bytes', 'dauer_ms', 'breite', 'hoehe',
   'titel_vorschlag', 'transkript', 'quelle_von_ms', 'quelle_bis_ms', 'urteil',
 ];
+
+// ---------------------------------------------------------------------------
+// DIb: WAS DURCHGEREICHT WIRD, IST GENAU DAS, WAS GEPRUEFT WURDE.
+//
+// Die Freigabeoberflaeche soll die Uebergabedatei NICHT selbst lesen. Taete sie
+// es, gaebe es einen zweiten Leser ohne die Pfadsperre unten -- direkt neben
+// den Ordnern mit den fehlerhaften Fassungen, die am Inhalt nicht von den guten
+// zu unterscheiden sind. Der Leser bleibt der einzige, der die Datei anfasst,
+// und reicht unter `daten` weiter, was er geprueft hat.
+//
+// DIE REGEL, UND SIE IST DER GANZE PUNKT DIESES FELDES:
+// Ein Feld steht hier NUR, solange eine Pruefung dahintersteht. Faellt eine
+// Pruefung weg, faellt das Feld aus dieser Liste -- oder die Pruefung kommt
+// zurueck. Ein Feld in `daten` ohne Pruefung dahinter ist eine stille Zusage:
+// die Oberflaeche zeigt einen Wert, fuer den niemand geradesteht, und niemand
+// sieht, dass niemand geradesteht.
+//
+// Die Liste ist DESHALB dieselbe wie PFLICHTFELDER und nicht laenger: jedes
+// dieser zwoelf Felder wird unten in pruefeEintrag gegen den Vertrag gehalten,
+// und tests/uebergabe-leser.test.cjs bricht jedes einzelne davon absichtlich
+// kaputt und verlangt einen Mangel dazu. Unbekannte Felder gehen NICHT mit --
+// sie sind ungeprueft und stehen weiterhin allein unter `unbekannteFelder`.
+const DURCHGEREICHTE_FELDER = PFLICHTFELDER;
 
 // Toleranz fuer dauer_ms gegen (quelle_bis_ms - quelle_von_ms), beidseitig.
 // Gemessen in DD ueber zehn Dateien: groesste Abweichung 13 ms, Bereich -13 bis
@@ -162,11 +193,90 @@ function uebergabedateiPfad(wurzel, aufnahme) {
 // Maengel
 // ---------------------------------------------------------------------------
 
+// DIb: JEDER MANGEL TRAEGT EINEN CODE.
+//
+// Bis DIa war ein Mangel nur durch `feld` plus Fliesstext bezeichnet. Das
+// reicht nicht: auf feld="dauer_ms" fallen vier verschiedene Maengel, auf
+// feld="sha256" fuenf. Wer sie auseinanderhalten wollte, musste die Meldung
+// lesen -- und die Meldung ist das Einzige an dieser Ausgabe, das sich
+// jederzeit aendern darf. Der Fliesstext ist fuer Menschen, der Code ist fuer
+// Programme; beide stehen nebeneinander, keiner ersetzt den anderen.
+//
+// Die Codes sind STABIL. Ein Code wird nicht umbenannt und nicht
+// weiterverwendet; verschwindet eine Pruefung, verschwindet ihr Code mit ihr.
+//
+// Dieses Verzeichnis ist die einzige Quelle: mangel() unten WIRFT bei einem
+// unbekannten Code. Ein Mangel ohne Code kann damit gar nicht erst entstehen --
+// er faellt auf, statt durchzugehen.
+const MANGEL_CODES = Object.freeze({
+  // --- Kopf ---------------------------------------------------------------
+  kopf_json_abgeschnitten: 'Die Datei ist mitten im Schreiben abgebrochen.',
+  kopf_json_ungueltig: 'Die Datei ist vollstaendig, aber kein gueltiges JSON.',
+  kopf_kein_objekt: 'An oberster Stelle steht kein JSON-Objekt.',
+  kopf_artifact_type_falsch: 'artifact_type gehoert nicht zu diesem Vertrag.',
+  kopf_schema_version_unbekannt: 'schema_version ist keine bekannte Fassung.',
+  kopf_aufnahme_form: 'aufnahme hat nicht die Form JJJJ-MM-TT HH-MM-SS.',
+  kopf_aufnahme_ungleich_ordner: 'aufnahme nennt einen anderen Ordner als den gelesenen.',
+  kopf_erzeugt_am_ungueltig: 'erzeugt_am ist kein ISO-8601-Zeitpunkt mit Zonenversatz.',
+  kopf_shorts_keine_liste: 'shorts ist keine Liste.',
+  kopf_shorts_leer: 'shorts ist eine leere Liste.',
+
+  // --- Vertrag, je Eintrag -------------------------------------------------
+  eintrag_kein_objekt: 'Der Eintrag ist kein Objekt.',
+  feld_fehlt: 'Ein Pflichtfeld fehlt ganz.',
+  kennung_kein_text: 'kennung ist kein nicht-leerer Text.',
+  kennung_form: 'kennung hat nicht die Form <aufnahme>/<index>.',
+  kennung_doppelt: 'kennung kommt in derselben Datei mehrfach vor.',
+  pfad_kein_text: 'pfad ist kein nicht-leerer Text.',
+  pfad_nicht_absolut: 'pfad ist nicht absolut.',
+  pfad_ausserhalb_wurzel: 'pfad liegt nicht unterhalb der eingestellten Wurzel.',
+  sha256_kein_text: 'sha256 ist kein Text.',
+  sha256_laenge: 'sha256 hat nicht genau 64 Zeichen.',
+  sha256_grossbuchstaben: 'sha256 enthaelt Grossbuchstaben.',
+  sha256_keine_hexziffern: 'sha256 enthaelt Zeichen, die keine Hexziffern sind.',
+  zahl_keine_ganzzahl: 'Ein Zahlenfeld ist keine Ganzzahl.',
+  zahl_nicht_positiv: 'Ein Zahlenfeld ist nicht groesser als 0.',
+  text_leer: 'Ein Textfeld ist leer.',
+  quelle_spanne_nicht_positiv: 'quelle_bis_ms ist nicht groesser als quelle_von_ms.',
+  urteil_nicht_ja: 'urteil ist nicht exakt "ja".',
+  dauer_weicht_von_quellspanne: 'dauer_ms weicht zu weit von der Quellspanne ab.',
+  dauer_ausserhalb_vernunft: 'dauer_ms liegt ausserhalb jeder Vernunftgrenze.',
+
+  // --- Platte --------------------------------------------------------------
+  platte_uebersprungen_pfad_ungueltig:
+    'Die Plattenpruefung entfiel, weil pfad schon den Vertrag verletzt.',
+  datei_nicht_lesbar: 'Die Datei ist nicht vorhanden oder nicht lesbar.',
+  pfad_keine_datei: 'Der Pfad zeigt auf etwas, das keine Datei ist.',
+  groesse_stimmt_nicht: 'groesse_bytes stimmt nicht mit der Datei ueberein.',
+  sha256_stimmt_nicht: 'sha256 stimmt nicht mit der gemessenen Pruefsumme ueberein.',
+  sha256_nicht_vergleichbar: 'sha256 war schon als Feld ungueltig und blieb unverglichen.',
+  format_nicht_pruefbar: 'ffprobe war nicht ausfuehrbar; das Format blieb ungeprueft.',
+  videospuren_anzahl: 'Die Datei hat nicht genau eine Videospur.',
+  aufloesung_abweichend: 'Die Aufloesung entspricht nicht der Zusicherung.',
+  masse_stimmen_nicht: 'breite/hoehe stimmen nicht mit der Datei ueberein.',
+  bildrate_abweichend: 'Die Bildrate entspricht nicht der Zusicherung.',
+  videocodec_abweichend: 'Videocodec, Profil oder Level entsprechen nicht der Zusicherung.',
+  pixelformat_abweichend: 'Das Pixelformat entspricht nicht der Zusicherung.',
+  tonspuren_anzahl: 'Die Datei hat nicht genau eine Tonspur.',
+  toncodec_abweichend: 'Toncodec oder Profil entsprechen nicht der Zusicherung.',
+  abtastrate_abweichend: 'Die Abtastrate entspricht nicht der Zusicherung.',
+  tonkanaele_abweichend: 'Kanalzahl oder Kanalbild entsprechen nicht der Zusicherung.',
+});
+
 // ebene: 'Kopf' | 'Vertrag' | 'Platte'
 // eintrag: Kennung oder "#<index>", wenn die Kennung selbst unbrauchbar ist
 // feld: Feldname oder null
-function mangel(ebene, eintrag, feld, meldung) {
-  return { ebene, eintrag, feld, meldung };
+// code: Schluessel aus MANGEL_CODES -- Pflicht, siehe dort
+function mangel(ebene, eintrag, feld, code, meldung) {
+  if (!Object.prototype.hasOwnProperty.call(MANGEL_CODES, code)) {
+    // Kein stiller Ausweg auf null oder auf den Feldnamen: ein Mangel ohne
+    // eingetragenen Code ist ein halb gebauter Mangel, und der faellt hier auf.
+    throw new Error(
+      'Mangel ohne eingetragenen Code: ' + JSON.stringify(code) + '. Jeder Mangel ' +
+      'braucht einen Schluessel aus MANGEL_CODES -- erst eintragen, dann melden.'
+    );
+  }
+  return { ebene, eintrag, feld, code, meldung };
 }
 
 // DHb: der dritte Zustand.
@@ -179,6 +289,12 @@ function mangel(ebene, eintrag, feld, meldung) {
 // Beides ausdruecklich, damit ein Hinweis nicht zum halben Mangel wird: wer
 // Hinweise mitzaehlt, macht sie in kurzer Zeit unbrauchbar, weil dann jeder
 // versucht, sie loszuwerden.
+//
+// DIb: Ein Hinweis traegt KEINEN Code. Es gibt heute genau eine Art Hinweis
+// (dauer_ms ausserhalb der beobachteten Spanne), und feld="dauer_ms" bezeichnet
+// sie eindeutig -- anders als bei den Maengeln, wo dasselbe Feld vier Faelle
+// traegt. Kommt eine zweite Art dazu, ist dieselbe Not da wie bei den Maengeln,
+// und dann gehoert hier ein HINWEIS_CODES-Verzeichnis daneben.
 function hinweis(ebene, eintrag, feld, meldung) {
   return { ebene, eintrag, feld, meldung };
 }
@@ -223,7 +339,7 @@ function parseStreng(text) {
   } catch (e) {
     if (istAbgeschnitten(text)) {
       return {
-        fehler: mangel('Kopf', null, null,
+        fehler: mangel('Kopf', null, null, 'kopf_json_abgeschnitten',
           'Die Uebergabedatei ist unvollstaendig geschrieben (abgeschnittenes JSON: ' +
           'offene Klammer oder offene Zeichenkette am Dateiende). Das ist KEINE leere ' +
           'Aufnahme, sondern ein abgebrochener Schreibvorgang -- die Datei wird bewusst ' +
@@ -231,7 +347,7 @@ function parseStreng(text) {
       };
     }
     return {
-      fehler: mangel('Kopf', null, null,
+      fehler: mangel('Kopf', null, null, 'kopf_json_ungueltig',
         'Die Uebergabedatei ist kein gueltiges JSON. Rohmeldung des Parsers: ' + e.message),
     };
   }
@@ -247,13 +363,13 @@ function pruefeKopf(daten, aufnahmeOrdner) {
   const maengel = [];
 
   if (daten === null || typeof daten !== 'object' || Array.isArray(daten)) {
-    maengel.push(mangel('Kopf', null, null,
+    maengel.push(mangel('Kopf', null, null, 'kopf_kein_objekt',
       'Die Uebergabedatei enthaelt kein JSON-Objekt an oberster Stelle.'));
     return { maengel, abbruch: true };
   }
 
   if (daten.artifact_type !== ARTIFACT_TYPE) {
-    maengel.push(mangel('Kopf', null, 'artifact_type',
+    maengel.push(mangel('Kopf', null, 'artifact_type', 'kopf_artifact_type_falsch',
       'artifact_type ist ' + JSON.stringify(daten.artifact_type) + ', erwartet ist "' +
       ARTIFACT_TYPE + '". Die Datei wird nicht weitergelesen -- sie gehoert nicht zu ' +
       'diesem Vertrag.'));
@@ -261,7 +377,7 @@ function pruefeKopf(daten, aufnahmeOrdner) {
   }
 
   if (!BEKANNTE_SCHEMA_VERSIONEN.includes(daten.schema_version)) {
-    maengel.push(mangel('Kopf', null, 'schema_version',
+    maengel.push(mangel('Kopf', null, 'schema_version', 'kopf_schema_version_unbekannt',
       'schema_version ist ' + JSON.stringify(daten.schema_version) + ' und damit unbekannt. ' +
       'Bekannt ist zur Zeit nur: ' + BEKANNTE_SCHEMA_VERSIONEN.join(', ') + '. ' +
       'Die Datei wird nicht weitergelesen: eine unbekannte Fassung nach den Regeln der ' +
@@ -270,29 +386,29 @@ function pruefeKopf(daten, aufnahmeOrdner) {
   }
 
   if (typeof daten.aufnahme !== 'string' || !AUFNAHME_FORM.test(daten.aufnahme)) {
-    maengel.push(mangel('Kopf', null, 'aufnahme',
+    maengel.push(mangel('Kopf', null, 'aufnahme', 'kopf_aufnahme_form',
       'aufnahme ist ' + JSON.stringify(daten.aufnahme) +
       ' und hat nicht die Form JJJJ-MM-TT HH-MM-SS.'));
   } else if (daten.aufnahme !== aufnahmeOrdner) {
-    maengel.push(mangel('Kopf', null, 'aufnahme',
+    maengel.push(mangel('Kopf', null, 'aufnahme', 'kopf_aufnahme_ungleich_ordner',
       'aufnahme ist "' + daten.aufnahme + '", der gelesene Ordner heisst aber "' +
       aufnahmeOrdner + '".'));
   }
 
   if (typeof daten.erzeugt_am !== 'string' || !ISO_MIT_VERSATZ.test(daten.erzeugt_am) ||
       Number.isNaN(Date.parse(daten.erzeugt_am))) {
-    maengel.push(mangel('Kopf', null, 'erzeugt_am',
+    maengel.push(mangel('Kopf', null, 'erzeugt_am', 'kopf_erzeugt_am_ungueltig',
       'erzeugt_am ist ' + JSON.stringify(daten.erzeugt_am) +
       ' und ist kein ISO-8601-Zeitpunkt mit Zonenversatz.'));
   }
 
   if (!Array.isArray(daten.shorts)) {
-    maengel.push(mangel('Kopf', null, 'shorts',
+    maengel.push(mangel('Kopf', null, 'shorts', 'kopf_shorts_keine_liste',
       'shorts ist ' + JSON.stringify(daten.shorts) + ' und keine Liste.'));
     return { maengel, abbruch: true };
   }
   if (daten.shorts.length === 0) {
-    maengel.push(mangel('Kopf', null, 'shorts',
+    maengel.push(mangel('Kopf', null, 'shorts', 'kopf_shorts_leer',
       'shorts ist eine leere Liste. Der Vertrag verlangt eine nicht-leere Liste; ' +
       'eine Aufnahme ohne freigegebene Shorts wird gar nicht erst uebergeben.'));
     return { maengel, abbruch: true };
@@ -326,11 +442,11 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
     : '#' + index;
   const maengel = [];
   const hinweise = [];
-  const m = (feld, text) => maengel.push(mangel('Vertrag', bezeichner, feld, text));
+  const m = (feld, code, text) => maengel.push(mangel('Vertrag', bezeichner, feld, code, text));
   const h = (feld, text) => hinweise.push(hinweis('Vertrag', bezeichner, feld, text));
 
   if (eintrag === null || typeof eintrag !== 'object' || Array.isArray(eintrag)) {
-    m(null, 'Eintrag ' + index + ' ist kein Objekt.');
+    m(null, 'eintrag_kein_objekt', 'Eintrag ' + index + ' ist kein Objekt.');
     return {
       kennung: null, bezeichner, maengel, hinweise, unbekannteFelder: [], pfadBrauchbar: false,
     };
@@ -344,23 +460,23 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
   const unbekannteFelder = Object.keys(eintrag).filter((k) => !PFLICHTFELDER.includes(k));
 
   for (const feld of PFLICHTFELDER) {
-    if (!(feld in eintrag)) m(feld, feld + ' fehlt (Pflichtfeld).');
+    if (!(feld in eintrag)) m(feld, 'feld_fehlt', feld + ' fehlt (Pflichtfeld).');
   }
 
   // kennung: Form <aufnahme>/<index>, innerhalb der Datei eindeutig.
   if ('kennung' in eintrag) {
     if (!istNichtLeererText(eintrag.kennung)) {
-      m('kennung', 'kennung ist ' + JSON.stringify(eintrag.kennung) +
+      m('kennung', 'kennung_kein_text', 'kennung ist ' + JSON.stringify(eintrag.kennung) +
         ' und kein nicht-leerer Text.');
     } else {
       const roh = String(daten.aufnahme).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const erwartet = new RegExp('^' + roh + '\\/\\d+$');
       if (!erwartet.test(eintrag.kennung)) {
-        m('kennung', 'kennung "' + eintrag.kennung + '" hat nicht die Form ' +
+        m('kennung', 'kennung_form', 'kennung "' + eintrag.kennung + '" hat nicht die Form ' +
           '<aufnahme>/<index>, erwartet wird "' + daten.aufnahme + '/<Zahl>".');
       }
       if (gesehene.has(eintrag.kennung)) {
-        m('kennung', 'kennung "' + eintrag.kennung + '" kommt mehrfach vor (zuerst in ' +
+        m('kennung', 'kennung_doppelt', 'kennung "' + eintrag.kennung + '" kommt mehrfach vor (zuerst in ' +
           'Eintrag ' + gesehene.get(eintrag.kennung) + ', jetzt in Eintrag ' + index + ').');
       } else {
         gesehene.set(eintrag.kennung, index);
@@ -372,11 +488,11 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
   let pfadBrauchbar = false;
   if ('pfad' in eintrag) {
     if (!istNichtLeererText(eintrag.pfad)) {
-      m('pfad', 'pfad ist ' + JSON.stringify(eintrag.pfad) + ' und kein nicht-leerer Text.');
+      m('pfad', 'pfad_kein_text', 'pfad ist ' + JSON.stringify(eintrag.pfad) + ' und kein nicht-leerer Text.');
     } else if (!path.isAbsolute(eintrag.pfad)) {
-      m('pfad', 'pfad "' + eintrag.pfad + '" ist nicht absolut.');
+      m('pfad', 'pfad_nicht_absolut', 'pfad "' + eintrag.pfad + '" ist nicht absolut.');
     } else if (!pfadLiegtUnter(wurzel, eintrag.pfad)) {
-      m('pfad', 'pfad "' + eintrag.pfad + '" liegt nicht unterhalb der eingestellten ' +
+      m('pfad', 'pfad_ausserhalb_wurzel', 'pfad "' + eintrag.pfad + '" liegt nicht unterhalb der eingestellten ' +
         'Wurzel "' + wurzel + '".');
     } else {
       pfadBrauchbar = true;
@@ -387,16 +503,16 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
   if ('sha256' in eintrag) {
     const s = eintrag.sha256;
     if (typeof s !== 'string') {
-      m('sha256', 'sha256 ist ' + JSON.stringify(s) + ' und kein Text.');
+      m('sha256', 'sha256_kein_text', 'sha256 ist ' + JSON.stringify(s) + ' und kein Text.');
     } else if (s.length !== 64) {
-      m('sha256', 'sha256 hat ' + s.length + ' Zeichen, erwartet sind genau 64 Hexzeichen ' +
+      m('sha256', 'sha256_laenge', 'sha256 hat ' + s.length + ' Zeichen, erwartet sind genau 64 Hexzeichen ' +
         'in Kleinschreibung.');
     } else if (!SHA256_FORM.test(s)) {
       if (/^[0-9a-fA-F]{64}$/.test(s)) {
-        m('sha256', 'sha256 enthaelt Grossbuchstaben, erwartet sind genau 64 Hexzeichen ' +
+        m('sha256', 'sha256_grossbuchstaben', 'sha256 enthaelt Grossbuchstaben, erwartet sind genau 64 Hexzeichen ' +
           'in Kleinschreibung.');
       } else {
-        m('sha256', 'sha256 enthaelt Zeichen, die keine Hexziffern sind; erwartet sind ' +
+        m('sha256', 'sha256_keine_hexziffern', 'sha256 enthaelt Zeichen, die keine Hexziffern sind; erwartet sind ' +
           'genau 64 Hexzeichen in Kleinschreibung.');
       }
     }
@@ -405,35 +521,40 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
   for (const feld of ['groesse_bytes', 'dauer_ms']) {
     if (feld in eintrag) {
       if (!istGanzzahl(eintrag[feld])) {
-        m(feld, feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und keine Ganzzahl.');
+        m(feld, 'zahl_keine_ganzzahl',
+          feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und keine Ganzzahl.');
       } else if (eintrag[feld] <= 0) {
-        m(feld, feld + ' ist ' + eintrag[feld] + ' und damit nicht groesser als 0.');
+        m(feld, 'zahl_nicht_positiv',
+          feld + ' ist ' + eintrag[feld] + ' und damit nicht groesser als 0.');
       }
     }
   }
 
   for (const feld of ['breite', 'hoehe', 'quelle_von_ms', 'quelle_bis_ms']) {
     if (feld in eintrag && !istGanzzahl(eintrag[feld])) {
-      m(feld, feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und keine Ganzzahl.');
+      m(feld, 'zahl_keine_ganzzahl',
+        feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und keine Ganzzahl.');
     }
   }
 
   for (const feld of ['titel_vorschlag', 'transkript']) {
     if (feld in eintrag && !istNichtLeererText(eintrag[feld])) {
-      m(feld, feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und damit leer.');
+      m(feld, 'text_leer', feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und damit leer.');
     }
   }
 
   if (istGanzzahl(eintrag.quelle_von_ms) && istGanzzahl(eintrag.quelle_bis_ms) &&
       eintrag.quelle_bis_ms <= eintrag.quelle_von_ms) {
-    m('quelle_bis_ms', 'quelle_bis_ms (' + eintrag.quelle_bis_ms + ') ist nicht groesser ' +
+    m('quelle_bis_ms', 'quelle_spanne_nicht_positiv',
+      'quelle_bis_ms (' + eintrag.quelle_bis_ms + ') ist nicht groesser ' +
       'als quelle_von_ms (' + eintrag.quelle_von_ms + ').');
   }
 
   // urteil: EXAKTE Gleichheitspruefung auf "ja", keine Ausschlussliste. Eine
   // Ausschlussliste ("alles ausser nein") nimmt an, was sie nicht kennt.
   if ('urteil' in eintrag && eintrag.urteil !== 'ja') {
-    m('urteil', 'urteil ist ' + JSON.stringify(eintrag.urteil) + ', erwartet ist exakt "ja". ' +
+    m('urteil', 'urteil_nicht_ja',
+      'urteil ist ' + JSON.stringify(eintrag.urteil) + ', erwartet ist exakt "ja". ' +
       'In der Uebergabedatei stehen ausschliesslich angenommene Shorts.');
   }
 
@@ -446,7 +567,8 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
     const spanne = eintrag.quelle_bis_ms - eintrag.quelle_von_ms;
     const abweichung = eintrag.dauer_ms - spanne;
     if (Math.abs(abweichung) > TOLERANZ_MS) {
-      m('dauer_ms', 'dauer_ms (' + eintrag.dauer_ms + ') weicht um ' +
+      m('dauer_ms', 'dauer_weicht_von_quellspanne',
+        'dauer_ms (' + eintrag.dauer_ms + ') weicht um ' +
         (abweichung > 0 ? '+' : '') + abweichung + ' ms von der Quellspanne ' + spanne +
         ' ms ab; erlaubt sind hoechstens +-' + TOLERANZ_MS + ' ms.');
     }
@@ -461,7 +583,8 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
   if (istGanzzahl(eintrag.dauer_ms) && eintrag.dauer_ms > 0) {
     const d = eintrag.dauer_ms;
     if (d < VERNUNFT_MIN_MS || d > VERNUNFT_MAX_MS) {
-      m('dauer_ms', 'dauer_ms ist ' + d + ' ms und liegt ausserhalb jeder Vernunftgrenze ' +
+      m('dauer_ms', 'dauer_ausserhalb_vernunft',
+        'dauer_ms ist ' + d + ' ms und liegt ausserhalb jeder Vernunftgrenze ' +
         '(' + VERNUNFT_MIN_MS + ' bis ' + VERNUNFT_MAX_MS + ' ms). Unter einer Sekunde ' +
         'kann kein Short sein, ueber drei Minuten ist keiner mehr.');
     } else if (d < BEOBACHTET_MIN_MS || d > BEOBACHTET_MAX_MS) {
@@ -518,35 +641,39 @@ function sha256VonDatei(sperre, pfad) {
 
 function pruefePlatte(eintrag, bezeichner, sperre) {
   const maengel = [];
-  const m = (feld, text) => maengel.push(mangel('Platte', bezeichner, feld, text));
+  const m = (feld, code, text) => maengel.push(mangel('Platte', bezeichner, feld, code, text));
   const pfad = eintrag.pfad;
 
   let stat;
   try {
     stat = fs.statSync(sperre.oeffnen(pfad));
   } catch (e) {
-    m('pfad', 'Datei nicht vorhanden oder nicht lesbar (' + (e.code || e.message) + '): "' +
+    m('pfad', 'datei_nicht_lesbar',
+      'Datei nicht vorhanden oder nicht lesbar (' + (e.code || e.message) + '): "' +
       pfad + '".');
     return maengel;
   }
   if (!stat.isFile()) {
-    m('pfad', '"' + pfad + '" ist keine Datei.');
+    m('pfad', 'pfad_keine_datei', '"' + pfad + '" ist keine Datei.');
     return maengel;
   }
 
   if (istGanzzahl(eintrag.groesse_bytes) && stat.size !== eintrag.groesse_bytes) {
-    m('groesse_bytes', 'groesse_bytes ist mit ' + eintrag.groesse_bytes +
+    m('groesse_bytes', 'groesse_stimmt_nicht',
+      'groesse_bytes ist mit ' + eintrag.groesse_bytes +
       ' angegeben, die Datei hat ' + stat.size + ' Bytes.');
   }
 
   if (typeof eintrag.sha256 === 'string' && SHA256_FORM.test(eintrag.sha256)) {
     const gemessen = sha256VonDatei(sperre, pfad);
     if (gemessen !== eintrag.sha256) {
-      m('sha256', 'sha256 stimmt nicht: angegeben ' + eintrag.sha256 + ', gemessen ' +
+      m('sha256', 'sha256_stimmt_nicht',
+        'sha256 stimmt nicht: angegeben ' + eintrag.sha256 + ', gemessen ' +
         gemessen + '.');
     }
   } else {
-    m('sha256', 'sha256 konnte nicht verglichen werden, weil das Feld selbst ungueltig ist. ' +
+    m('sha256', 'sha256_nicht_vergleichbar',
+      'sha256 konnte nicht verglichen werden, weil das Feld selbst ungueltig ist. ' +
       'Es wird nichts ergaenzt und nichts geraten.');
   }
 
@@ -554,7 +681,8 @@ function pruefePlatte(eintrag, bezeichner, sperre) {
   try {
     sonde = ffprobe(sperre, pfad);
   } catch (e) {
-    m('format', 'Format nicht pruefbar: ffprobe konnte nicht ausgefuehrt werden (' +
+    m('format', 'format_nicht_pruefbar',
+      'Format nicht pruefbar: ffprobe konnte nicht ausgefuehrt werden (' +
       (e.code || e.message) + '). Der Eintrag wird deshalb NICHT angenommen -- ' +
       'eine ungepruefte Zusicherung ist keine erfuellte Zusicherung.');
     return maengel;
@@ -571,51 +699,61 @@ function pruefePlatte(eintrag, bezeichner, sperre) {
   // der Datei, nicht Felder der Uebergabedatei; einzige Ausnahme ist
   // "breite/hoehe", wo Feld und Datei gegeneinander stehen.
   if (video.length !== 1) {
-    m('videospuren', 'Die Datei hat ' + video.length + ' Videospuren, zugesichert ist genau eine.');
+    m('videospuren', 'videospuren_anzahl',
+      'Die Datei hat ' + video.length + ' Videospuren, zugesichert ist genau eine.');
   } else {
     const v = video[0];
     if (v.width !== ZUSICHERUNG.breite || v.height !== ZUSICHERUNG.hoehe) {
-      m('aufloesung', 'Aufloesung ist ' + v.width + 'x' + v.height + ', zugesichert ist ' +
+      m('aufloesung', 'aufloesung_abweichend',
+        'Aufloesung ist ' + v.width + 'x' + v.height + ', zugesichert ist ' +
         ZUSICHERUNG.breite + 'x' + ZUSICHERUNG.hoehe + '.');
     }
     if (istGanzzahl(eintrag.breite) && istGanzzahl(eintrag.hoehe) &&
         (v.width !== eintrag.breite || v.height !== eintrag.hoehe)) {
-      m('breite/hoehe', 'breite/hoehe sind mit ' + eintrag.breite + 'x' + eintrag.hoehe +
+      m('breite/hoehe', 'masse_stimmen_nicht',
+        'breite/hoehe sind mit ' + eintrag.breite + 'x' + eintrag.hoehe +
         ' angegeben, die Datei ist ' + v.width + 'x' + v.height + '.');
     }
     const r = bruchZuZahl(v.r_frame_rate);
     const a = bruchZuZahl(v.avg_frame_rate);
     if (r !== ZUSICHERUNG.fps || a !== ZUSICHERUNG.fps) {
-      m('bildrate', 'Bildrate ist r_frame_rate=' + v.r_frame_rate + ' / avg_frame_rate=' +
+      m('bildrate', 'bildrate_abweichend',
+        'Bildrate ist r_frame_rate=' + v.r_frame_rate + ' / avg_frame_rate=' +
         v.avg_frame_rate + ', zugesichert sind konstant ' + ZUSICHERUNG.fps +
         ' fps (beide Werte muessen ' + ZUSICHERUNG.fps + ' ergeben).');
     }
     if (v.codec_name !== ZUSICHERUNG.videoCodec || v.profile !== ZUSICHERUNG.videoProfil ||
         v.level !== ZUSICHERUNG.videoLevel) {
-      m('videocodec', 'Videocodec ist ' + v.codec_name + ' ' + v.profile + ' Level ' + v.level +
+      m('videocodec', 'videocodec_abweichend',
+        'Videocodec ist ' + v.codec_name + ' ' + v.profile + ' Level ' + v.level +
         ', zugesichert ist ' + ZUSICHERUNG.videoCodec + ' ' + ZUSICHERUNG.videoProfil +
         ' Level ' + ZUSICHERUNG.videoLevel + '.');
     }
     if (v.pix_fmt !== ZUSICHERUNG.pixelFormat) {
-      m('pixelformat', 'Pixelformat ist ' + v.pix_fmt + ', zugesichert ist ' +
+      m('pixelformat', 'pixelformat_abweichend',
+        'Pixelformat ist ' + v.pix_fmt + ', zugesichert ist ' +
         ZUSICHERUNG.pixelFormat + '.');
     }
   }
 
   if (audio.length !== 1) {
-    m('tonspuren', 'Die Datei hat ' + audio.length + ' Tonspuren, zugesichert ist genau eine.');
+    m('tonspuren', 'tonspuren_anzahl',
+      'Die Datei hat ' + audio.length + ' Tonspuren, zugesichert ist genau eine.');
   } else {
     const t = audio[0];
     if (t.codec_name !== ZUSICHERUNG.audioCodec || t.profile !== ZUSICHERUNG.audioProfil) {
-      m('toncodec', 'Toncodec ist ' + t.codec_name + ' ' + t.profile + ', zugesichert ist ' +
+      m('toncodec', 'toncodec_abweichend',
+        'Toncodec ist ' + t.codec_name + ' ' + t.profile + ', zugesichert ist ' +
         ZUSICHERUNG.audioCodec + ' ' + ZUSICHERUNG.audioProfil + '.');
     }
     if (Number(t.sample_rate) !== ZUSICHERUNG.abtastrate) {
-      m('abtastrate', 'Abtastrate ist ' + t.sample_rate + ' Hz, zugesichert sind ' +
+      m('abtastrate', 'abtastrate_abweichend',
+        'Abtastrate ist ' + t.sample_rate + ' Hz, zugesichert sind ' +
         ZUSICHERUNG.abtastrate + ' Hz.');
     }
     if (t.channels !== ZUSICHERUNG.kanaele || t.channel_layout !== ZUSICHERUNG.kanalbild) {
-      m('tonkanaele', 'Tonkanaele sind ' + t.channels + ' (' + t.channel_layout + '), zugesichert ' +
+      m('tonkanaele', 'tonkanaele_abweichend',
+        'Tonkanaele sind ' + t.channels + ' (' + t.channel_layout + '), zugesichert ' +
         'sind ' + ZUSICHERUNG.kanaele + ' (' + ZUSICHERUNG.kanalbild + ').');
     }
   }
@@ -633,6 +771,29 @@ function pruefePlatte(eintrag, bezeichner, sperre) {
   // auseinanderlaufen, solange die Pruefsumme stimmt.
 
   return maengel;
+}
+
+// ---------------------------------------------------------------------------
+// Die Nutzdaten eines angenommenen Eintrags (DIb)
+// ---------------------------------------------------------------------------
+
+// WOERTLICH. Nicht neu berechnet, nicht normalisiert, nicht umbenannt, nicht
+// getrimmt -- was hier herauskommt, ist Zeichen fuer Zeichen das, was in der
+// Uebergabedatei stand und was oben gegen den Vertrag gehalten wurde.
+//
+// Insbesondere wird der PFAD nicht angefasst: keine Schreibweise gedreht, kein
+// Trennzeichen vereinheitlicht, kein path.resolve. Ein Pfad, den der Leser
+// selbst geformt haette, ist nicht mehr der Pfad, der uebergeben wurde -- genau
+// das ist die Regel der Pfadsperre oben, und sie gilt auf dem Rueckweg
+// genauso wie auf dem Hinweg.
+//
+// Gelesen wird ueber DURCHGEREICHTE_FELDER und nicht ueber Object.keys: was
+// nicht in der Liste steht, hat keine Pruefung hinter sich und geht darum auch
+// nicht mit. Unbekannte Felder bleiben allein unter `unbekannteFelder` stehen.
+function nutzdaten(eintrag) {
+  const daten = {};
+  for (const feld of DURCHGEREICHTE_FELDER) daten[feld] = eintrag[feld];
+  return daten;
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +836,14 @@ function pruefeUebergabe({ text, wurzel, aufnahme, platte = true }) {
   const gesehene = new Map();
   bericht.eintraegeGeprueft = true;
   if (!platte) {
-    bericht.verlauf.push('Nur die Vertragspruefung gelaufen: es wurde nichts auf der Platte nachgesehen.');
+    // DIb: Der Wortlaut ist derselbe, mit dem der uebersprungene Lieferungstest
+    // sich selbst meldet. Eine ausgelassene Pruefung darf nirgends wie eine
+    // bestandene aussehen -- auch dann nicht, wenn sie absichtlich ausgelassen
+    // wurde.
+    bericht.verlauf.push(
+      'Die Plattenpruefung lief NICHT (--ohne-platte): Existenz, Pruefsumme, Groesse und ' +
+      'Format wurden nicht nachgesehen. Das ist keine bestandene Pruefung, sondern eine ' +
+      'ausgelassene. `daten` bleibt darum bei jedem Eintrag leer.');
   }
 
   for (let i = 0; i < daten.shorts.length; i++) {
@@ -690,12 +858,16 @@ function pruefeUebergabe({ text, wurzel, aufnahme, platte = true }) {
     if (!platte) {
       // Kein Plattenzugriff gewuenscht -- steht als Bemerkung oben im Bericht.
     } else if (!e.pfadBrauchbar) {
-      maengel.push(mangel('Platte', e.bezeichner, 'pfad',
+      maengel.push(mangel('Platte', e.bezeichner, 'pfad', 'platte_uebersprungen_pfad_ungueltig',
         'Die Pruefung gegen die Platte wurde NICHT ausgefuehrt, weil das Feld pfad ' +
         'schon den Vertrag verletzt. Es wird kein Ersatzpfad gesucht.'));
     } else {
       maengel.push(...pruefePlatte(roh, e.bezeichner, sperre));
     }
+
+    // DHb: Ein Hinweis macht einen Eintrag NICHT halb abgelehnt. Angenommen
+    // wird allein an den Maengeln entschieden.
+    const angenommen = maengel.length === 0;
 
     bericht.eintraege.push({
       index: i,
@@ -704,9 +876,9 @@ function pruefeUebergabe({ text, wurzel, aufnahme, platte = true }) {
       unbekannteFelder: e.unbekannteFelder,
       maengel,
       hinweise: e.hinweise,
-      // DHb: Ein Hinweis macht einen Eintrag NICHT halb abgelehnt. Angenommen
-      // wird allein an den Maengeln entschieden.
-      angenommen: maengel.length === 0,
+      angenommen,
+      // DIb: die geprueften Nutzdaten, woertlich. Siehe DURCHGEREICHTE_FELDER.
+      daten: (platte && angenommen) ? nutzdaten(roh) : null,
     });
   }
 
@@ -786,8 +958,18 @@ function formatiere(bericht, quelle) {
     (bericht.maengelGesamt - bericht.kopfMaengel.length) + ').' +
     '   Hinweise gesamt: ' + bericht.hinweiseGesamt +
     ' -- Hinweise sind keine Maengel und aendern den Rueckgabewert nicht.');
+  // DIb: Ohne Plattenpruefung darf die Schlusszeile NICHT sagen, die Uebergabe
+  // entspreche dem Vertrag. Geprueft wurde dann nur die eine Haelfte -- die
+  // Felder gegeneinander -, waehrend die andere (Existenz, Pruefsumme, Groesse,
+  // Format aus Abschnitt 6) gar nicht angesehen wurde. Die Schlusszeile ist die
+  // eine Zeile, die ein Mensch mit Sicherheit liest; sie ist der letzte Ort, an
+  // dem eine ausgelassene Pruefung noch wie eine bestandene aussehen darf.
   z.push(bericht.status === 'angenommen'
-    ? 'ERGEBNIS: Die Uebergabe entspricht dem Vertrag.'
+    ? (bericht.plattenpruefung === false
+      ? 'ERGEBNIS: Die VERTRAGSPRUEFUNG ist bestanden. Die Plattenpruefung lief NICHT -- ' +
+        'das ist keine bestandene Pruefung, sondern eine ausgelassene. Ob die Uebergabe ' +
+        'dem Vertrag entspricht, ist damit NICHT beantwortet.'
+      : 'ERGEBNIS: Die Uebergabe entspricht dem Vertrag.')
     : 'ERGEBNIS: Die Uebergabe entspricht dem Vertrag NICHT. Es wurde nichts repariert ' +
       'und nichts ergaenzt.');
   return z.join('\n');
@@ -805,6 +987,10 @@ function wertVon(argv, praefix) {
 function main() {
   const argv = process.argv;
   const alsJson = argv.includes('--json');
+  // DIb: schaltet AUSSCHLIESSLICH die Plattenpruefung ab (Existenz, Pruefsumme,
+  // Groesse, Format). Die Vertragspruefung laeuft unveraendert weiter, und die
+  // Ausgabe sagt in beiden Formen, dass nicht nachgesehen wurde.
+  const ohnePlatte = argv.includes('--ohne-platte');
   const aufnahme = wertVon(argv, '--aufnahme=');
   const wurzel = wertVon(argv, '--wurzel=') || process.env.SHORTS_RENDER_WURZEL || null;
 
@@ -832,7 +1018,7 @@ function main() {
     process.exit(EXIT_MANGEL);
   }
 
-  const bericht = pruefeUebergabe({ text, wurzel, aufnahme, platte: true });
+  const bericht = pruefeUebergabe({ text, wurzel, aufnahme, platte: !ohnePlatte });
   if (alsJson) {
     console.log(JSON.stringify(Object.assign({ quelle }, bericht), null, 2));
   } else {
@@ -845,6 +1031,7 @@ if (require.main === module) main();
 
 module.exports = {
   ARTIFACT_TYPE, BEKANNTE_SCHEMA_VERSIONEN, PFLICHTFELDER, TOLERANZ_MS, ZUSICHERUNG,
+  MANGEL_CODES, DURCHGEREICHTE_FELDER, nutzdaten, mangel,
   DATEINAME, ERLAUBTE_ARGUMENTE, EXIT_OK, EXIT_MANGEL, EXIT_AUFRUFFEHLER,
   VERNUNFT_MIN_MS, VERNUNFT_MAX_MS, BEOBACHTET_MIN_MS, BEOBACHTET_MAX_MS,
   BEOBACHTET_STICHPROBEN,

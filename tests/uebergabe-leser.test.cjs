@@ -90,12 +90,18 @@ test('die Pfadsperre laesst nur durch, was woertlich in der Datei stand', () => 
 // Die Argumente
 // ---------------------------------------------------------------------------
 
-test('der Leser kennt genau drei Argumente und weder --execute noch --nur-pruefen', () => {
-  assert.deepEqual(L.ERLAUBTE_ARGUMENTE, ['--aufnahme=', '--wurzel=', '--json']);
+test('der Leser kennt genau vier Argumente und weder --execute noch --nur-pruefen', () => {
+  assert.deepEqual(L.ERLAUBTE_ARGUMENTE,
+    ['--aufnahme=', '--wurzel=', '--json', '--ohne-platte']);
   // Er schreibt nichts und ruft nichts auf; ein Trockenlauf waere von einem
   // scharfen Lauf nicht zu unterscheiden. Das Fehlen ist Absicht.
   assert.ok(!L.ERLAUBTE_ARGUMENTE.includes('--execute'));
   assert.ok(!L.ERLAUBTE_ARGUMENTE.includes('--nur-pruefen'));
+  // DIb: --ohne-platte ist KEIN Trockenlauf und dieser Test soll das festhalten,
+  // damit es nicht spaeter als Widerspruch zu den beiden Zeilen darueber gelesen
+  // wird. Ein Trockenlauf taeuscht eine Wirkung vor, die er nicht hat;
+  // --ohne-platte prueft WENIGER und schreibt in beide Ausgabeformen hinein,
+  // dass es weniger war.
 });
 
 // ---------------------------------------------------------------------------
@@ -333,9 +339,57 @@ test('die Abschlusszeile trennt Hinweis von Mangel', () => {
   assert.ok(text.includes('Maengel gesamt: 0'), text);
   assert.ok(text.includes('ANGENOMMEN  [0]'), text);
   assert.ok(text.includes('1 Hinweis(e), kein Mangel'), text);
-  assert.ok(text.includes('ERGEBNIS: Die Uebergabe entspricht dem Vertrag.'), text);
+  // DIb: Dieser Bericht entstand mit platte:false, und seither sagt die
+  // Schlusszeile in diesem Fall NICHT mehr "entspricht dem Vertrag" -- geprueft
+  // wurde nur die eine Haelfte. Der Punkt dieses Tests bleibt derselbe: nichts
+  // in der Ausgabe darf nach Ablehnung klingen.
+  assert.ok(text.includes('ERGEBNIS: Die VERTRAGSPRUEFUNG ist bestanden.'), text);
+  assert.ok(!text.includes('ERGEBNIS: Die Uebergabe entspricht dem Vertrag.'), text);
   // Und die Zeile darf NICHT so klingen, als waere etwas abgelehnt worden.
   assert.ok(!text.includes('ABGELEHNT'), text);
+});
+
+// ---------------------------------------------------------------------------
+// DIb, Punkt 3: --ohne-platte
+// ---------------------------------------------------------------------------
+
+test('ohne Plattenpruefung sagt die Ausgabe das in beiden Formen', () => {
+  const b = L.pruefeUebergabe({
+    text: fixtureText('basis-gueltig'), wurzel: WURZEL, aufnahme: AUFNAHME, platte: false,
+  });
+
+  // Maschinenlesbar.
+  assert.equal(b.plattenpruefung, false);
+  assert.deepEqual(alleMaengel(b), []);
+  assert.equal(b.status, 'angenommen');
+
+  // Im JSON-Bericht: die Anmerkung nennt beim Namen, was NICHT nachgesehen
+  // wurde, und benutzt den Wortlaut des uebersprungenen Lieferungstests.
+  const anmerkung = b.verlauf.join('\n');
+  assert.ok(anmerkung.includes('Die Plattenpruefung lief NICHT'), anmerkung);
+  assert.ok(anmerkung.includes('Existenz, Pruefsumme, Groesse und Format'), anmerkung);
+  assert.ok(anmerkung.includes('keine bestandene Pruefung, sondern eine ausgelassene'),
+    anmerkung);
+
+  // Im Klartext ebenso -- und die Schlusszeile behauptet NICHT mehr, die
+  // Uebergabe entspreche dem Vertrag.
+  const text = L.formatiere(b, '<Quelle>');
+  assert.ok(text.includes('keine bestandene Pruefung, sondern eine ausgelassene'), text);
+  assert.ok(text.includes('ERGEBNIS: Die VERTRAGSPRUEFUNG ist bestanden.'), text);
+  assert.ok(text.includes('NICHT beantwortet'), text);
+  assert.ok(!text.includes('ERGEBNIS: Die Uebergabe entspricht dem Vertrag.'), text);
+});
+
+test('mit Plattenpruefung bleibt die Schlusszeile unveraendert', () => {
+  // Die Gegenprobe zum Test darueber: der gewohnte Wortlaut darf nur dann
+  // verschwinden, wenn wirklich nicht nachgesehen wurde.
+  const b = L.pruefeUebergabe({
+    text: fixtureText('basis-gueltig'), wurzel: WURZEL, aufnahme: AUFNAHME, platte: false,
+  });
+  b.plattenpruefung = true;   // nur die Anzeige, ohne Plattenzugriff
+  b.verlauf = [];
+  const text = L.formatiere(b, '<Quelle>');
+  assert.ok(text.includes('ERGEBNIS: Die Uebergabe entspricht dem Vertrag.'), text);
 });
 
 test('Hinweis und Mangel in derselben Datei werden beide gemeldet', () => {
@@ -453,6 +507,227 @@ test('pfadLiegtUnter haelt die Wurzel dicht', () => {
 });
 
 // ---------------------------------------------------------------------------
+// DIb, Punkt 2: ein Code je Mangel.
+//
+// Der Fliesstext ist fuer Menschen und darf sich aendern; der Code ist fuer
+// Programme und darf es nicht. Damit das traegt, muss dreierlei feststehen:
+// kein Code doppelt, kein Code ohne Aufrufstelle, keine Aufrufstelle ohne Code.
+// Die ersten beiden sind unten abgezaehlt, die dritte steht doppelt -- einmal
+// als Quelltextzaehlung und einmal als Verhalten (mangel() wirft).
+// ---------------------------------------------------------------------------
+
+// Beide Aufrufformen: mangel('Ebene', <eintrag>, <feld>, <code>, ...) und der
+// Helfer m(<feld>, <code>, ...). Feldnamen duerfen Ziffern und einen Schraegstrich
+// tragen (sha256, breite/hoehe) -- ohne die beiden Zeichen zaehlt der Scanner
+// sechs Stellen zu wenig und meldet trotzdem "alles in Ordnung".
+const FELD_IM_AUFRUF = "(?:null|feld|'[a-z0-9_/]+')";
+const AUFRUF_DIREKT = new RegExp(
+  "mangel\\('(?:Kopf|Vertrag|Platte)',\\s*[^,]+?,\\s*" + FELD_IM_AUFRUF +
+  ",\\s*(?:'([a-z0-9_]+)'|code)", 'g');
+const AUFRUF_HELFER = new RegExp(
+  "(?<![\\w.])m\\(\\s*" + FELD_IM_AUFRUF + "\\s*,\\s*(?:'([a-z0-9_]+)'|code)", 'g');
+
+function codeAufrufstellen() {
+  const treffer = [
+    ...QUELLTEXT.matchAll(AUFRUF_DIREKT),
+    ...QUELLTEXT.matchAll(AUFRUF_HELFER),
+  ];
+  // Zwei Treffer sind die Helferdefinitionen selbst -- dort steht `code` als
+  // Variable, nicht als Zeichenkette. Sie sind keine Aufrufstellen.
+  const definitionen = treffer.filter((t) => t[1] === undefined).length;
+  return { codes: treffer.map((t) => t[1]).filter(Boolean), definitionen };
+}
+
+test('kein Mangelcode ist doppelt vergeben', () => {
+  const codes = Object.keys(L.MANGEL_CODES);
+  assert.equal(codes.length, new Set(codes).size);
+  assert.equal(codes.length, 46);
+  // Eingefroren: ein Code, der sich zur Laufzeit nachtragen laesst, ist keine
+  // Zusage, sondern ein Vorschlag.
+  assert.ok(Object.isFrozen(L.MANGEL_CODES));
+  for (const [code, beschreibung] of Object.entries(L.MANGEL_CODES)) {
+    assert.match(code, /^[a-z][a-z0-9_]*$/, code);
+    assert.ok(beschreibung.length > 10, code + ' braucht eine lesbare Beschreibung');
+  }
+});
+
+test('jede Mangelstelle im Quelltext traegt einen eingetragenen Code', () => {
+  const { codes, definitionen } = codeAufrufstellen();
+  assert.equal(definitionen, 2, 'erwartet sind genau die zwei Helferdefinitionen');
+  assert.equal(codes.length, 47, 'Aufrufstellen im Quelltext');
+  for (const code of codes) {
+    assert.ok(code in L.MANGEL_CODES, 'unbekannter Code an einer Aufrufstelle: ' + code);
+  }
+});
+
+test('kein eingetragener Code steht ohne Aufrufstelle herum', () => {
+  // Die Gegenrichtung. Ein Code ohne Stelle ist eine Zusage auf einen Mangel,
+  // den niemand mehr melden kann -- wer danach filtert, wartet fuer immer.
+  const { codes } = codeAufrufstellen();
+  const benutzt = new Set(codes);
+  const verwaist = Object.keys(L.MANGEL_CODES).filter((c) => !benutzt.has(c));
+  assert.deepEqual(verwaist, []);
+  // Genau ein Code sitzt an zwei Stellen: dieselbe Ganzzahlpruefung laeuft
+  // ueber zwei Feldgruppen. Welches Feld es war, sagt `feld`, nicht der Code.
+  const zaehl = {};
+  for (const c of codes) zaehl[c] = (zaehl[c] || 0) + 1;
+  assert.deepEqual(Object.entries(zaehl).filter(([, n]) => n > 1),
+    [['zahl_keine_ganzzahl', 2]]);
+});
+
+test('mangel() wirft, wenn der Code nicht eingetragen ist', () => {
+  // Der Kern von "ein Mangel ohne Code soll auffallen, nicht durchgehen":
+  // Er kann gar nicht erst entstehen.
+  assert.throws(() => L.mangel('Vertrag', 'x', 'urteil', 'gibt_es_nicht', 'egal'),
+    /Mangel ohne eingetragenen Code/);
+  assert.throws(() => L.mangel('Vertrag', 'x', 'urteil', undefined, 'egal'),
+    /Mangel ohne eingetragenen Code/);
+  assert.throws(() => L.mangel('Vertrag', 'x', 'urteil', null, 'egal'),
+    /Mangel ohne eingetragenen Code/);
+  // Und ein geerbter Name ist kein eingetragener Code.
+  assert.throws(() => L.mangel('Vertrag', 'x', 'urteil', 'toString', 'egal'),
+    /Mangel ohne eingetragenen Code/);
+  const gut = L.mangel('Vertrag', 'x', 'urteil', 'urteil_nicht_ja', 'egal');
+  assert.equal(gut.code, 'urteil_nicht_ja');
+  assert.equal(gut.meldung, 'egal');
+});
+
+test('jeder tatsaechlich erzeugte Mangel traegt einen eingetragenen Code', () => {
+  // Nicht am Quelltext, sondern am Verhalten: alle Fixtures plus die Faelle,
+  // die keine Fixture hat, einmal durchlaufen lassen und jeden erzeugten
+  // Mangel ansehen.
+  const berichte = fs.readdirSync(FIXTURES).map(pruefeFixture);
+  for (const wert of ['JA', '', null, 1]) berichte.push(einEintrag((e) => { e.urteil = wert; }));
+  for (const wert of [12345, null, 'zz']) berichte.push(einEintrag((e) => { e.sha256 = wert; }));
+  for (const ms of [500, 200000]) berichte.push(mitDauer(ms));
+  berichte.push(einEintrag((e) => { e.groesse_bytes = 0; }));
+  berichte.push(einEintrag((e) => { e.breite = 'x'; }));
+  berichte.push(einEintrag((e) => { delete e.titel_vorschlag; }));
+
+  const maengel = berichte.flatMap(alleMaengel);
+  assert.ok(maengel.length > 25, 'zu wenig Maengel erzeugt: ' + maengel.length);
+  for (const m of maengel) {
+    assert.ok(typeof m.code === 'string' && m.code in L.MANGEL_CODES,
+      'Mangel ohne eingetragenen Code: ' + JSON.stringify(m));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DIb, Punkt 1: das Feld `daten`
+// ---------------------------------------------------------------------------
+
+test('nutzdaten reicht genau die zwoelf geprueften Felder woertlich durch', () => {
+  assert.deepEqual(L.DURCHGEREICHTE_FELDER, L.PFLICHTFELDER);
+  assert.equal(L.DURCHGEREICHTE_FELDER.length, 12);
+
+  const eintrag = JSON.parse(fixtureText('o-unbekanntes-feld')).shorts[0];
+  const daten = L.nutzdaten(eintrag);
+
+  // Genau die zwoelf, in der Reihenfolge des Vertrags.
+  assert.deepEqual(Object.keys(daten), L.PFLICHTFELDER);
+  // Das unbekannte Feld geht NICHT mit -- es ist ungeprueft.
+  assert.ok(!('lautheit_lufs' in daten));
+  assert.ok('lautheit_lufs' in eintrag);
+  // Woertlich: kein Wert neu berechnet, keiner normalisiert, keiner getrimmt.
+  for (const feld of L.PFLICHTFELDER) assert.equal(daten[feld], eintrag[feld], feld);
+  // Insbesondere der Pfad, Zeichen fuer Zeichen -- keine Schreibweise gedreht.
+  assert.equal(daten.pfad, eintrag.pfad);
+});
+
+test('jedes durchgereichte Feld hat eine Pruefung hinter sich', () => {
+  // DIE Absicherung gegen die stille Zusage. Jedes Feld, das der Leser
+  // weiterreicht, wird hier einzeln kaputtgemacht; kommt dann KEIN Mangel mit
+  // diesem Feldnamen, steht das Feld ohne Pruefung in `daten` -- und die
+  // Oberflaeche zeigte einen Wert, fuer den niemand geradesteht.
+  const KAPUTT = {
+    kennung: 'ohne die vorgeschriebene Form',
+    pfad: 'kandidat-1/short.mp4',
+    sha256: 'zu kurz',
+    groesse_bytes: 0,
+    dauer_ms: 0,
+    breite: 'keine Zahl',
+    hoehe: 'keine Zahl',
+    titel_vorschlag: '',
+    transkript: '',
+    quelle_von_ms: 'keine Zahl',
+    quelle_bis_ms: 'keine Zahl',
+    urteil: 'nein',
+  };
+  assert.deepEqual(Object.keys(KAPUTT).sort(), [...L.DURCHGEREICHTE_FELDER].sort(),
+    'Kommt ein Feld nach DURCHGEREICHTE_FELDER, gehoert hier ein kaputter Wert dazu.');
+
+  for (const feld of L.DURCHGEREICHTE_FELDER) {
+    // a) falscher Wert
+    const falsch = alleMaengel(einEintrag((e) => { e[feld] = KAPUTT[feld]; }));
+    assert.ok(falsch.some((m) => m.feld === feld),
+      feld + ': ein falscher Wert erzeugt keinen Mangel -- ungeprueft durchgereicht. ' +
+      JSON.stringify(falsch.map((m) => m.meldung)));
+    // b) Feld fehlt ganz
+    const fehlt = alleMaengel(einEintrag((e) => { delete e[feld]; }));
+    assert.ok(fehlt.some((m) => m.feld === feld && m.code === 'feld_fehlt'),
+      feld + ': das Fehlen des Feldes erzeugt keinen Mangel.');
+  }
+});
+
+test('daten bleibt leer, wenn der Eintrag abgelehnt ist', () => {
+  const b = pruefeFixture('n4-drei-maengel');
+  assert.equal(b.abgelehnt, 3);
+  for (const e of b.eintraege) {
+    assert.equal(e.angenommen, false);
+    assert.equal(e.daten, null, 'Ein abgelehnter Eintrag darf keine Nutzdaten weiterreichen.');
+  }
+  // Das Feld ist ANWESEND und null, nicht abwesend: siehe der Test darunter.
+  for (const e of b.eintraege) assert.ok('daten' in e);
+});
+
+test('daten ist immer da und im Ablehnungsfall null, nicht abwesend', () => {
+  // Die Entscheidung, und der Grund steht hier, weil sie sonst niemand sieht:
+  // ein abwesendes Feld ist mehrdeutig. "daten fehlt" heisst entweder
+  // "abgelehnt" oder "der Leser ist aelter als dieses Feld" -- und JSON.stringify
+  // laesst undefined spurlos verschwinden, so wie es das mit `kennung` schon
+  // tut. `null` ist eine Aussage; Abwesenheit ist eine Frage.
+  const b = pruefeFixture('c-urteil-nein');
+  const roh = JSON.parse(JSON.stringify(b));
+  for (const e of roh.eintraege) {
+    assert.ok(Object.prototype.hasOwnProperty.call(e, 'daten'),
+      'daten muss auch durch JSON.stringify hindurch sichtbar bleiben');
+    assert.equal(e.daten, null);
+  }
+  // Alle acht Eintragsfelder sind immer da -- gleiche Form, egal wie das
+  // Urteil ausfiel.
+  assert.deepEqual(Object.keys(roh.eintraege[0]),
+    ['index', 'kennung', 'bezeichner', 'unbekannteFelder', 'maengel', 'hinweise',
+      'angenommen', 'daten']);
+});
+
+test('daten bleibt leer, wenn die Plattenpruefung nicht lief', () => {
+  // Auch bei einem in JEDEM Feld einwandfreien Eintrag. Was der Leser nicht
+  // gegen die Platte gehalten hat, reicht er nicht weiter -- sonst waere
+  // --ohne-platte genau die stille Zusage, gegen die `daten` gebaut ist.
+  const b = pruefeFixture('basis-gueltig');
+  assert.equal(b.plattenpruefung, false);
+  assert.equal(b.status, 'angenommen');
+  assert.equal(b.angenommen, 2);
+  for (const e of b.eintraege) {
+    assert.equal(e.angenommen, true);
+    assert.equal(e.daten, null, 'Ohne Plattenpruefung gibt es keine Nutzdaten.');
+  }
+});
+
+test('ein Hinweis allein verhindert die Nutzdaten NICHT', () => {
+  // Gegenprobe: `daten` haengt an den Maengeln und an der Plattenpruefung, nicht
+  // an den Hinweisen. Sonst waere ein Hinweis doch wieder ein halber Mangel.
+  const b = mitDauer(6000);
+  assert.equal(b.hinweiseGesamt, 1);
+  assert.equal(b.eintraege[0].angenommen, true);
+  // Hier ist daten trotzdem null -- aber wegen platte:false, nicht wegen des
+  // Hinweises. Der Beleg dafuer steht im Plattentest weiter unten, wo derselbe
+  // Fall mit echtem Plattenzugriff laeuft.
+  assert.equal(b.plattenpruefung, false);
+  assert.equal(b.eintraege[0].daten, null);
+});
+
+// ---------------------------------------------------------------------------
 // Die echte Lieferung -- nur, wenn das Renderlaufwerk erreichbar ist.
 //
 // Die Wurzel steht bewusst NICHT in dieser Datei: dieses Repo ist oeffentlich
@@ -477,13 +752,60 @@ test('die echte Lieferung wird vollstaendig angenommen', (t) => {
     t.skip('Unter der eingestellten Wurzel liegt keine Uebergabedatei fuer diese Aufnahme.');
     return;
   }
-  const b = L.pruefeUebergabe({
-    text: fs.readFileSync(quelle, 'utf8'), wurzel, aufnahme, platte: true,
-  });
+  const text = fs.readFileSync(quelle, 'utf8');
+  const b = L.pruefeUebergabe({ text, wurzel, aufnahme, platte: true });
   assert.deepEqual(alleMaengel(b).map((m) => m.meldung), []);
   assert.equal(b.status, 'angenommen');
   assert.equal(b.abgelehnt, 0);
   assert.ok(b.angenommen > 0);
+
+  // DIb: Und die geprueften Nutzdaten stehen auch wirklich drin -- woertlich
+  // dieselben Werte wie in der Uebergabedatei, Feld fuer Feld. Das ist die
+  // Zusage, auf der die Freigabeoberflaeche steht: sie liest die Datei NICHT
+  // selbst, sie bekommt sie von hier.
+  assert.equal(b.plattenpruefung, true);
+  const ausDerDatei = JSON.parse(text).shorts;
+  assert.equal(b.eintraege.length, ausDerDatei.length);
+  for (const e of b.eintraege) {
+    assert.equal(e.angenommen, true);
+    assert.notEqual(e.daten, null, 'Ein angenommener Eintrag muss Nutzdaten tragen.');
+    assert.deepEqual(Object.keys(e.daten), L.PFLICHTFELDER);
+    const quellEintrag = ausDerDatei[e.index];
+    for (const feld of L.PFLICHTFELDER) {
+      assert.equal(e.daten[feld], quellEintrag[feld],
+        'Eintrag ' + e.index + ', Feld ' + feld + ' wurde nicht woertlich durchgereicht.');
+    }
+  }
+});
+
+test('dieselbe echte Lieferung reicht mit --ohne-platte NICHTS durch', (t) => {
+  // Die Gegenprobe zum Test darueber, an denselben Daten: sobald nicht
+  // nachgesehen wurde, bleiben die Nutzdaten weg -- auch wenn jedes Feld fuer
+  // sich in Ordnung ist.
+  const wurzel = process.env.SHORTS_RENDER_WURZEL;
+  if (!wurzel) {
+    t.skip('SHORTS_RENDER_WURZEL ist nicht gesetzt -- der Vergleich mit und ohne ' +
+      'Plattenpruefung lief NICHT. Das ist keine bestandene Pruefung, sondern eine ' +
+      'ausgelassene.');
+    return;
+  }
+  const aufnahme = process.env.SHORTS_TEST_AUFNAHME || '2026-08-29 18-18-19';
+  const quelle = L.uebergabedateiPfad(wurzel, aufnahme);
+  if (!fs.existsSync(quelle)) {
+    t.skip('Unter der eingestellten Wurzel liegt keine Uebergabedatei fuer diese Aufnahme.');
+    return;
+  }
+  const b = L.pruefeUebergabe({
+    text: fs.readFileSync(quelle, 'utf8'), wurzel, aufnahme, platte: false,
+  });
+  assert.deepEqual(alleMaengel(b), []);
+  assert.equal(b.status, 'angenommen');
+  assert.equal(b.plattenpruefung, false);
+  for (const e of b.eintraege) {
+    assert.equal(e.angenommen, true);
+    assert.equal(e.daten, null);
+  }
+  assert.ok(b.verlauf.join('\n').includes('keine bestandene Pruefung, sondern eine ausgelassene'));
 });
 
 // ---------------------------------------------------------------------------
@@ -597,16 +919,45 @@ test('die Plattenpruefung lehnt ab, was der Zusicherung nicht entspricht', (t) =
     baueVideo(V('r.mp4'), { groesse: '1080x1920', bildrate: 30, abtastrate: 48000 });
     baueVideo(V('s.mp4'), { groesse: '1080x1920', bildrate: 60, abtastrate: 44100 });
 
-    const pruefe = (eintrag) => alleMaengel(L.pruefeUebergabe({
+    const bericht = (eintrag) => L.pruefeUebergabe({
       text: alsUebergabe(AUFNAHME, eintrag), wurzel, aufnahme: AUFNAHME, platte: true,
-    }));
+    });
+    const pruefe = (eintrag) => alleMaengel(bericht(eintrag));
     const roh = (m) => JSON.stringify(m.map((x) => x.meldung), null, 2);
 
     // Negativkontrolle zuerst. Ohne sie belegt keiner der Faelle unten, dass
     // die Ablehnung von der EINEN Abweichung kommt und nicht davon, dass die
     // Datei erzeugt statt gerendert ist.
-    assert.deepEqual(pruefe(eintragFuer(AUFNAHME, V('konform.mp4'))).map((m) => m.meldung), [],
+    const konformerEintrag = eintragFuer(AUFNAHME, V('konform.mp4'));
+    assert.deepEqual(pruefe(konformerEintrag).map((m) => m.meldung), [],
       'Die vollstaendig konforme Wegwerfdatei muss angenommen werden.');
+
+    // DIb: Der einzige Fall in dieser Datei, in dem `daten` wirklich GEFUELLT
+    // ist -- ein angenommener Eintrag, gegen eine echte Datei geprueft. Alles
+    // andere hier laeuft ohne Plattenzugriff und bekommt darum null.
+    const konformerBericht = bericht(konformerEintrag);
+    const durchgereicht = konformerBericht.eintraege[0].daten;
+    assert.notEqual(durchgereicht, null);
+    assert.deepEqual(Object.keys(durchgereicht), L.PFLICHTFELDER);
+    for (const feld of L.PFLICHTFELDER) {
+      assert.equal(durchgereicht[feld], konformerEintrag[feld], feld);
+    }
+
+    // Ein unbekanntes Feld geht auch hier nicht mit, obwohl der Eintrag
+    // angenommen wird.
+    const mitZusatz = { ...konformerEintrag, lautheit_lufs: -14.2 };
+    const zusatzBericht = bericht(mitZusatz);
+    assert.deepEqual(zusatzBericht.eintraege[0].unbekannteFelder, ['lautheit_lufs']);
+    assert.equal(zusatzBericht.eintraege[0].angenommen, true);
+    assert.ok(!('lautheit_lufs' in zusatzBericht.eintraege[0].daten));
+    assert.deepEqual(Object.keys(zusatzBericht.eintraege[0].daten), L.PFLICHTFELDER);
+
+    // Und dieselbe Datei mit --ohne-platte: angenommen, aber nichts durchgereicht.
+    const ohnePlatte = L.pruefeUebergabe({
+      text: alsUebergabe(AUFNAHME, konformerEintrag), wurzel, aufnahme: AUFNAHME, platte: false,
+    });
+    assert.equal(ohnePlatte.eintraege[0].angenommen, true);
+    assert.equal(ohnePlatte.eintraege[0].daten, null);
 
     // q) Aufloesung.
     const q = pruefe(eintragFuer(AUFNAHME, V('q.mp4')));

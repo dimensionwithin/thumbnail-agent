@@ -98,7 +98,15 @@ button.nein[aria-pressed=true] { background: #6d2f1f; border-color: #dd7c5e; }
 kbd { background: #262b33; border: 1px solid #3a424f; border-bottom-width: 2px;
   border-radius: 4px; padding: 1px 6px; font-size: 12px; font-family: inherit; }
 .warnung { background: #3a2a17; border: 1px solid #6b4a1f; color: #f0d3a6;
-  padding: 10px 14px; border-radius: 6px; margin: 14px 20px 0; }
+  padding: 12px 16px; border-radius: 6px; margin: 14px 20px 0; }
+.warnung p { margin: 6px 0 0; }
+.warnung code { display: inline-block; margin-top: 4px; background: #12141a;
+  border: 1px solid #262b33; border-radius: 4px; padding: 4px 8px; color: #c8d0dd; }
+.warnung.ende { background: #16301f; border-color: #2f6b45; color: #cdebd8; }
+.warnung.weg { background: #3a1c17; border-color: #7a3226; color: #f4c9be; }
+#karten.vorbei { opacity: 0.55; }
+#karten.vorbei .karte { filter: grayscale(0.6); }
+.karte.nichtgespeichert { border-color: #dd7c5e; box-shadow: 0 0 0 1px #dd7c5e inset; }
 `;
 
 const SKRIPT = String.raw`
@@ -139,13 +147,21 @@ function paar(beschriftung, wert) {
   return s;
 }
 
+// DJb: Eine Anfrage, die NIE ankommt, ist der gefaehrlichere Fall -- gefaehrlicher
+// als eine, die abgelehnt wird. Ohne Zeitgrenze wartet fetch endlos: die Knoepfe
+// blieben gesperrt, es erschiene keine Meldung, und die Karte saehe aus, als
+// werde noch gearbeitet. Ein abgestuerzter Dienst sieht dann genauso aus wie ein
+// langsamer.
+const ZEITGRENZE_MS = 8000;
+
 async function sende(karte, freigegeben, felder) {
-  const antwort = { ok: false, meldung: '' };
+  const antwort = { ok: false, meldung: '', erreichbar: true };
   let res;
   try {
     res = await fetch('/urteil', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Freigabe-Token': TOKEN },
+      signal: AbortSignal.timeout(ZEITGRENZE_MS),
       body: JSON.stringify({
         index: karte.index,
         freigegeben: freigegeben,
@@ -154,7 +170,16 @@ async function sende(karte, freigegeben, felder) {
       }),
     });
   } catch (e) {
-    antwort.meldung = 'Der Dienst antwortet nicht (' + e + '). Es wurde NICHTS gespeichert.';
+    // Zwei Faelle, die von aussen gleich aussehen und es nicht sind: der Dienst
+    // ist weg, oder er antwortet nur nicht rechtzeitig. Beide heissen fuer die
+    // Karte dasselbe -- NICHTS gespeichert --, aber sie werden benannt.
+    const zeit = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    antwort.erreichbar = false;
+    antwort.meldung = zeit
+      ? 'NICHT GESPEICHERT: der Dienst hat innerhalb von ' + (ZEITGRENZE_MS / 1000) +
+        ' Sekunden nicht geantwortet. Es steht NICHTS in der Freigabedatei.'
+      : 'NICHT GESPEICHERT: der Dienst antwortet nicht (' + (e && e.name ? e.name : e) +
+        '). Es steht NICHTS in der Freigabedatei.';
     return antwort;
   }
   let leib = null;
@@ -208,6 +233,15 @@ function baueKarte(karte) {
   // preload="none": vierzig Karten haetten sonst vierzig gleichzeitig ladende
   // Videos. Geladen wird erst, wenn jemand abspielt.
   video.preload = 'none';
+  // DJb: SCHLEIFE, Vorgabe und kein Schalter. Ein Short laeuft auf YouTube in
+  // Schleife; wer beurteilt, ob der Schnitt taugt, muss den Uebergang vom Ende
+  // zum Anfang sehen -- genau dort faellt ein verzogener Schnitt auf, und genau
+  // den bekommt man bei einmaligem Abspielen nie zu sehen.
+  //
+  // loop hebt preload nicht auf: es beschreibt, was NACH dem Ende geschieht,
+  // und ein Video, das nie gestartet wurde, endet nie. Ein nie angeklicktes
+  // Video laedt weiterhin nichts (in DJb an Netzdaten gemessen).
+  video.loop = true;
   video.src = '/video?i=' + karte.index + '&t=' + encodeURIComponent(TOKEN);
   links.append(video);
   knoten.append(links);
@@ -284,11 +318,22 @@ function baueKarte(karte) {
   }
 
   async function urteile(freigegeben) {
+    if (sitzungVorbei) return;
     ja.disabled = true; nein.disabled = true;
     fehler.textContent = '';
+    knoten.classList.remove('nichtgespeichert');
     const a = await sende(karte, freigegeben, felder);
+    if (sitzungVorbei) return;
     ja.disabled = false; nein.disabled = false;
-    if (!a.ok) { fehler.textContent = a.meldung; return; }
+    if (!a.ok) {
+      // Der Stand der Karte wird NICHT angefasst. Sie bleibt genau so stehen,
+      // wie sie vorher war -- gruen wird sie nur, wenn der Dienst das Urteil
+      // bestaetigt hat.
+      fehler.textContent = a.meldung;
+      knoten.classList.add('nichtgespeichert');
+      if (!a.erreichbar) zeigeDienstWeg();
+      return;
+    }
     stand[karte.sha256] = a.eintrag;
     zeigeStand();
     fortschritt();
@@ -349,14 +394,102 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-document.getElementById('beenden').addEventListener('click', async () => {
+// DJb: ZWEI ZUSTAENDE, DIE NICHT MEHR GLEICH AUSSEHEN DUERFEN.
+//
+// Bis hierher blieb die Seite nach einem gelungenen Beenden unveraendert
+// stehen. Fuer den Menschen sah ein sauber abgeschalteter Dienst damit genauso
+// aus wie ein kaputter Knopf -- dasselbe Muster wie Zeile 43 gegen Zeile 104 im
+// Freigabeskript und wie netstat in DJa.
+//
+// Ausgeloest wird das hier ausschliesslich von einer ANTWORT: der auf
+// POST /beenden, oder einer ausbleibenden auf POST /urteil. Die Seite holt
+// keinen neuen Stand, hat kein setInterval und bekommt keines -- sie erfaehrt
+// nur, was auf ihre eigenen Anfragen zurueckkommt.
+let sitzungVorbei = false;
+
+function sperreAlleKarten() {
+  const felder = document.querySelectorAll('#karten input, #karten textarea, #karten button');
+  for (let i = 0; i < felder.length; i++) felder[i].disabled = true;
+  document.getElementById('karten').classList.add('vorbei');
+}
+
+function zeigeSitzungsende() {
+  sitzungVorbei = true;
+  sperreAlleKarten();
   const knopf = document.getElementById('beenden');
   knopf.disabled = true;
+  knopf.textContent = 'Sitzung beendet';
+  const kasten = document.getElementById('beendet');
+  kasten.hidden = false;
+  kasten.className = 'warnung ende';
+  kasten.textContent = '';
+  const frei = K.filter((k) => k.freigebbar);
+  const ja = frei.filter((k) => stand[k.sha256] && stand[k.sha256].freigegeben).length;
+  const nein = frei.filter((k) => stand[k.sha256] && stand[k.sha256].freigegeben === false).length;
+  const offen = frei.length - ja - nein;
+  kasten.append(el('b', null, 'Die Sitzung ist beendet. Der Dienst laeuft nicht mehr.'));
+  kasten.append(el('p', null,
+    ja + ' freigegeben, ' + nein + ' abgelehnt, ' + offen + ' ohne Urteil. ' +
+    'Geschrieben wurde nach jedem einzelnen Klick, nicht jetzt -- dieser Knopf hat ' +
+    'nichts gespeichert, er hat nur abgeschaltet.'));
+  kasten.append(el('p', null, 'Die Urteile stehen in:'));
+  kasten.append(el('code', null, DATEN.freigabePfad));
+  kasten.append(el('p', null,
+    'Diese Seite ist ab jetzt tot: sie kann nichts mehr speichern, und die Karten ' +
+    'nehmen darum nichts mehr an. Zum Weiterarbeiten den Dienst neu starten -- die ' +
+    'Urteile von eben stehen dann wieder auf ihren Karten.'));
+  window.scrollTo({ top: 0 });
+}
+
+// Der andere Weg in denselben Zustand: der Dienst ist weg, ohne dass ihn
+// jemand beendet haette. Die Karten bleiben hier BEDIENBAR -- vielleicht kommt
+// er zurueck --, aber niemand soll glauben, es werde noch gespeichert.
+let dienstWegGemeldet = false;
+function zeigeDienstWeg() {
+  if (dienstWegGemeldet || sitzungVorbei) return;
+  dienstWegGemeldet = true;
+  const kasten = document.getElementById('beendet');
+  kasten.hidden = false;
+  kasten.className = 'warnung weg';
+  kasten.textContent = '';
+  kasten.append(el('b', null, 'Der Dienst antwortet nicht.'));
+  kasten.append(el('p', null,
+    'Seit dieser Meldung wird NICHTS mehr gespeichert. Was vorher gruen oder rot ' +
+    'wurde, steht in der Freigabedatei; alles danach nicht. Starte den Dienst neu ' +
+    'und lade die Seite unter der neuen Adresse -- das Sitzungstoken dieser Seite ' +
+    'gilt nur fuer den Start, der gerade weg ist.'));
+  kasten.append(el('code', null, DATEN.freigabePfad));
+  window.scrollTo({ top: 0 });
+}
+
+document.getElementById('beenden').addEventListener('click', async () => {
+  const knopf = document.getElementById('beenden');
+  // Punkt 6: eine Rueckfrage, und sie nennt die Zahl. "Willst du wirklich?"
+  // ohne Zahl ist eine Frage, die man wegklickt.
+  const frei = K.filter((k) => k.freigebbar);
+  const offen = frei.filter((k) => stand[k.sha256] === undefined).length;
+  if (offen > 0) {
+    const weiter = window.confirm(
+      offen + ' von ' + frei.length + ' Karten haben noch kein Urteil.\n\n' +
+      'Sitzung trotzdem beenden? Die bereits gefaellten Urteile sind gespeichert ' +
+      'und bleiben es -- die offenen bleiben offen.');
+    if (!weiter) return;
+  }
+  knopf.disabled = true;
+  knopf.textContent = 'beende ...';
   try {
-    await fetch('/beenden', { method: 'POST', headers: { 'X-Freigabe-Token': TOKEN } });
-    document.getElementById('beendet').hidden = false;
+    const res = await fetch('/beenden', {
+      method: 'POST', headers: { 'X-Freigabe-Token': TOKEN },
+      signal: AbortSignal.timeout(ZEITGRENZE_MS),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    zeigeSitzungsende();
   } catch (e) {
+    // Auch das Scheitern wird benannt. Ein Knopf, der zurueckspringt und sonst
+    // nichts tut, ist genau der Zustand, den Punkt 5 abschafft.
     knopf.disabled = false;
+    knopf.textContent = 'Sitzung beenden';
+    zeigeDienstWeg();
   }
 });
 `;
@@ -367,6 +500,10 @@ function baueSeite(sitzung) {
     token: sitzung.token,
     karten: sitzung.karten,
     stand: sitzung.stand,
+    // DJb: Am Ende der Sitzung soll dort stehen, WO die Urteile liegen. Der
+    // Pfad steht zwar schon in der Kopfzeile, aber der Kasten am Ende ist die
+    // Stelle, die ein Mensch tatsaechlich liest.
+    freigabePfad: sitzung.freigabePfad,
   };
   const freigebbar = sitzung.karten.filter((k) => k.freigebbar).length;
   const gesperrt = sitzung.karten.length - freigebbar;
@@ -394,11 +531,13 @@ function baueSeite(sitzung) {
     '<span class="kopfzeile"><kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> Karte &middot; ' +
       '<kbd>Leer</kbd> abspielen &middot; <kbd>1</kbd> freigeben &middot; ' +
       '<kbd>2</kbd> ablehnen &mdash; jede dieser Handlungen geht auch mit der Maus</span>',
-    '<button id="beenden">Dienst beenden</button>',
+    '<button id="beenden">Sitzung beenden</button>',
+    '<span class="kopfzeile">Die Urteile sind bereits gespeichert &mdash; dieser Knopf ' +
+      'speichert nichts, er schliesst nur.</span>',
     '</div></header>',
-    '<p class="warnung" id="beendet" hidden>Der Dienst ist beendet. Alle Urteile stehen ' +
-      'auf der Platte &mdash; geschrieben wurde nach jedem einzelnen Klick. Diese Seite ' +
-      'ist ab jetzt tot.</p>',
+    // Der Kasten ist leer und versteckt. Was drinsteht, entscheidet sich erst
+    // an einer Antwort des Dienstes -- Sitzungsende oder "antwortet nicht".
+    '<div class="warnung" id="beendet" hidden></div>',
     '<main id="karten"></main>',
     '<script>',
     'const DATEN = ' + jsonFuerSkriptblock(nutzlast) + ';',

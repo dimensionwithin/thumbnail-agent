@@ -27,19 +27,31 @@
 //    darum nur in Kommentaren vor, und fs.readFileSync wird auf genau zwei
 //    Dinge angewandt: die Freigabedatei und eine Videodatei aus der Sperre.
 //
-// 2. DIESER DIENST LOEST NICHTS AUS.
-//    Kein Upload, kein Aufruf eines anderen Skripts, kein "und jetzt weiter".
-//    Er schreibt eine Datei und hoert auf. Der Cutter macht nach seinem
-//    Urteilslauf von selbst weiter; wir nicht. Was danach mit den Freigaben
-//    geschieht, entscheidet ein Mensch, indem er das naechste Programm aufruft.
+// 2. KEIN KINDPROZESS ENTSTEHT ALS FOLGE EINES URTEILS.
 //
-//    Es gibt genau ZWEI Kindprozesse, und keiner der beiden ist eine Folge:
-//      - der Leser (ruftLeser) -- das ist die EINGABE des Dienstes, nicht sein
-//        Ergebnis. Er laeuft vor dem Start, nicht nach dem Urteil.
-//      - netstat (haelterDesPorts) -- laeuft NUR, wenn der Port belegt ist und
-//        der Dienst gar nicht erst startet. Es liest eine Liste und beendet
-//        danach das Programm; es startet nichts und schreibt nichts.
-//    Ein dritter kommt nicht dazu. Wer hier einen anfuegt, fuegt eine Folge an.
+//    DJb: Bis hierher hiess diese Zusage "es gibt genau zwei Kindprozesse".
+//    Das war die falsche Zusage, weil sie an einer Zahl haengt, die sich
+//    aendert -- in DJ waren es zwei, mit dem Browser aus DJb sind es drei, und
+//    die Commit-Nachricht von 8061609 sagt sogar "der einzige". Alle drei
+//    Fassungen meinten dasselbe und keine sagte es: es geht nicht darum, WIE
+//    VIELE Prozesse starten, sondern WANN.
+//
+//    Es gibt DREI Kindprozesse, alle beim Start, keinen danach:
+//      - der Leser (ruftLeser)          -- die EINGABE des Dienstes. Vor dem
+//        Port, vor der ersten Karte, bei jedem Start.
+//      - netstat (haelterDesPorts)      -- nur bei belegtem Port, und dann
+//        startet der Dienst gar nicht erst. Liest eine Liste, sonst nichts.
+//      - der Browser (oeffneImBrowser)  -- einmal, nach listen(), ausser bei
+//        --no-browser. Scheitert er, laeuft der Dienst weiter.
+//
+//    NACH dem Start startet dieser Dienst nichts mehr. POST /urteil fuehrt zu
+//    schreibeFreigaben() und zu keinem spawn; POST /beenden schaltet ab und
+//    ruft nichts auf. Der Cutter macht nach seinem Urteilslauf von selbst
+//    weiter -- wir nicht.
+//
+//    Wer hier einen vierten anfuegt, muss sagen, ob er vor dem ersten Urteil
+//    liegt oder danach. Danach waere er eine Folge, und dann faellt der Test
+//    'kein Kindprozess entsteht als Folge eines Urteils'.
 //
 // 3. ES GIBT KEINEN WEG VON EINER ANFRAGE ZU EINEM DATEISYSTEMPFAD.
 //    Die Dateiliste wird EINMAL beim Start aus der Lesereingabe gebaut. Eine
@@ -68,9 +80,19 @@ const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 
 // pruefeArgumenteStrikt als ALLERERSTE Anweisung -- vor jedem Lesen, vor jedem
 // Kindprozess, vor dem Oeffnen eines Ports (CY Teil B).
-const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port='];
+const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port=', '--no-browser'];
+
+// DJb: pruefeKeineFreienArgumente kommt aus dem Leser und ist nicht nachgebaut
+// -- dieselbe Regel gehoert nicht zweimal ins Projekt, und die Abhaengigkeit in
+// diese Richtung gibt es ohnehin schon (neueSperre weiter unten). Warum sie
+// noetig ist, steht dort.
+//
+// Beide Pruefungen stehen VOR jedem anderen require: pruefeArgumenteStrikt fuer
+// alles mit '-' davor, pruefeKeineFreienArgumente fuer alles ohne.
+const { pruefeKeineFreienArgumente } = require('./uebergabe-leser');
 if (require.main === module) {
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/upload/freigabe-server.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/upload/freigabe-server.js');
 }
 
 require('dotenv').config();
@@ -78,7 +100,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const { baueSeite } = require('./freigabe-seite');
 // Die Pfadsperre kommt aus dem Leser. Eine eigene waere eine zweite Fassung
@@ -1167,6 +1189,49 @@ function meldeBelegtenPort(port) {
 }
 
 // ---------------------------------------------------------------------------
+// Die Seite oeffnet sich von selbst (DJb, Punkt 3)
+// ---------------------------------------------------------------------------
+
+// Vorher musste der Mensch die Adresse aus der Konsole kopieren -- mitsamt dem
+// 64 Zeichen langen Sitzungstoken. Der Thumbnail-Compositor im selben Repo
+// macht es andersherum, und richtig herum: er oeffnet von selbst, und der
+// Schalter ist der Ausnahmefall.
+//
+// DAS OEFFNEN IST KEIN STARTSCHRITT. Es steht hinter listen(), es wird nicht
+// abgewartet, und wenn es scheitert, laeuft der Dienst weiter. Ein Dienst, der
+// wegen eines nicht auffindbaren Browsers nicht startet, waere schlechter als
+// einer, der gar keinen oeffnet: die Adresse steht ja daneben.
+//
+// spawn statt spawnSync, detached und unref: das Fenster gehoert dem Menschen,
+// nicht diesem Prozess. Der Dienst soll weder darauf warten noch es beim
+// Beenden mitreissen.
+function oeffneImBrowser(url) {
+  // Windows: cmd /c start. Der erste, LEERE Anfuehrungsstrich ist der
+  // Fenstertitel -- ohne ihn nimmt start die URL als Titel und oeffnet nichts.
+  const befehl = process.platform === 'win32'
+    ? { datei: 'cmd', argumente: ['/c', 'start', '', url] }
+    : (process.platform === 'darwin'
+      ? { datei: 'open', argumente: [url] }
+      : { datei: 'xdg-open', argumente: [url] });
+  try {
+    const kind = spawn(befehl.datei, befehl.argumente, {
+      detached: true, stdio: 'ignore', windowsHide: true,
+    });
+    // Ein Fehler kommt bei spawn erst spaeter als Ereignis. Er darf den Dienst
+    // nicht mitnehmen -- ohne diesen Zuhoerer waere ein fehlendes cmd ein
+    // unbehandeltes Ereignis und damit das Ende des Prozesses.
+    kind.on('error', (e) => {
+      console.error('Der Browser liess sich nicht oeffnen (' + (e.code || e.message) + '). ' +
+        'Der Dienst laeuft weiter -- nimm die Adresse oben von Hand.');
+    });
+    kind.unref();
+    return { gestartet: true, befehl: befehl.datei + ' ' + befehl.argumente.join(' ') };
+  } catch (e) {
+    return { gestartet: false, grund: e.code || e.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -1180,6 +1245,7 @@ function main() {
   const aufnahme = wertVon(argv, '--aufnahme=');
   const wurzel = wertVon(argv, '--wurzel=') || process.env.SHORTS_RENDER_WURZEL || null;
   const portRoh = wertVon(argv, '--port=') || process.env.SHORTS_FREIGABE_PORT || String(STANDARD_PORT);
+  const keinBrowser = argv.includes('--no-browser');
   const projektwurzel = path.join(__dirname, '..', '..');
 
   if (!aufnahme) {
@@ -1328,6 +1394,7 @@ function main() {
   process.on('SIGINT', () => herunterfahren('Strg+C -- beende den Dienst.'));
 
   dienst.listen(port, HOST, () => {
+    const adresse = 'http://' + HOST + ':' + port + '/?t=' + sitzung.token;
     // Jetzt erst steht der Port fest. Bis hierher stand `null` in der
     // Sperrdatei, und `null` heisst dort "faehrt gerade hoch".
     traegeSperrePortNach(sperre, port);
@@ -1364,10 +1431,25 @@ function main() {
     console.log('');
     console.log('Die Adresse traegt das Sitzungstoken dieses Starts. Ohne das Token ' +
       'antwortet der Dienst auf nichts:');
-    console.log('  http://' + HOST + ':' + port + '/?t=' + sitzung.token);
+    console.log('  ' + adresse);
     console.log('');
     console.log('Beenden: der Knopf auf der Seite oder Strg+C. Dieser Dienst laedt nichts ' +
-      'hoch und ruft nichts auf -- er schreibt die Freigabedatei und sonst nichts.');
+      'hoch und schreibt nur die Freigabedatei und seine Sperre.');
+
+    // Zuletzt, und ausdruecklich NACH der Adresse: sie bleibt in der Konsole
+    // stehen, auch wenn das Oeffnen klappt. Wer den falschen Browser bekommt
+    // oder das Fenster schliesst, braucht sie noch.
+    if (keinBrowser) {
+      console.log('');
+      console.log('--no-browser: es wird nichts geoeffnet. Nimm die Adresse oben.');
+      return;
+    }
+    const auf = oeffneImBrowser(adresse);
+    console.log('');
+    console.log(auf.gestartet
+      ? 'Die Seite wird im Standardbrowser geoeffnet (--no-browser schaltet das ab).'
+      : 'Der Browser liess sich nicht oeffnen (' + auf.grund + '). Der Dienst laeuft ' +
+        'weiter -- nimm die Adresse oben von Hand.');
   });
 }
 
@@ -1385,5 +1467,5 @@ module.exports = {
   SPERRE_ARTIFACT_TYPE, SPERRE_SCHEMA_VERSION,
   sperrPfad, prozessLebt, sperrePasstZumPort, leseSperre, sperrinhalt,
   schreibeSperrinhalt, nimmSperre, traegeSperrePortNach, gibSperreFrei,
-  meldeFremdeSperre,
+  meldeFremdeSperre, oeffneImBrowser,
 };

@@ -26,8 +26,54 @@ const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 // Lesen, vor jedem Kindprozess. Nur so kann ein Tippfehler im Aufruf nicht
 // mehr als "ist halt durchgelaufen" enden (CY Teil B).
 const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--json', '--ohne-platte'];
+
+// DJb: pruefeArgumenteStrikt sieht NUR Argumente, die mit '-' beginnen -- so
+// steht es in src/publish/cli-args.js, und das ist dort auch richtig: Skripte
+// mit Dateinamen oder Modusworten brauchen freie Argumente.
+//
+// DIESE BEIDEN SKRIPTE BRAUCHEN KEINE. Beide nehmen ausschliesslich benannte
+// Argumente, und genau daran hing ein Fehlgriff, der lange harmlos aussah:
+//
+//     --aufnahme=2026-08-29 18-18-19        (ohne Anfuehrungszeichen)
+//
+// zerfaellt in --aufnahme=2026-08-29 und ein freies "18-18-19". Das freie
+// Argument beginnt nicht mit '-', pruefeArgumenteStrikt sieht es nie, und das
+// Programm lief mit einer abgeschnittenen Aufnahme weiter. Die Meldung, die
+// dann kam, gehoerte nicht zu dem Fehler, den es gab.
+//
+// Die Aufzaehlung im Kopf von cli-args.js nennt fuer diesen Fall ein
+// maxPositional -- das gibt es dort nicht, es steht nur im Kommentar
+// (gemessen in DJb). Bis es das gibt, steht die Pruefung hier.
+function pruefeKeineFreienArgumente(argv, skriptname) {
+  const frei = argv.slice(2).filter((t) => !t.startsWith('-'));
+  if (!frei.length) return;
+  console.error('\nAbbruch: freie Argumente gibt es hier nicht: ' +
+    frei.map((t) => JSON.stringify(t)).join(', '));
+  // Der haeufigste Fall bekommt seinen eigenen Satz. Ein loses "18-18-19"
+  // ratlos zu melden waere richtig und trotzdem nutzlos -- wer es sieht, sucht
+  // dann im Skript statt in seiner eigenen Zeile.
+  if (frei.some((t) => /^\d{2}-\d{2}-\d{2}$/.test(t))) {
+    console.error('');
+    console.error('Das sieht aus wie der Rest eines Aufnahmenamens. Ein Aufnahmename');
+    console.error('enthaelt ein Leerzeichen und muss darum in Anfuehrungszeichen stehen --');
+    console.error('ohne sie zerfaellt er in zwei Argumente, und der zweite landet hier.');
+    console.error('');
+    console.error('So geht es, ohne npm dazwischen:');
+    console.error('  node ' + skriptname + ' --aufnahme="2026-08-29 18-18-19"');
+  }
+  console.error('');
+  console.error('Es wurde NICHTS geschrieben und kein Netzaufruf gemacht.\n');
+  process.exit(EXIT_AUFRUFFEHLER_FRUEH);
+}
+
+// EXIT_AUFRUFFEHLER steht weiter unten, hinter den Konstanten. Diese Pruefung
+// laeuft aber vor allem anderen, darum die eigene Zahl hier oben -- sie ist
+// dieselbe (2), und ein Test haelt fest, dass sie es bleibt.
+const EXIT_AUFRUFFEHLER_FRUEH = 2;
+
 if (require.main === module) {
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/upload/uebergabe-leser.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/upload/uebergabe-leser.js');
 }
 
 require('dotenv').config();
@@ -87,6 +133,39 @@ const PFLICHTFELDER = [
 // kaputt und verlangt einen Mangel dazu. Unbekannte Felder gehen NICHT mit --
 // sie sind ungeprueft und stehen weiterhin allein unter `unbekannteFelder`.
 const DURCHGEREICHTE_FELDER = PFLICHTFELDER;
+
+// DJb: DIE FELDSCHLEIFEN, ALS DATEN.
+//
+// Vier Pruefungen laufen nicht ueber ein einzelnes Feld, sondern ueber eine
+// LISTE von Feldern. An diesen Aufrufstellen steht darum eine Variable, wo
+// sonst ein Feldname steht -- m(feld, 'zahl_keine_ganzzahl', ...) statt
+// m('dauer_ms', ...). Kein Textsuchlauf ueber den Quelltext kann diese Maengel
+// einem Feld zuordnen; er saehe nur die Variable.
+//
+// Genau daran ist die Zahl im Kommentar oben in DIb falsch geworden: gezaehlt
+// wurden die Aufrufstellen mit sichtbarem Feldnamen, und feld_fehlt aus der
+// PFLICHTFELDER-Schleife fiel hinten herunter.
+//
+// Deshalb stehen die vier Listen ab hier als benannte Daten und werden von den
+// Schleifen unten benutzt statt dort ein zweites Mal hingeschrieben. Aus
+// FELDSCHLEIFEN plus den Aufrufstellen mit sichtbarem Feldnamen laesst sich
+// dann vollstaendig ableiten, welche Codes auf welches Feld fallen koennen --
+// das tut der Test, und er prueft ausserdem, dass es KEINE fuenfte Schleife
+// gibt, die er nicht kennt.
+const GANZZAHL_POSITIV_FELDER = ['groesse_bytes', 'dauer_ms'];
+const GANZZAHL_FELDER = ['breite', 'hoehe', 'quelle_von_ms', 'quelle_bis_ms'];
+const TEXT_FELDER = ['titel_vorschlag', 'transkript'];
+
+const FELDSCHLEIFEN = Object.freeze([
+  Object.freeze({ liste: 'PFLICHTFELDER', felder: PFLICHTFELDER,
+    codes: Object.freeze(['feld_fehlt']) }),
+  Object.freeze({ liste: 'GANZZAHL_POSITIV_FELDER', felder: GANZZAHL_POSITIV_FELDER,
+    codes: Object.freeze(['zahl_keine_ganzzahl', 'zahl_nicht_positiv']) }),
+  Object.freeze({ liste: 'GANZZAHL_FELDER', felder: GANZZAHL_FELDER,
+    codes: Object.freeze(['zahl_keine_ganzzahl']) }),
+  Object.freeze({ liste: 'TEXT_FELDER', felder: TEXT_FELDER,
+    codes: Object.freeze(['text_leer']) }),
+]);
 
 // Toleranz fuer dauer_ms gegen (quelle_bis_ms - quelle_von_ms), beidseitig.
 // Gemessen in DD ueber zehn Dateien: groesste Abweichung 13 ms, Bereich -13 bis
@@ -196,8 +275,28 @@ function uebergabedateiPfad(wurzel, aufnahme) {
 // DIb: JEDER MANGEL TRAEGT EINEN CODE.
 //
 // Bis DIa war ein Mangel nur durch `feld` plus Fliesstext bezeichnet. Das
-// reicht nicht: auf feld="dauer_ms" fallen vier verschiedene Maengel, auf
-// feld="sha256" fuenf. Wer sie auseinanderhalten wollte, musste die Meldung
+// reicht nicht: auf ein einziges Feld fallen mehrere verschiedene Maengel.
+//
+// DJb: DIE ZAHLEN, UND WELCHE MENGE JEDE MEINT. In DIb standen hier "vier"
+// und "fuenf"; beide waren zu klein, weil sie die Codes aus den
+// Feldschleifen (feld_fehlt, zahl_*, text_leer) nicht mitgezaehlt haben.
+//
+//   feld="dauer_ms"   FUENF Codes, alle aus der Vertragspruefung:
+//                     feld_fehlt, zahl_keine_ganzzahl, zahl_nicht_positiv,
+//                     dauer_weicht_von_quellspanne, dauer_ausserhalb_vernunft
+//
+//   feld="sha256"     FUENF aus der Vertragspruefung:
+//                     feld_fehlt, sha256_kein_text, sha256_laenge,
+//                     sha256_grossbuchstaben, sha256_keine_hexziffern
+//                     SIEBEN mit der Plattenpruefung, die zwei eigene hat:
+//                     sha256_stimmt_nicht, sha256_nicht_vergleichbar
+//
+// Beide Zahlen sind gegen den Quelltext abgesichert und nicht abgeschrieben:
+// tests/uebergabe-leser.test.cjs leitet sie aus den Aufrufstellen und aus
+// FELDSCHLEIFEN unten her und vergleicht. Wer eine Pruefung hinzufuegt, ohne
+// diesen Kommentar anzufassen, bekommt einen roten Test.
+//
+// Wer sie auseinanderhalten wollte, musste die Meldung
 // lesen -- und die Meldung ist das Einzige an dieser Ausgabe, das sich
 // jederzeit aendern darf. Der Fliesstext ist fuer Menschen, der Code ist fuer
 // Programme; beide stehen nebeneinander, keiner ersetzt den anderen.
@@ -518,7 +617,7 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
     }
   }
 
-  for (const feld of ['groesse_bytes', 'dauer_ms']) {
+  for (const feld of GANZZAHL_POSITIV_FELDER) {
     if (feld in eintrag) {
       if (!istGanzzahl(eintrag[feld])) {
         m(feld, 'zahl_keine_ganzzahl',
@@ -530,14 +629,14 @@ function pruefeEintrag(eintrag, index, daten, wurzel, gesehene) {
     }
   }
 
-  for (const feld of ['breite', 'hoehe', 'quelle_von_ms', 'quelle_bis_ms']) {
+  for (const feld of GANZZAHL_FELDER) {
     if (feld in eintrag && !istGanzzahl(eintrag[feld])) {
       m(feld, 'zahl_keine_ganzzahl',
         feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und keine Ganzzahl.');
     }
   }
 
-  for (const feld of ['titel_vorschlag', 'transkript']) {
+  for (const feld of TEXT_FELDER) {
     if (feld in eintrag && !istNichtLeererText(eintrag[feld])) {
       m(feld, 'text_leer', feld + ' ist ' + JSON.stringify(eintrag[feld]) + ' und damit leer.');
     }
@@ -998,6 +1097,24 @@ function main() {
     console.error('\nAbbruch: --aufnahme= fehlt. Beispiel: --aufnahme="2026-08-29 18-18-19"\n');
     process.exit(EXIT_AUFRUFFEHLER);
   }
+  // DJb: Die Form wird geprueft, BEVOR daraus ein Pfad wird.
+  //
+  // Vorher lief ein abgeschnittener Name "2026-08-29" bis zum Oeffnen durch und
+  // endete als "Die Uebergabedatei ist nicht lesbar (ENOENT): ...\2026-08-29\
+  // uebergabe.json". Das ist wahr und trotzdem irrefuehrend: es sieht aus wie
+  // eine fehlende Lieferung und ist ein Tippfehler im Aufruf. Wer das liest,
+  // sucht auf dem Renderlaufwerk statt in seiner eigenen Kommandozeile.
+  //
+  // Ein Ordnername ohne diese Form kann ohnehin nie angenommen werden -- das
+  // Feld `aufnahme` in der Datei muesste ihm gleichen (kopf_aufnahme_ungleich_
+  // ordner) und scheiterte dann selbst an der Form (kopf_aufnahme_form). Die
+  // Pruefung nimmt also nichts weg; sie sagt es nur frueher und richtig.
+  if (!AUFNAHME_FORM.test(aufnahme)) {
+    console.error('\nAbbruch: --aufnahme= hat nicht die Form JJJJ-MM-TT HH-MM-SS: ' +
+      JSON.stringify(aufnahme));
+    console.error('Es wurde kein Pfad daraus gebaut und keine Datei geoeffnet.\n');
+    process.exit(EXIT_AUFRUFFEHLER);
+  }
   if (!wurzel) {
     console.error('\nAbbruch: keine Wurzel. Setze SHORTS_RENDER_WURZEL in der .env ' +
       'oder gib --wurzel= an.\n');
@@ -1035,6 +1152,8 @@ module.exports = {
   DATEINAME, ERLAUBTE_ARGUMENTE, EXIT_OK, EXIT_MANGEL, EXIT_AUFRUFFEHLER,
   VERNUNFT_MIN_MS, VERNUNFT_MAX_MS, BEOBACHTET_MIN_MS, BEOBACHTET_MAX_MS,
   BEOBACHTET_STICHPROBEN,
+  GANZZAHL_POSITIV_FELDER, GANZZAHL_FELDER, TEXT_FELDER, FELDSCHLEIFEN,
+  AUFNAHME_FORM, pruefeKeineFreienArgumente,
   neueSperre, uebergabedateiPfad, istAbgeschnitten, parseStreng, pruefeKopf,
   pruefeEintrag, pruefePlatte, pruefeUebergabe, formatiere, pfadLiegtUnter,
 };

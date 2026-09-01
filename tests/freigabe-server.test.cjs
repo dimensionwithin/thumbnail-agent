@@ -1193,8 +1193,207 @@ test('jeder Ausgang nach der Sperre gibt sie wieder frei', () => {
     'diese Zeilen verlassen main() ohne die Sperre freizugeben: ' + direkt.join(', '));
 });
 
+
+// ---------------------------------------------------------------------------
+// DJb: freie Argumente, Browser, Schleife, Sitzungsende
+// ---------------------------------------------------------------------------
+
+const SERVER = path.join(__dirname, '..', 'src', 'upload', 'freigabe-server.js');
+
+function rufeDienst(argumente, umgebung) {
+  const { spawnSync } = require('node:child_process');
+  const lauf = spawnSync(process.execPath, [SERVER, ...argumente], {
+    encoding: 'utf8', timeout: 30000,
+    env: Object.assign({}, process.env, umgebung || {}),
+  });
+  return { code: lauf.status, aus: (lauf.stdout || '') + (lauf.stderr || '') };
+}
+
+test('DJb: ein freies Argument bricht den Dienst mit 2 ab', () => {
+  const r = rufeDienst(['--aufnahme=2026-08-29', '18-18-19']);
+  assert.equal(r.code, 2);
+  assert.match(r.aus, /freie Argumente gibt es hier nicht/);
+  assert.match(r.aus, /"18-18-19"/);
+  assert.match(r.aus, /Rest eines Aufnahmenamens/);
+  assert.match(r.aus, /freigabe-server\.js --aufnahme="2026-08-29 18-18-19"/);
+  // Nichts angefasst: weder Leser noch Sperre noch Port.
+  assert.ok(!/Rufe den Leser/.test(r.aus));
+  assert.ok(!/Sperre/.test(r.aus));
+});
+
+test('DJb: die Pruefung auf freie Argumente ist nicht nachgebaut', () => {
+  // Dieselbe Regel gehoert nicht zweimal ins Projekt. Sie kommt aus dem Leser,
+  // so wie die Pfadsperre auch.
+  assert.match(NURCODE, /const \{ pruefeKeineFreienArgumente \} = require\('\.\/uebergabe-leser'\)/);
+  assert.ok(!/function pruefeKeineFreienArgumente/.test(NURCODE),
+    'der Dienst darf keine eigene Fassung haben');
+  const L = require('../src/upload/uebergabe-leser.js');
+  assert.equal(typeof L.pruefeKeineFreienArgumente, 'function');
+});
+
+test('DJb: beide Argumentpruefungen laufen vor jedem anderen require', () => {
+  // Sie stehen vor require('dotenv') und vor allem, was danach kommt -- ein
+  // Tippfehler im Aufruf darf nicht erst nach dem halben Hochlauf auffallen.
+  const wo = (t) => NURCODE.indexOf(t);
+  assert.ok(wo('pruefeArgumenteStrikt(process.argv') > 0);
+  assert.ok(wo('pruefeKeineFreienArgumente(process.argv') > wo('pruefeArgumenteStrikt(process.argv'));
+  assert.ok(wo("require('dotenv')") > wo('pruefeKeineFreienArgumente(process.argv'),
+    'dotenv wird erst nach den Argumentpruefungen geladen');
+  assert.ok(wo("require('http')") > wo('pruefeKeineFreienArgumente(process.argv'));
+});
+
+// ---------------------------------------------------------------------------
+// Punkt 3: der Browser
+// ---------------------------------------------------------------------------
+
+test('DJb: der Browser wird nur aus main() geoeffnet, nie aus baueDienst', () => {
+  // Ein npm test, das Browserfenster oeffnet, waere schlimmer als das
+  // Kopieren der Adresse. Die Tests fahren den Dienst ueber baueDienst und
+  // erreichen oeffneImBrowser damit ueberhaupt nicht.
+  const aufrufe = [...NURCODE.matchAll(/oeffneImBrowser\(/g)];
+  assert.equal(aufrufe.length, 2, 'genau eine Definition und ein Aufruf');
+  const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
+  assert.ok(mainRumpf.includes('oeffneImBrowser(adresse)'), 'der Aufruf steht in main()');
+  const vorMain = NURCODE.slice(0, NURCODE.indexOf('function main()'));
+  assert.ok(!/oeffneImBrowser\(adresse\)/.test(vorMain));
+  // Und der Schalter steht davor.
+  assert.ok(mainRumpf.indexOf('if (keinBrowser)') < mainRumpf.indexOf('oeffneImBrowser(adresse)'));
+});
+
+test('DJb: ein gescheitertes Oeffnen ist kein Startfehler', () => {
+  // oeffneImBrowser gibt zurueck statt zu werfen, und der Aufrufer beendet
+  // nichts. Der Dienst laeuft weiter -- die Adresse steht ja daneben.
+  const rumpf = QUELLTEXT.slice(QUELLTEXT.indexOf('function oeffneImBrowser('),
+    QUELLTEXT.indexOf('\n// ------', QUELLTEXT.indexOf('function oeffneImBrowser(')));
+  assert.ok(!/process\.exit/.test(rumpf), 'oeffneImBrowser beendet nichts');
+  assert.ok(/kind\.on\('error'/.test(rumpf),
+    'ein spaeterer Fehler des Kindprozesses muss abgefangen sein');
+  assert.ok(/detached: true/.test(rumpf) && /kind\.unref\(\)/.test(rumpf),
+    'das Fenster gehoert dem Menschen, nicht diesem Prozess');
+  // Und der Aufrufer meldet es, statt abzubrechen.
+  assert.match(NURCODE, /Der Browser liess sich nicht oeffnen[\s\S]{0,200}laeuft/);
+});
+
+// ---------------------------------------------------------------------------
+// Punkt 7: die tragende Zusage
+// ---------------------------------------------------------------------------
+
+test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
+  // Die Zusage haengt nicht an einer Zahl -- die war schon dreimal anders --,
+  // sondern am Zeitpunkt. Alle drei Kindprozesse gehoeren zum Start.
+  const stellen = [...QUELLTEXT.split('\n').entries()]
+    .filter(([, z]) => !z.trim().startsWith('//') && /\bspawn(Sync)?\(/.test(z))
+    .map(([i, z]) => ({ zeile: i + 1, text: z.trim() }));
+  assert.equal(stellen.length, 3, stellen.map((x) => x.zeile + ': ' + x.text).join(' | '));
+
+  const heimat = ['ruftLeser', 'haelterDesPorts', 'oeffneImBrowser'];
+  const bereiche = rumpfBereiche(QUELLTEXT, heimat);
+  for (const st of stellen) {
+    const wo = bereiche.find((b) => st.zeile >= b.von && st.zeile <= b.bis);
+    assert.ok(wo !== undefined,
+      'spawn in Zeile ' + st.zeile + ' gehoert zu keiner der drei Startfunktionen: ' + st.text);
+  }
+
+  // Und der Weg vom Urteil zum Schreiben beruehrt keine davon.
+  const urteilRumpf = QUELLTEXT.slice(QUELLTEXT.indexOf('function nimmUrteil('),
+    QUELLTEXT.indexOf('function speichere('));
+  for (const name of heimat) {
+    assert.ok(!urteilRumpf.includes(name + '('), name + ' wird aus nimmUrteil gerufen');
+  }
+  assert.ok(!/spawn/.test(urteilRumpf));
+});
+
+// ---------------------------------------------------------------------------
+// Punkt 4: Schleife
+// ---------------------------------------------------------------------------
+
+test('DJb: jedes Video laeuft in Schleife, und preload bleibt none', () => {
+  const ordner = wegwerfordner();
+  const html = SEITE.baueSeite(baueSitzung(ordner, { anzahl: 5 }));
+  assert.ok(html.includes('video.loop = true'), 'Schleife ist Vorgabe');
+  assert.ok(html.includes("video.preload = 'none'"), 'preload bleibt none');
+  // Kein Schalter: es gibt keine Stelle, an der loop wieder abgeschaltet wird.
+  assert.ok(!/loop = false/.test(html));
+  assert.ok(!/removeAttribute\('loop'\)/.test(html));
+  fs.rmSync(ordner, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// Punkt 5 und 6: Sitzungsende und ausbleibende Antworten
+// ---------------------------------------------------------------------------
+
+test('DJb: die Seite holt weiterhin keinen neuen Stand', () => {
+  const ordner = wegwerfordner();
+  const html = SEITE.baueSeite(baueSitzung(ordner));
+  const ohneKommentar = html.split('\n').filter((z) => !z.trim().startsWith('//')).join('\n');
+  assert.ok(!/setInterval/.test(ohneKommentar), 'kein setInterval');
+  assert.ok(!/location\.reload/.test(ohneKommentar), 'kein Neuladen');
+  assert.ok(!/EventSource|WebSocket/.test(ohneKommentar));
+  // Genau zwei fetch-Aufrufe, beide an den eigenen Dienst, beide durch eine
+  // Handlung des Menschen ausgeloest.
+  const fetches = [...ohneKommentar.matchAll(/fetch\('([^']+)'/g)].map((t) => t[1]);
+  assert.deepEqual(fetches.sort(), ['/beenden', '/urteil']);
+});
+
+test('DJb: beide fetch-Aufrufe haben eine Zeitgrenze', () => {
+  const ordner = wegwerfordner();
+  const html = SEITE.baueSeite(baueSitzung(ordner));
+  const treffer = [...html.matchAll(/AbortSignal\.timeout\(ZEITGRENZE_MS\)/g)];
+  assert.equal(treffer.length, 2,
+    'ohne Zeitgrenze wartet fetch endlos -- ein abgestuerzter Dienst saehe dann aus wie ein langsamer');
+  fs.rmSync(ordner, { recursive: true, force: true });
+});
+
+test('DJb: eine nicht gespeicherte Antwort faerbt die Karte nicht gruen', () => {
+  const ordner = wegwerfordner();
+  const html = SEITE.baueSeite(baueSitzung(ordner));
+  // Im Fehlerzweig wird `stand` nicht angefasst und zeigeStand nicht gerufen.
+  const zweig = html.slice(html.indexOf('if (!a.ok) {'), html.indexOf('stand[karte.sha256] = a.eintrag'));
+  assert.ok(zweig.includes('fehler.textContent = a.meldung'));
+  assert.ok(zweig.includes("knoten.classList.add('nichtgespeichert')"));
+  assert.ok(!zweig.includes('zeigeStand()'), 'im Fehlerzweig wird der Stand nicht neu gezeichnet');
+  assert.ok(!zweig.includes('stand[karte.sha256] ='), 'im Fehlerzweig wird nichts gemerkt');
+  // Und beide Fehlertexte fangen mit derselben Ansage an.
+  assert.ok(html.includes('NICHT GESPEICHERT'));
+  fs.rmSync(ordner, { recursive: true, force: true });
+});
+
+test('DJb: das Sitzungsende sperrt die Karten und nennt die Freigabedatei', () => {
+  const ordner = wegwerfordner();
+  const sitzung = baueSitzung(ordner);
+  const html = SEITE.baueSeite(sitzung);
+  assert.ok(html.includes('function zeigeSitzungsende()'));
+  assert.ok(html.includes('function sperreAlleKarten()'));
+  assert.ok(html.includes('Die Sitzung ist beendet. Der Dienst laeuft nicht mehr.'));
+  // Der Pfad kommt als Daten mit -- der Kasten am Ende ist die Stelle, die
+  // ein Mensch tatsaechlich liest.
+  assert.ok(html.includes('DATEN.freigabePfad'));
+  assert.ok(html.includes(sitzung.freigabePfad.split('\\').join('\\\\')) ||
+    html.includes(sitzung.freigabePfad), 'der Pfad steht in der Nutzlast');
+  // Ausgeloest von einer Antwort, nicht von einer Uhr.
+  assert.ok(html.includes('zeigeSitzungsende();'));
+  fs.rmSync(ordner, { recursive: true, force: true });
+});
+
+test('DJb: der Knopf sagt, was er tut, und fragt bei offenen Karten nach', () => {
+  const ordner = wegwerfordner();
+  const html = SEITE.baueSeite(baueSitzung(ordner));
+  assert.ok(html.includes('<button id="beenden">Sitzung beenden</button>'));
+  assert.ok(!html.includes('Dienst beenden'), 'der alte Verwaltungsname ist weg');
+  assert.ok(html.includes('dieser Knopf ') && html.includes('speichert nichts'),
+    'daneben steht, dass er nichts speichert');
+  // Die Rueckfrage nennt die Zahl -- eine Rueckfrage ohne Zahl klickt man weg.
+  assert.ok(html.includes('window.confirm('));
+  assert.ok(html.includes("offen + ' von ' + frei.length + ' Karten haben noch kein Urteil."),
+    'die Rueckfrage nennt beide Zahlen');
+  assert.ok(html.includes('bereits gefaellten Urteile sind gespeichert'),
+    'und sagt, dass das Gefaellte gespeichert bleibt');
+  fs.rmSync(ordner, { recursive: true, force: true });
+});
+
 test('unbekannte Argumente beenden den Aufruf, statt ignoriert zu werden', () => {
-  assert.deepEqual(S.ERLAUBTE_ARGUMENTE, ['--aufnahme=', '--wurzel=', '--port=']);
+  assert.deepEqual(S.ERLAUBTE_ARGUMENTE,
+    ['--aufnahme=', '--wurzel=', '--port=', '--no-browser']);
   const { unbekannteArgumente } = require('../src/publish/cli-args');
   assert.deepEqual(
     unbekannteArgumente(['node', 'x', '--aufnahme=a', '--nur-pruefen'], S.ERLAUBTE_ARGUMENTE),

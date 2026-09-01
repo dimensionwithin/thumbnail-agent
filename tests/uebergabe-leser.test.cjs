@@ -527,10 +527,26 @@ const AUFRUF_DIREKT = new RegExp(
 const AUFRUF_HELFER = new RegExp(
   "(?<![\\w.])m\\(\\s*" + FELD_IM_AUFRUF + "\\s*,\\s*(?:'([a-z0-9_]+)'|code)", 'g');
 
+// DJb: Gesucht wird im CODE, nicht im Fliesstext.
+//
+// Bis DJb lief die Suche ueber den ganzen Quelltext. Das ging gut, solange
+// kein Kommentar eine Aufrufstelle zitierte -- und genau das passierte beim
+// Beschreiben der Feldschleifen: die Zeile
+//     "... sonst ein Feldname steht -- m(feld, 'zahl_keine_ganzzahl', ...) ..."
+// zaehlte als 48. Aufrufstelle, und der Test schlug an, obwohl sich an den
+// Pruefungen nichts geaendert hatte.
+//
+// Kommentarzeilen fliegen darum vorher raus. Das schwaecht die Absicherung
+// nicht: eine echte Aufrufstelle steht nie hinter //, und ein Kommentar, der
+// eine erfindet, ist kein Mangel, den irgendjemand melden koennte.
+const QUELLTEXT_CODE = QUELLTEXT.split('\n')
+  .filter((z) => !z.trim().startsWith('//'))
+  .join('\n');
+
 function codeAufrufstellen() {
   const treffer = [
-    ...QUELLTEXT.matchAll(AUFRUF_DIREKT),
-    ...QUELLTEXT.matchAll(AUFRUF_HELFER),
+    ...QUELLTEXT_CODE.matchAll(AUFRUF_DIREKT),
+    ...QUELLTEXT_CODE.matchAll(AUFRUF_HELFER),
   ];
   // Zwei Treffer sind die Helferdefinitionen selbst -- dort steht `code` als
   // Variable, nicht als Zeichenkette. Sie sind keine Aufrufstellen.
@@ -1062,4 +1078,158 @@ test('fehlendes ffprobe fuehrt zur Ablehnung, nicht zur stillen Annahme', (t) =>
     process.env.PATH = altePfadliste;
     fs.rmSync(wurzel, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// DJb: Freie Argumente, Formpruefung, und die Zahlen im Codekommentar
+// ---------------------------------------------------------------------------
+
+const LESER = path.join(__dirname, '..', 'src', 'upload', 'uebergabe-leser.js');
+
+// Diese Pruefungen beenden den Prozess. Sie sind darum nur ueber einen echten
+// Aufruf zu messen und nicht ueber einen Funktionsaufruf im Test.
+function rufeLeser(argumente) {
+  const { spawnSync } = require('node:child_process');
+  const lauf = spawnSync(process.execPath, [LESER, ...argumente],
+    { encoding: 'utf8', timeout: 30000 });
+  return { code: lauf.status, aus: (lauf.stdout || '') + (lauf.stderr || '') };
+}
+
+test('DJb: ein freies Argument bricht mit 2 ab und wird benannt', () => {
+  // Der Fall aus dem Auftrag: --aufnahme=2026-08-29 18-18-19 ohne
+  // Anfuehrungszeichen zerfaellt, und "18-18-19" beginnt nicht mit '-'.
+  // pruefeArgumenteStrikt sieht es deshalb nie.
+  const r = rufeLeser(['--aufnahme=2026-08-29', '18-18-19']);
+  assert.equal(r.code, 2);
+  assert.match(r.aus, /freie Argumente gibt es hier nicht/);
+  assert.match(r.aus, /"18-18-19"/);
+  // Und der haeufigste Fall bekommt seinen eigenen Satz.
+  assert.match(r.aus, /Rest eines Aufnahmenamens/);
+  assert.match(r.aus, /--aufnahme="2026-08-29 18-18-19"/);
+  assert.match(r.aus, /NICHTS geschrieben/);
+});
+
+test('DJb: die Meldung zum freien Argument kommt VOR jeder anderen', () => {
+  // Ein Aufruf, der gleich mehrere Fehler traegt: freies Argument, fehlende
+  // Wurzel, unbrauchbare Aufnahme. Zuerst muss das freie Argument kommen --
+  // es ist der Fehler, den der Mensch gemacht hat.
+  const r = rufeLeser(['--aufnahme=2026-08-29', '18-18-19', '--wurzel=']);
+  assert.equal(r.code, 2);
+  assert.match(r.aus, /freie Argumente/);
+  assert.ok(!/Uebergabedatei ist nicht lesbar/.test(r.aus),
+    'es darf keine Datei angefasst worden sein');
+  assert.ok(!/keine Wurzel/.test(r.aus), 'die Wurzelmeldung gehoert nicht zu diesem Fehler');
+});
+
+test('DJb: ein unbekanntes Flag schlaegt weiterhin zuerst zu', () => {
+  const r = rufeLeser(['--quatsch', '--aufnahme=xyz']);
+  assert.equal(r.code, 2);
+  assert.match(r.aus, /unbekannte\(s\) Argument\(e\): --quatsch/);
+});
+
+test('DJb: eine Aufnahme ohne die Form wird abgewiesen, bevor ein Pfad entsteht', () => {
+  // Vorher lief "2026-08-29" bis zum Oeffnen durch und endete als ENOENT auf
+  // einen Pfad, den es nie geben sollte. Das sah aus wie eine fehlende
+  // Lieferung und war ein Tippfehler im Aufruf.
+  const r = rufeLeser(['--aufnahme=2026-08-29', '--wurzel=/erfunden']);
+  assert.equal(r.code, 2, 'Aufruffehler, nicht Mangel');
+  assert.match(r.aus, /nicht die Form JJJJ-MM-TT HH-MM-SS/);
+  assert.match(r.aus, /kein Pfad daraus gebaut/);
+  assert.ok(!/ENOENT/.test(r.aus), 'es wurde nichts geoeffnet');
+  assert.ok(!/2026-08-29[\\/]uebergabe\.json/.test(r.aus),
+    'der irrefuehrende Pfad taucht nicht mehr auf');
+});
+
+// ---------------------------------------------------------------------------
+// Die Zahlen im Kommentar ueber MANGEL_CODES -- hergeleitet, nicht abgeschrieben
+// ---------------------------------------------------------------------------
+
+// Der Kommentar bei MANGEL_CODES nennt, wie viele verschiedene Codes auf
+// feld="dauer_ms" und auf feld="sha256" fallen koennen. In DIb standen dort
+// zwei zu kleine Zahlen, weil sie von Hand gezaehlt waren -- die Codes aus den
+// Feldschleifen fehlten. Diese Herleitung ersetzt das Zaehlen.
+//
+// Sie kommt aus zwei Quellen und braucht keinen Probenkorpus:
+//   1. den Aufrufstellen mit SICHTBAREM Feldnamen -- m('sha256', 'code', ...)
+//   2. L.FELDSCHLEIFEN, wo die Aufrufstelle nur m(feld, 'code', ...) sagt
+// Der Test unten haelt zusaetzlich fest, dass es keine dritte Quelle gibt.
+
+// Auch hier: der CODE, nicht der Fliesstext. Der Kommentar bei MANGEL_CODES
+// zaehlt die Codes namentlich auf -- wuerde er mitgelesen, bestaetigte die
+// Herleitung am Ende nur noch sich selbst.
+const SCHNITT_PLATTE = QUELLTEXT_CODE.indexOf('function pruefePlatte(');
+const TEXT_VERTRAG = QUELLTEXT_CODE.slice(0, SCHNITT_PLATTE);
+const TEXT_PLATTE = QUELLTEXT_CODE.slice(SCHNITT_PLATTE);
+
+function literaleStellen(text) {
+  return [...text.matchAll(/\bm\(\s*'([a-z0-9_]+)'\s*,\s*'([a-z0-9_]+)'/g)]
+    .map((t) => ({ feld: t[1], code: t[2] }));
+}
+
+function codesFuerFeld(feld, { mitPlatte }) {
+  const codes = new Set();
+  for (const t of literaleStellen(TEXT_VERTRAG)) if (t.feld === feld) codes.add(t.code);
+  if (mitPlatte) {
+    for (const t of literaleStellen(TEXT_PLATTE)) if (t.feld === feld) codes.add(t.code);
+  }
+  for (const schleife of L.FELDSCHLEIFEN) {
+    if (schleife.felder.includes(feld)) for (const c of schleife.codes) codes.add(c);
+  }
+  return [...codes].sort();
+}
+
+test('DJb: auf feld dauer_ms fallen fuenf Codes -- so wie es im Kommentar steht', () => {
+  const codes = codesFuerFeld('dauer_ms', { mitPlatte: true });
+  assert.deepEqual(codes, [
+    'dauer_ausserhalb_vernunft', 'dauer_weicht_von_quellspanne', 'feld_fehlt',
+    'zahl_keine_ganzzahl', 'zahl_nicht_positiv',
+  ]);
+  assert.equal(codes.length, 5);
+  // Der Kommentar sagt dieselbe Zahl. Wer eine Pruefung hinzufuegt und den
+  // Kommentar vergisst, faellt hier auf.
+  assert.match(QUELLTEXT, /feld="dauer_ms"\s+FUENF Codes/);
+  for (const c of codes) assert.ok(QUELLTEXT.includes(c), 'im Kommentar genannt: ' + c);
+});
+
+test('DJb: auf feld sha256 fallen fuenf im Vertrag und sieben mit der Platte', () => {
+  const vertrag = codesFuerFeld('sha256', { mitPlatte: false });
+  const gesamt = codesFuerFeld('sha256', { mitPlatte: true });
+  assert.equal(vertrag.length, 5, vertrag.join(', '));
+  assert.equal(gesamt.length, 7, gesamt.join(', '));
+  assert.deepEqual(gesamt.filter((c) => !vertrag.includes(c)),
+    ['sha256_nicht_vergleichbar', 'sha256_stimmt_nicht']);
+  assert.match(QUELLTEXT, /FUENF aus der Vertragspruefung/);
+  assert.match(QUELLTEXT, /SIEBEN mit der Plattenpruefung/);
+});
+
+test('DJb: die Herleitung ist vollstaendig -- es gibt keine unbekannte Feldschleife', () => {
+  // Jede Aufrufstelle, an der statt eines Feldnamens eine Variable steht, muss
+  // aus einer der Schleifen in FELDSCHLEIFEN stammen. Kaeme eine fuenfte dazu,
+  // waere die Herleitung oben blind fuer sie -- und die Zahlen im Kommentar
+  // wieder zu klein, genau wie in DIb.
+  const variabel = [...QUELLTEXT_CODE.matchAll(/\bm\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*,\s*'([a-z0-9_]+)'/g)]
+    .filter((t) => t[1] !== 'null')          // m(null, ...) hat gar kein Feld
+    .map((t) => t[2]);
+  const bekannt = new Set(L.FELDSCHLEIFEN.flatMap((sch) => sch.codes));
+  for (const code of variabel) {
+    assert.ok(bekannt.has(code),
+      'Code ' + code + ' wird ueber eine Variable gemeldet, steht aber in keiner ' +
+      'Schleife von FELDSCHLEIFEN -- die Herleitung der Zahlen ist damit unvollstaendig.');
+  }
+  // Und in pruefeEintrag gibt es genau die vier deklarierten Schleifen.
+  const beginn = QUELLTEXT_CODE.indexOf('function pruefeEintrag(');
+  const rumpf = QUELLTEXT_CODE.slice(beginn, QUELLTEXT_CODE.indexOf('\nfunction ', beginn + 10));
+  const listen = [...rumpf.matchAll(/for \(const feld of ([A-Za-z_]+)\)/g)].map((t) => t[1]);
+  assert.deepEqual(listen, L.FELDSCHLEIFEN.map((sch) => sch.liste));
+});
+
+test('DJb: die Feldschleifen benutzen die Konstanten, nicht ihre eigene Liste', () => {
+  // Stuenden die Feldnamen ein zweites Mal woertlich in der for-Zeile, koennten
+  // Liste und Schleife auseinanderlaufen, ohne dass es auffaellt.
+  assert.ok(!/for \(const feld of \[/.test(QUELLTEXT_CODE),
+    'eine Feldschleife traegt ihre Liste woertlich statt als Konstante');
+  assert.ok(Object.isFrozen(L.FELDSCHLEIFEN));
+  assert.deepEqual(L.GANZZAHL_POSITIV_FELDER, ['groesse_bytes', 'dauer_ms']);
+  assert.deepEqual(L.GANZZAHL_FELDER, ['breite', 'hoehe', 'quelle_von_ms', 'quelle_bis_ms']);
+  assert.deepEqual(L.TEXT_FELDER, ['titel_vorschlag', 'transkript']);
 });

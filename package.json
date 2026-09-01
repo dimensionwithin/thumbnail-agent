@@ -21,7 +21,8 @@
     "unlist-shorts": "node src/publish/unlist-shorts.js",
     "livestreams:sync": "node src/youtube/sync-livestream-archive.js",
     "livestreams:weekly": "node src/youtube/sync-livestream-archive.js --weekly",
-    "members:list-old": "node src/publish/list-old-members-only.js"
+    "members:list-old": "node src/publish/list-old-members-only.js",
+    "shorts:lesen": "node src/upload/uebergabe-leser.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

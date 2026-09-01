@@ -1,0 +1,36 @@
+{
+  "artifact_type": "matrix_auto_cutter_shorts_uebergabe",
+  "schema_version": "1.0",
+  "aufnahme": "2026-01-02 03-04-05",
+  "erzeugt_am": "2026-01-02T04:05:06+02:00",
+  "shorts": [
+    {
+      "kennung": "2026-01-02 03-04-05/1",
+      "pfad": "kandidat-1/short.mp4",
+      "sha256": "aa11bb22cc33dd44ee55ff6600778899aa11bb22cc33dd44ee55ff6600778899",
+      "groesse_bytes": 2000001,
+      "dauer_ms": 10000,
+      "breite": 1080,
+      "hoehe": 1920,
+      "titel_vorschlag": "Erfundener Titelvorschlag Nummer 1",
+      "transkript": "erfundenes transkript nummer 1",
+      "quelle_von_ms": 100000,
+      "quelle_bis_ms": 110000,
+      "urteil": "ja"
+    },
+    {
+      "kennung": "2026-01-02 03-04-05/2",
+      "pfad": "/erfunden/wurzel/2026-01-02 03-04-05/kandidat-2/short.mp4",
+      "sha256": "bb22cc33dd44ee55ff6600778899aa11bb22cc33dd44ee55ff6600778899aa11",
+      "groesse_bytes": 2000002,
+      "dauer_ms": 10000,
+      "breite": 1080,
+      "hoehe": 1920,
+      "titel_vorschlag": "Erfundener Titelvorschlag Nummer 2",
+      "transkript": "erfundenes transkript nummer 2",
+      "quelle_von_ms": 100000,
+      "quelle_bis_ms": 110000,
+      "urteil": "ja"
+    }
+  ]
+}

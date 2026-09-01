@@ -24,7 +24,8 @@
 // Dateien das betraf.
 //
 // Aufruf: node scripts/freigabe-check.cjs [--vollbaum]
-//   ohne Schalter: der Commit-Kandidat (git status --porcelain) -- das Gate.
+//   ohne Schalter: der Commit-Kandidat
+//                  (git status --porcelain --untracked-files=all) -- das Gate.
 //   --vollbaum:    alle getrackten Dateien (git ls-files) -- ein ZUSAETZLICHER
 //                  Lauf, kein Ersatz. Was einmal committet ist, sieht der
 //                  Porcelain-Lauf nie wieder an.
@@ -475,7 +476,7 @@ function selbstpruefung() {
   console.log(`Selbstpruefung: ${ALLE_PRUEFARTEN.length} Pruefarten, ${vz} Vertreter, ${nz} Negativkontrollen, ${BINAER_PROBEN.length} Binaerproben, ${AUSNAHMEN.length} Ausnahmen, Kataloghygiene bestanden.`);
 }
 
-// Der Commit-Kandidat. Unveraendert -- dieser Lauf ist das Gate.
+// Der Commit-Kandidat -- dieser Lauf ist das Gate.
 //
 // KEIN .trim() auf die Gesamtausgabe: Porcelain-Zeilen beginnen bei
 // unstaged-Aenderungen mit einem Leerzeichen (" M pfad"). Ein Trim des ganzen
@@ -483,18 +484,50 @@ function selbstpruefung() {
 // fester slice(3) schneidet den Pfad an -- die Datei faellt dann stillschweigend
 // aus der Pruefung. Genau so ist hier zuerst src/publish/publish.js
 // durchgerutscht. Deshalb zeilenweise und ueber die Statusbreite (2 Zeichen).
+//
+// DHa (2026-08-31), Auftrag Punkt 2a: --untracked-files=all.
+//
+// URSACHE: git status --porcelain klappt ein ungetracktes VERZEICHNIS zu einem
+// einzigen Eintrag zusammen ("?? src/upload/"). Der faellt hier in den Zweig
+// "keine vorhandene Datei" und wird uebersprungen -- mitsamt allem, was darin
+// liegt. Und --vollbaum hilft nicht: der liest git ls-files und sieht nur
+// Getracktes. Ein neues, ungetracktes Verzeichnis sah also KEINER der beiden
+// Modi. Gemessen in DH: der Lauf meldete "Zu pruefende Dateien: 4" und hatte
+// dabei ein neues Modul und 18 neue Fixtures nie angesehen. Der Check war
+// genau bei dem blind, was ein Auftrag neu anlegt -- also bei dem, was am
+// wahrscheinlichsten noch nie jemand angesehen hat.
+//
+// DHa, Auftrag Punkt 2b: die uebersprungenen Eintraege werden EINZELN genannt,
+// nicht nur gezaehlt. Dieselbe Regel wie DFa Punkt 2: eine Zahl ohne ihre
+// Posten liest sich wie "nichts Wichtiges", und genau darunter lag hier die
+// Blindheit. Deshalb steht neben jedem Eintrag auch, warum er wegfaellt.
 function porcelainDateien() {
-  const roh = execSync('git status --porcelain', { encoding: 'utf8' });
+  const roh = execSync('git status --porcelain --untracked-files=all', { encoding: 'utf8' });
   const zeilen = roh.split('\n').filter((z) => z.length > 3);
-  const dateien = zeilen
-    .map((z) => z.slice(2).trim().replace(/^"|"$/g, ''))
-    // Umbenennungen kommen als "alt -> neu"; geprueft wird das Ziel.
-    .map((f) => (f.includes(' -> ') ? f.split(' -> ')[1] : f))
-    .filter((f) => fs.existsSync(f) && fs.statSync(f).isFile());
 
-  const uebersprungen = zeilen.length - dateien.length;
-  if (uebersprungen > 0) {
-    console.log(`Hinweis: ${uebersprungen} Eintrag/Eintraege sind keine vorhandenen Dateien (Verzeichnisse/geloescht) und werden nicht geprueft.\n`);
+  const dateien = [];
+  const uebersprungen = [];
+  for (const z of zeilen) {
+    const status = z.slice(0, 2);
+    let f = z.slice(2).trim().replace(/^"|"$/g, '');
+    // Umbenennungen kommen als "alt -> neu"; geprueft wird das Ziel.
+    if (f.includes(' -> ')) f = f.split(' -> ')[1];
+
+    if (!fs.existsSync(f)) {
+      uebersprungen.push({ status, f, grund: 'nicht vorhanden (geloescht oder verschoben)' });
+    } else if (!fs.statSync(f).isFile()) {
+      // Mit --untracked-files=all sollte hier nichts mehr ankommen; bleibt als
+      // Netz fuer Sonderfaelle (z. B. ein eigenes Repo in einem Unterordner).
+      uebersprungen.push({ status, f, grund: 'Verzeichnis -- sein Inhalt wurde NICHT geprueft' });
+    } else {
+      dateien.push(f);
+    }
+  }
+
+  if (uebersprungen.length > 0) {
+    console.log(`Hinweis: ${uebersprungen.length} Eintrag/Eintraege sind keine vorhandenen Dateien und werden nicht geprueft:`);
+    for (const u of uebersprungen) console.log(`  [${u.status}] ${u.f} -- ${u.grund}`);
+    console.log('');
   }
   return dateien;
 }
@@ -535,7 +568,7 @@ function main() {
     for (const q of fehlend) console.log('  ' + q);
   }
 
-  console.log(`Modus: ${vollbaum ? 'Vollbaum (git ls-files) -- zusaetzlicher Lauf, NICHT das Commit-Gate' : 'Commit-Kandidat (git status --porcelain)'}`);
+  console.log(`Modus: ${vollbaum ? 'Vollbaum (git ls-files) -- zusaetzlicher Lauf, NICHT das Commit-Gate' : 'Commit-Kandidat (git status --porcelain --untracked-files=all)'}`);
   console.log(`Zu pruefende Dateien: ${dateien.length}`);
   console.log(`Bekannte IDs im Abgleich: ${ids.length}\n`);
 

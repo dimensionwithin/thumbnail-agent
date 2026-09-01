@@ -37,18 +37,54 @@ function freigabeText(aufnahme = AUFNAHME) {
 }
 
 // Eine Freigabedatei mit n freigegebenen Eintraegen, aus der echten abgeleitet.
-function freigabeMit(n, aufnahme = AUFNAHME) {
+// DOa: mit alsAufnahme wird sie auf einen anderen Namen ausgestellt -- so
+// bekommt jeder Test, der wirklich eine Datei auf die Platte legt, seine eigene
+// Wegwerf-Aufnahme und faellt keinem anderen ins Handwerk.
+function freigabeMit(n, aufnahme = AUFNAHME, alsAufnahme = null) {
+  const name = alsAufnahme === null ? aufnahme : alsAufnahme;
   const d = JSON.parse(freigabeText(aufnahme));
   const vorlage = d.freigaben.find((e) => e.freigegeben === true);
+  d.aufnahme = name;
   d.freigaben = [];
   for (let i = 0; i < n; i++) {
     d.freigaben.push(Object.assign({}, vorlage, {
       sha256: crypto.createHash('sha256').update('probe-' + i).digest('hex'),
-      kennung: aufnahme + '/p' + (i + 1),
+      kennung: name + '/p' + (i + 1),
       titel: 'Probe ' + (i + 1),
     }));
   }
   return JSON.stringify(d, null, 2) + '\n';
+}
+
+// Ein Gedaechtnis, wie der Uploader es schreibt, mit den ersten n Shorts aus
+// freigabeMit darin. Die videoIds sind erfunden und ohne Bezug zu irgendeinem
+// Kanal -- der Planer sieht sie nur darauf an, OB sie da sind, und traegt sie
+// nirgends ein.
+function gedaechtnisMit(n, aufnahme) {
+  const uploads = [];
+  for (let i = 0; i < n; i++) {
+    uploads.push({
+      sha256: crypto.createHash('sha256').update('probe-' + i).digest('hex'),
+      kennung: aufnahme + '/p' + (i + 1),
+      videoId: 'PROBE-ohne-Bezug-' + i,
+      hochgeladen_am: '2026-09-01T' + String(8 + i).padStart(2, '0') + ':00:00.000Z',
+      publish_at: '2026-09-01T' + String(8 + i).padStart(2, '0') + ':30:00.000Z',
+      titel: 'Probe ' + (i + 1),
+    });
+  }
+  return JSON.stringify({
+    artifact_type: 'adw_shorts_uploads',
+    schema_version: '1.0',
+    aufnahme,
+    plan_datei: 'data/plaene/' + aufnahme + '.json',
+    // ABSICHTLICH die Pruefsumme eines Plans, den es nicht mehr gibt: genau so
+    // sieht die Lage aus, wenn neu geplant wird. Der Planer darf daran nicht
+    // haengenbleiben (siehe leseGedaechtnis).
+    plan_sha256: crypto.createHash('sha256').update('ein-frueherer-plan').digest('hex'),
+    angelegt_am: '2026-09-01T10:00:00.000Z',
+    zuletzt_geschrieben_am: '2026-09-01T12:00:00.000Z',
+    uploads,
+  }, null, 2) + '\n';
 }
 
 function plane(isoJetzt, text = freigabeText(), aufnahme = AUFNAHME) {
@@ -702,6 +738,349 @@ test('die Ausgabe fuer Menschen zeigt zu jedem Termin die Ortszeit', () => {
 });
 
 // ---------------------------------------------------------------------------
+// DOa: DER PLANER KENNT DAS GEDAECHTNIS
+// ---------------------------------------------------------------------------
+//
+// Der gefaehrliche Fehler in diesem Abschnitt sieht harmlos aus: ein Plan mit
+// zwoelf Terminen, obwohl drei der Shorts schon auf dem Kanal stehen. Er
+// rechnet richtig, er liest sich richtig, und er laedt drei Videos ein zweites
+// Mal hoch. Deshalb wird hier beides geprueft -- dass uebersprungen wird, UND
+// dass die uebersprungenen einzeln benannt sind.
+
+test('DOa: die Konstanten des Gedaechtnisses stimmen mit denen des Uploaders ueberein', () => {
+  // Der Planer definiert sie ein zweites Mal, weil ein require zum Uploader
+  // ein Ring waere (der Uploader laedt den Planer). Dieser Test ist der Ersatz
+  // fuer das require: laufen die beiden Stellen auseinander, faellt es hier auf
+  // und nicht daran, dass ein Gedaechtnis ploetzlich abgelehnt wird.
+  const U = require('../src/upload/uploader.js');
+  assert.equal(P.GEDAECHTNIS_ARTIFACT_TYPE, U.GEDAECHTNIS_ARTIFACT_TYPE);
+  assert.ok(P.BEKANNTE_GEDAECHTNIS_VERSIONEN.includes(U.GEDAECHTNIS_SCHEMA_VERSION),
+    'der Planer kennt die Fassung nicht, die der Uploader schreibt');
+});
+
+test('DOa: der Pfad des Gedaechtnisses wird aus der Form gebaut, nicht aus dem Text', () => {
+  assert.equal(P.gedaechtnisPfad('/w', '2026-08-31 17-36-21'),
+    path.join('/w', 'data', 'uploads', '2026-08-31 17-36-21.json'));
+  for (const boese of ['../../etc/passwd', '2026-08-31/17-36-21', '2026-08-31',
+    '2026-08-31 17-36-21.json', '2026-8-31 17-36-21', '']) {
+    assert.throws(() => P.gedaechtnisPfad('/w', boese), /Form JJJJ-MM-TT HH-MM-SS/);
+  }
+});
+
+test('DOa: drei im Gedaechtnis, zwoelf freigegeben -- neun Termine', () => {
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME,
+    freigabeText: freigabeMit(12),
+    gedaechtnisText: gedaechtnisMit(3, AUFNAHME),
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  assert.deepEqual(e.fehler, []);
+  assert.equal(e.plan.termine.length, 9);
+  assert.equal(e.plan.freigaben_gesamt, 12);
+  assert.equal(e.plan.freigaben_geplant, 9);
+  assert.equal(e.plan.freigaben_uebersprungen, 3);
+  assert.equal(e.plan.freigaben_abgelehnt, 0);
+
+  // 1a: EINZELN genannt, mit Kennung und mit dem Hinweis, warum.
+  assert.equal(e.plan.uebersprungen_hochgeladen.length, 3);
+  e.plan.uebersprungen_hochgeladen.forEach((u, i) => {
+    assert.equal(u.kennung, AUFNAHME + '/p' + (i + 1));
+    assert.match(u.grund, /schon hochgeladen/);
+    assert.match(u.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(u.titel, 'Probe ' + (i + 1));
+  });
+
+  // Und keiner von ihnen hat einen Termin bekommen.
+  const uebersprungeneSummen = new Set(e.plan.uebersprungen_hochgeladen.map((u) => u.sha256));
+  for (const t of e.plan.termine) {
+    assert.ok(!uebersprungeneSummen.has(t.sha256),
+      t.kennung + ' hat trotz Gedaechtnis einen Termin bekommen');
+  }
+  // Geplant sind die letzten neun -- p4 bis p12, in der Reihenfolge der Datei.
+  assert.deepEqual(e.plan.termine.map((t) => t.kennung),
+    Array.from({ length: 9 }, (_, i) => AUFNAHME + '/p' + (i + 4)));
+
+  // Die neun verteilen sich ueber das GANZE Fenster, nicht ueber neun
+  // Zwoelftel davon: der letzte Termin liegt nah am Fensterende.
+  assert.equal(e.plan.fenster.nutzbare_minuten, 720);
+  assert.equal(e.plan.fenster.abstand_minuten, 72);
+});
+
+test('DOa: die videoId aus dem Gedaechtnis kommt in keinen Plan', () => {
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME,
+    freigabeText: freigabeMit(12),
+    gedaechtnisText: gedaechtnisMit(3, AUFNAHME),
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  const alsText = JSON.stringify(e.plan) + P.formatiere(e.plan);
+  assert.ok(!/videoId|PROBE-ohne-Bezug/.test(alsText),
+    'der Plan traegt eine videoId, die er nicht braucht');
+  // Der Zeitpunkt darf mit -- er sagt einem Menschen, wann das passiert ist.
+  assert.equal(e.plan.uebersprungen_hochgeladen[0].hochgeladen_am, '2026-09-01T08:00:00.000Z');
+});
+
+test('DOa: die Ausgabe fuer Menschen nennt die uebersprungenen einzeln', () => {
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME,
+    freigabeText: freigabeMit(12),
+    gedaechtnisText: gedaechtnisMit(3, AUFNAHME),
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  const text = P.formatiere(e.plan);
+  for (const u of e.plan.uebersprungen_hochgeladen) {
+    assert.ok(text.includes(u.kennung), u.kennung + ' fehlt in der Ausgabe');
+  }
+  assert.match(text, /schon hochgeladen/);
+  assert.match(text, /schon hochgeladen: 3/);
+});
+
+test('DOa: 1b -- der Kopf traegt die sha256 des Gedaechtnisses, das vorlag', () => {
+  const g = gedaechtnisMit(3, AUFNAHME);
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(12), gedaechtnisText: g,
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  assert.equal(e.plan.gedaechtnis_vorhanden, true);
+  assert.equal(e.plan.gedaechtnis_sha256,
+    crypto.createHash('sha256').update(g, 'utf8').digest('hex'));
+  assert.equal(e.plan.gedaechtnis_datei, 'data/uploads/' + AUFNAHME + '.json');
+  assert.match(e.plan.hinweis_gedaechtnis, /uebersprungen_hochgeladen/);
+  assert.ok(P.formatiere(e.plan).includes(e.plan.gedaechtnis_sha256),
+    'die sha256 des Gedaechtnisses steht nicht in der Ausgabe');
+});
+
+test('DOa: 1b -- ohne Gedaechtnis sagt der Kopf das ausdruecklich', () => {
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(12),
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  assert.equal(e.plan.gedaechtnis_vorhanden, false);
+  assert.equal(e.plan.gedaechtnis_sha256, null);
+  assert.equal(e.plan.freigaben_uebersprungen, 0);
+  assert.deepEqual(e.plan.uebersprungen_hochgeladen, []);
+  assert.match(e.plan.hinweis_gedaechtnis, /KEIN Gedaechtnis/);
+  assert.equal(e.plan.termine.length, 12);
+  // Ein leeres Feld waere nicht dasselbe wie ein ausdruecklicher Satz: bei
+  // einem fehlenden Feld weiss man nicht, ob nicht nachgesehen wurde.
+  assert.ok(P.formatiere(e.plan).includes('gab es nicht'));
+});
+
+test('DOa: 1c -- steht alles im Gedaechtnis, entsteht KEIN Plan', () => {
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME,
+    freigabeText: freigabeMit(12),
+    gedaechtnisText: gedaechtnisMit(12, AUFNAHME),
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  assert.deepEqual(e.fehler, []);
+  assert.equal(e.plan, undefined, 'es ist doch ein Plan entstanden');
+  assert.ok(e.alles_hochgeladen);
+  assert.equal(e.alles_hochgeladen.freigegeben, 12);
+  assert.equal(e.alles_hochgeladen.uebersprungen.length, 12);
+  // Auch hier einzeln, nicht gezaehlt.
+  e.alles_hochgeladen.uebersprungen.forEach((u, i) => {
+    assert.equal(u.kennung, AUFNAHME + '/p' + (i + 1));
+  });
+});
+
+test('DOa: der Planer bleibt an plan_sha256 nicht haengen', () => {
+  // Der Uploader prueft plan_sha256 und muss das tun. Der Planer darf es NICHT:
+  // beim Neuplanen gehoert das Gedaechtnis zwangslaeufig zu einem anderen Plan,
+  // und mit dieser Pruefung koennte er nie etwas ueberspringen.
+  const g = JSON.parse(gedaechtnisMit(3, AUFNAHME));
+  g.plan_sha256 = crypto.createHash('sha256').update('ein voellig anderer plan').digest('hex');
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(12),
+    gedaechtnisText: JSON.stringify(g, null, 2),
+    planungszeitpunkt: Date.parse('2026-09-01T17:00:00+02:00'),
+    vorgegeben: true, jetzt: Date.parse('2026-09-01T17:00:00+02:00'),
+  });
+  assert.deepEqual(e.fehler, []);
+  assert.equal(e.plan.termine.length, 9);
+});
+
+test('DOa: ein kaputtes Gedaechtnis wird abgelehnt, nicht uebergangen', () => {
+  const t0 = Date.parse('2026-09-01T17:00:00+02:00');
+  const mit = (text) => P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(12), gedaechtnisText: text,
+    planungszeitpunkt: t0, vorgegeben: true, jetzt: t0,
+  });
+  const verbogen = (fn) => {
+    const g = JSON.parse(gedaechtnisMit(3, AUFNAHME));
+    fn(g);
+    return mit(JSON.stringify(g, null, 2));
+  };
+  // Ein Gedaechtnis, das nicht gelesen werden kann, darf NICHT dazu fuehren,
+  // dass einfach alles geplant wird. Das waere der stille Doppel-Upload.
+  assert.match(mit('{kaputt').fehler[0], /kein JSON/);
+  assert.match(mit('[]').fehler[0], /kein Objekt/);
+  assert.match(mit('').fehler[0], /kein JSON/);
+  assert.ok(verbogen((g) => { g.artifact_type = 'etwas anderes'; })
+    .fehler.some((f) => /artifact_type/.test(f)));
+  assert.ok(verbogen((g) => { g.schema_version = '2.0'; })
+    .fehler.some((f) => /schema_version/.test(f)));
+  assert.ok(verbogen((g) => { g.aufnahme = '2020-01-01 00-00-00'; })
+    .fehler.some((f) => /geplant wird/.test(f)));
+  assert.ok(verbogen((g) => { g.uploads = 'keine Liste'; })
+    .fehler.some((f) => /uploads ist keine Liste/.test(f)));
+  assert.ok(verbogen((g) => { delete g.uploads[1].videoId; })
+    .fehler.some((f) => /keine videoId/.test(f)));
+  assert.ok(verbogen((g) => { g.uploads[1].sha256 = 'zu kurz'; })
+    .fehler.some((f) => /keine sha256-Summe/.test(f)));
+  assert.ok(verbogen((g) => { g.uploads[1].sha256 = g.uploads[0].sha256; })
+    .fehler.some((f) => /ein zweites Mal/.test(f)));
+  // In keinem dieser Faelle entsteht ein Plan.
+  assert.equal(mit('{kaputt').plan, undefined);
+});
+
+test('DOa: die Nachpruefung faellt auf, wenn ein uebersprungener doch einen Termin hat', () => {
+  const t0 = Date.parse('2026-09-01T17:00:00+02:00');
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(12),
+    gedaechtnisText: gedaechtnisMit(3, AUFNAHME),
+    planungszeitpunkt: t0, vorgegeben: true, jetzt: t0,
+  });
+  const hochgeladen = new Map();
+  for (const u of e.plan.uebersprungen_hochgeladen) hochgeladen.set(u.sha256, u);
+  // Sauber: die Nachpruefung schweigt.
+  assert.deepEqual(P.pruefePlan(e.plan, t0, hochgeladen), []);
+  // Verbogen: ein Termin traegt eine sha256 aus dem Gedaechtnis.
+  const kaputt = JSON.parse(JSON.stringify(e.plan));
+  kaputt.termine[0].sha256 = e.plan.uebersprungen_hochgeladen[0].sha256;
+  assert.ok(P.pruefePlan(kaputt, t0, hochgeladen)
+    .some((x) => /zweiter Upload/.test(x)));
+  // Und die Rechnung muss aufgehen.
+  const zaehlt = JSON.parse(JSON.stringify(e.plan));
+  zaehlt.freigaben_uebersprungen = 1;
+  assert.ok(P.pruefePlan(zaehlt, t0).some((x) => /Rechnung geht nicht auf/.test(x)));
+});
+
+test('DOa: der Planer schreibt nie in data/freigaben', () => {
+  // 1d in Zahlen: es gibt in diesem Programm keinen Schreibzugriff, der auf die
+  // Freigabedatei zeigen koennte. Der einzige Schreibweg ist schreibePlanAtomar,
+  // und der bekommt seinen Pfad aus planPfad.
+  const schreibend = /writeFileSync|appendFileSync|createWriteStream|unlinkSync|renameSync|rmSync/g;
+  const zeilen = NURCODE.split('\n');
+  for (const z of zeilen) {
+    if (!schreibend.test(z)) { schreibend.lastIndex = 0; continue; }
+    schreibend.lastIndex = 0;
+    assert.ok(!/freigabe/i.test(z),
+      'eine schreibende Zeile nennt die Freigabe: ' + z.trim());
+  }
+  // freigabePfad wird an genau EINER Stelle aufgerufen, und der Pfad, den es
+  // liefert, geht von dort nach readFileSync. Ein zweiter Aufrufer waere die
+  // Stelle, an der ein Vermerk in die Freigabedatei kaeme.
+  const alle = NURCODE.split('freigabePfad(').length - 1;
+  const definitionen = NURCODE.split('function freigabePfad(').length - 1;
+  assert.equal(definitionen, 1);
+  assert.equal(alle - definitionen, 1, 'freigabePfad wird an mehr als einer Stelle benutzt');
+  assert.match(NURCODE, /const quelle = freigabePfad\(projektwurzel, aufnahme\);/);
+  assert.match(NURCODE, /freigabeText = fs\.readFileSync\(quelle, 'utf8'\);/);
+});
+
+test('DOa: der Kommentar zu 1d steht im Quelltext, nicht nur im Bericht', () => {
+  assert.match(QUELLTEXT, /Protokoll eines menschlichen Urteils/);
+  assert.match(QUELLTEXT, /faelscht das Urteil/);
+  assert.match(QUELLTEXT, /data\/uploads\/<aufnahme>\.json/);
+});
+
+// ---------------------------------------------------------------------------
+// DOa: DIESELBE SACHE UEBER DIE BEFEHLSZEILE
+// ---------------------------------------------------------------------------
+//
+// Die Tests oben gehen an planeAufnahme vorbei an der Platte vorbei. Hier
+// laeuft das Programm wirklich, mit Dateien, die dieser Test selbst anlegt und
+// wieder wegraeumt.
+
+function mitProbe(name, n, gedaechtnisEintraege, fn) {
+  const freigabe = P.freigabePfad(WURZEL, name);
+  const plan = P.planPfad(WURZEL, name);
+  const ged = P.gedaechtnisPfad(WURZEL, name);
+  assert.ok(!fs.existsSync(freigabe), 'die Wegwerf-Aufnahme gibt es schon: ' + freigabe);
+  assert.ok(!fs.existsSync(plan), 'fuer die Wegwerf-Aufnahme liegt schon ein Plan');
+  assert.ok(!fs.existsSync(ged), 'fuer die Wegwerf-Aufnahme liegt schon ein Gedaechtnis');
+  fs.mkdirSync(path.dirname(freigabe), { recursive: true });
+  fs.writeFileSync(freigabe, freigabeMit(n, AUFNAHME, name), 'utf8');
+  if (gedaechtnisEintraege > 0) {
+    fs.mkdirSync(path.dirname(ged), { recursive: true });
+    fs.writeFileSync(ged, gedaechtnisMit(gedaechtnisEintraege, name), 'utf8');
+  }
+  const vorher = fs.readFileSync(freigabe, 'utf8');
+  try {
+    fn({ freigabe, plan, ged });
+    // 1d, gemessen: die Freigabedatei ist nach jedem Lauf Byte fuer Byte die
+    // alte. Das ist die einzige Pruefung, die einen stillen Vermerk faende.
+    assert.equal(fs.readFileSync(freigabe, 'utf8'), vorher,
+      'die Freigabedatei wurde veraendert');
+  } finally {
+    fs.rmSync(freigabe, { force: true });
+    fs.rmSync(plan, { force: true });
+    fs.rmSync(ged, { force: true });
+  }
+}
+
+test('DOa (CLI): drei im Gedaechtnis -- neun Termine, drei einzeln genannt', () => {
+  mitProbe('2000-04-04 04-04-04', 12, 3, ({ plan }) => {
+    const r = spawnSync(process.execPath,
+      [SKRIPT, '--freigabe=2000-04-04 04-04-04', '--jetzt=2026-09-01T17:00:00+02:00', '--execute'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, P.EXIT_OK, r.stderr);
+    const d = JSON.parse(fs.readFileSync(plan, 'utf8'));
+    assert.equal(d.termine.length, 9);
+    assert.equal(d.freigaben_uebersprungen, 3);
+    assert.equal(d.gedaechtnis_vorhanden, true);
+    assert.match(d.gedaechtnis_sha256, /^[0-9a-f]{64}$/);
+    for (let i = 1; i <= 3; i++) {
+      assert.ok(r.stdout.includes('2000-04-04 04-04-04/p' + i),
+        'p' + i + ' wird nicht einzeln genannt');
+    }
+    assert.ok(!/videoId|PROBE-ohne-Bezug/.test(r.stdout + fs.readFileSync(plan, 'utf8')));
+  });
+});
+
+test('DOa (CLI): alles im Gedaechtnis -- kein Plan, keine leere Datei, Klartext', () => {
+  mitProbe('2000-05-05 05-05-05', 12, 12, ({ plan }) => {
+    for (const args of [[], ['--execute']]) {
+      const r = spawnSync(process.execPath,
+        [SKRIPT, '--freigabe=2000-05-05 05-05-05', '--jetzt=2026-09-01T17:00:00+02:00', ...args],
+        { encoding: 'utf8' });
+      assert.equal(r.status, P.EXIT_MANGEL, JSON.stringify(args) + ': ' + r.stdout + r.stderr);
+      assert.match(r.stdout, /KEIN PLAN: alle freigegebenen Shorts/);
+      assert.ok(!fs.existsSync(plan), 'es ist doch eine Planungsdatei entstanden');
+      // Auch keine leere, auch keine Temporaerdatei.
+      assert.deepEqual(fs.readdirSync(path.dirname(plan))
+        .filter((f) => f.startsWith('2000-05-05') || f.startsWith('.2000-05-05')), []);
+      for (let i = 1; i <= 12; i++) {
+        assert.ok(r.stdout.includes('2000-05-05 05-05-05/p' + i),
+          'p' + i + ' wird nicht einzeln genannt');
+      }
+    }
+  });
+});
+
+test('DOa (CLI): ohne Gedaechtnis bleibt alles, wie es war', () => {
+  mitProbe('2000-06-06 06-06-06', 12, 0, ({ plan }) => {
+    const r = spawnSync(process.execPath,
+      [SKRIPT, '--freigabe=2000-06-06 06-06-06', '--jetzt=2026-09-01T17:00:00+02:00', '--execute'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, P.EXIT_OK, r.stderr);
+    const d = JSON.parse(fs.readFileSync(plan, 'utf8'));
+    assert.equal(d.termine.length, 12);
+    assert.equal(d.freigaben_uebersprungen, 0);
+    assert.equal(d.gedaechtnis_vorhanden, false);
+    assert.equal(d.gedaechtnis_sha256, null);
+    assert.equal(d.fenster.abstand_minuten, 55.38);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // DNa: Flagname und Rueckgabewerte
 // ---------------------------------------------------------------------------
 
@@ -714,17 +1093,68 @@ test('DNa: der Planer gibt seinen eigenen Flagnamen mit -- --freigabe=, nicht --
 test('DNa: der Vorschlag bei verlorenen Anfuehrungszeichen ist ausfuehrbar', () => {
   // Der Fehler aus DN Abschnitt 7: die Meldung nannte --aufnahme=, das es hier
   // nicht gibt. Wer den Vorschlag abtippte, bekam den naechsten Abbruch.
-  const r = spawnSync(process.execPath, [SKRIPT, '--freigabe=2026-08-31', '17-36-21'],
-    { encoding: 'utf8' });
-  assert.equal(r.status, P.EXIT_AUFRUFFEHLER);
-  assert.ok(r.stderr.includes('node src/upload/planer.js --freigabe="2026-08-31 17-36-21"'),
-    'der Vorschlag lautet anders als erwartet:\n' + r.stderr);
-  assert.ok(!r.stderr.includes('--aufnahme='), 'die Meldung nennt ein fremdes Argument');
-  // Und der vorgeschlagene Aufruf laeuft wirklich durch.
-  const nach = spawnSync(process.execPath, [SKRIPT, '--freigabe=2026-08-31 17-36-21'],
-    { encoding: 'utf8' });
-  assert.equal(nach.status, P.EXIT_OK, nach.stderr);
-  assert.match(nach.stdout, /TROCKENLAUF: es wurde NICHTS geschrieben/);
+  //
+  // DOa PUNKT 2 -- WARUM DIESER TEST SEIT DO EINEN EIGENEN PROBENAMEN HAT:
+  //
+  // Bis DO stand hier die ECHTE Aufnahme 2026-08-31 17-36-21. Der Test tippte
+  // ihren Namen ohne Anfuehrungszeichen, las den Vorschlag aus der Meldung und
+  // fuehrte ihn aus -- und erwartete dabei einen Trockenlauf mit Code 0. Seit
+  // in DO ein echter Plan in data/plaene liegt, bricht der Planer fuer diese
+  // Aufnahme ab (Code 1), und der Test fiel.
+  //
+  // Beide Seiten hatten recht: der Planer SOLL bei vorhandenem Plan abbrechen,
+  // auch im Trockenlauf, und der Test SOLL pruefen, dass der Vorschlag
+  // durchlaeuft. Falsch war der Ort. Der Test hing an einer Aufnahme, deren
+  // Zustand er nicht besitzt -- und wurde von echter Arbeit umgeworfen, ohne
+  // dass an dem, was er prueft, irgendetwas kaputt war.
+  //
+  // Die bequeme Reparatur waere gewesen, den vorhandenen Plan zu ueberspringen
+  // oder die Erwartung auf "0 oder 1" zu weiten. Das ist nicht gemacht worden:
+  // ein Test, der bei echter Datenlage schweigt oder sich seine Erwartung nach
+  // der Lage aussucht, ist keiner mehr. Stattdessen bekommt er eine eigene
+  // Wegwerf-Aufnahme mit eigener Freigabedatei, deren Zustand er selbst
+  // herstellt und selbst wieder aufraeumt.
+  const probe = '2000-03-03 03-03-03';
+  const freigabe = P.freigabePfad(WURZEL, probe);
+  const ziel = P.planPfad(WURZEL, probe);
+  assert.ok(!fs.existsSync(freigabe), 'die Wegwerf-Aufnahme gibt es schon');
+  assert.ok(!fs.existsSync(ziel), 'fuer die Wegwerf-Aufnahme liegt schon ein Plan');
+  fs.mkdirSync(path.dirname(freigabe), { recursive: true });
+  fs.writeFileSync(freigabe, freigabeMit(3, AUFNAHME, probe), 'utf8');
+  try {
+    // "2000-03-03 03-03-03" ohne Anfuehrungszeichen zerfaellt genauso wie der
+    // echte Name: --freigabe=2000-03-03 und ein freies "03-03-03".
+    const r = spawnSync(process.execPath, [SKRIPT, '--freigabe=2000-03-03', '03-03-03'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, P.EXIT_AUFRUFFEHLER);
+    assert.ok(r.stderr.includes('node src/upload/planer.js --freigabe="2000-03-03 03-03-03"'),
+      'der Vorschlag lautet anders als erwartet:\n' + r.stderr);
+    assert.ok(!r.stderr.includes('--aufnahme='), 'die Meldung nennt ein fremdes Argument');
+    // Und der vorgeschlagene Aufruf laeuft wirklich durch -- als Trockenlauf,
+    // der nichts anlegt.
+    const nach = spawnSync(process.execPath, [SKRIPT, '--freigabe=2000-03-03 03-03-03'],
+      { encoding: 'utf8' });
+    assert.equal(nach.status, P.EXIT_OK, nach.stderr);
+    assert.match(nach.stdout, /TROCKENLAUF: es wurde NICHTS geschrieben/);
+    assert.ok(!fs.existsSync(ziel), 'der Trockenlauf hat eine Datei angelegt');
+  } finally {
+    fs.rmSync(freigabe, { force: true });
+    fs.rmSync(ziel, { force: true });
+  }
+});
+
+test('DOa: der Vorschlag-Test haengt an keiner echten Aufnahme mehr', () => {
+  // Der Beleg dafuer, dass die Reparatur oben eine ist und keine Vertagung:
+  // sonst waere beim naechsten echten Plan derselbe Fehlschlag faellig.
+  const quelltext = fs.readFileSync(__filename, 'utf8');
+  const block = quelltext.slice(
+    quelltext.indexOf("test('DNa: der Vorschlag bei verlorenen"),
+    quelltext.indexOf("test('DOa: der Vorschlag-Test haengt"));
+  assert.ok(block.length > 100, 'der Block wurde nicht gefunden');
+  const wirkung = block.split('\n').filter((z) => !/^\s*\/\//.test(z)).join('\n');
+  assert.ok(!wirkung.includes('2026-08-31'),
+    'der Vorschlag-Test benutzt wieder eine echte Aufnahme');
+  assert.ok(wirkung.includes("const probe = '2000-03-03 03-03-03'"));
 });
 
 test('DNa: die Rueckgabewerte kommen aus der Tabelle im Leser', () => {

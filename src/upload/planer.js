@@ -100,6 +100,19 @@ const PLAN_SCHEMA_VERSION = '1.0';
 const FREIGABE_ARTIFACT_TYPE = 'adw_shorts_freigaben';
 const BEKANNTE_FREIGABE_VERSIONEN = ['1.0'];
 
+// DAS GEDAECHTNIS DES UPLOADERS -- data/uploads/<aufnahme>.json.
+//
+// Der Planer LIEST es und schreibt es nie. Es ist der Beleg dafuer, was
+// wirklich auf dem Kanal steht: wer darin herumschreibt, faelscht diesen Beleg
+// genauso, wie wer die Freigabedatei umschreibt (siehe leseFreigabe).
+//
+// Die beiden Werte stehen hier ein zweites Mal und kommen nicht per require aus
+// dem Uploader: der Uploader laedt den Planer, ein require zurueck waere ein
+// Ring. Damit die zwei Stellen nicht auseinanderlaufen, haelt ein Test in
+// tests/planer.test.cjs sie gegeneinander.
+const GEDAECHTNIS_ARTIFACT_TYPE = 'adw_shorts_uploads';
+const BEKANNTE_GEDAECHTNIS_VERSIONEN = ['1.0'];
+
 const SHA256_FORM = /^[0-9a-f]{64}$/;
 
 // --jetzt= verlangt einen Zonenversatz. Ohne Versatz waere die Angabe genau
@@ -437,6 +450,32 @@ function planPfad(projektwurzel, aufnahme) {
   return path.join(projektwurzel, 'data', 'plaene', aufnahme + '.json');
 }
 
+function gedaechtnisPfad(projektwurzel, aufnahme) {
+  if (typeof aufnahme !== 'string' || !AUFNAHME_FORM.test(aufnahme)) {
+    throw new Error('Aufnahmename hat nicht die Form JJJJ-MM-TT HH-MM-SS: ' +
+      JSON.stringify(aufnahme) + '. Es wird kein Dateiname daraus gebaut.');
+  }
+  return path.join(projektwurzel, 'data', 'uploads', aufnahme + '.json');
+}
+
+// DIE FREIGABEDATEI WIRD GELESEN UND SONST NICHTS.
+//
+// Kein Zurueckschreiben, kein Vermerk, kein Haken "erledigt", kein Feld
+// "geplant_am", kein "hochgeladen: true" -- weder hier noch irgendwo sonst in
+// diesem Programm. Die Datei ist das Protokoll eines menschlichen Urteils: ein
+// Mensch hat jeden Short einzeln angesehen und ja oder nein gesagt. Wer in
+// dieses Protokoll einen Programmzustand hineinschreibt, faelscht das Urteil --
+// hinterher ist an der Datei nicht mehr zu unterscheiden, was der Mensch
+// entschieden hat und was ein Lauf dazugetan hat. Und nachsehen kann man es
+// nirgends: es gibt keine zweite Fassung dieses Urteils.
+//
+// DER ZUSTAND "SCHON HOCHGELADEN" HAT SEINEN EIGENEN ORT: das Gedaechtnis in
+// data/uploads/<aufnahme>.json, geschrieben vom Uploader, gelesen von
+// leseGedaechtnis. Genau dafuer gibt es das Gedaechtnis. Der bequeme Weg waere
+// gewesen, hier ein Feld zu setzen und die Freigabedatei als Merkzettel zu
+// benutzen; er ist nicht genommen worden, und diese Zeilen stehen hier, damit
+// das eine Entscheidung bleibt und nicht wie eine Luecke aussieht.
+//
 // Streng: was nicht der bekannten Form entspricht, wird abgelehnt und nicht
 // zurechtgebogen. Gibt { fehler: [...] } oder { fehler: [], kopf, eintraege, sha256 }.
 function leseFreigabe(text, aufnahme) {
@@ -510,6 +549,90 @@ function leseFreigabe(text, aufnahme) {
 }
 
 // ---------------------------------------------------------------------------
+// DAS GEDAECHTNIS LESEN
+// ---------------------------------------------------------------------------
+//
+// Streng in der Form, mit EINEM bewussten Unterschied zum Uploader: der Planer
+// prueft plan_sha256 NICHT.
+//
+// Der Uploader muss das pruefen. Er fragt: "gehoert dieses 'schon hochgeladen'
+// zu dem Plan, den ich gerade abarbeite?" -- und wenn der Plan inzwischen ein
+// anderer ist, kann er die Frage nicht beantworten und bricht ab.
+//
+// Der Planer fragt etwas anderes: "steht dieser Inhalt schon auf dem Kanal?"
+// Darauf antwortet die sha256 des Shorts allein; welcher Plan ihn dorthin
+// gebracht hat, aendert daran nichts. Ein Plan existiert in diesem Augenblick
+// ohnehin nicht -- der Planer laeuft ja gerade, um einen zu bauen, und der
+// bekommt zwangslaeufig eine andere Pruefsumme als der, aus dem hochgeladen
+// wurde. Wuerde er plan_sha256 pruefen, koennte er nach einem erneuten Planen
+// NIE etwas ueberspringen: also genau in dem Fall, fuer den das Ueberspringen
+// gebaut ist.
+//
+// Gibt { fehler: [...] } oder { fehler: [], gedaechtnis, hochgeladen, sha256 }.
+// hochgeladen ist eine Map von sha256 auf den Eintrag im Gedaechtnis.
+function leseGedaechtnis(text, aufnahme) {
+  let d;
+  try {
+    d = JSON.parse(text);
+  } catch (e) {
+    return { fehler: ['Das Gedaechtnis data/uploads/' + aufnahme + '.json ist kein JSON: ' +
+      e.message + '. Es wird weder repariert noch uebergangen: solange nicht feststeht, ' +
+      'was schon hochgeladen ist, darf kein Plan entstehen.'] };
+  }
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) {
+    return { fehler: ['Das Gedaechtnis enthaelt kein Objekt.'] };
+  }
+  const fehler = [];
+  if (d.artifact_type !== GEDAECHTNIS_ARTIFACT_TYPE) {
+    fehler.push('Gedaechtnis: artifact_type ist ' + JSON.stringify(d.artifact_type) +
+      ', erwartet ' + JSON.stringify(GEDAECHTNIS_ARTIFACT_TYPE) + '.');
+  }
+  if (!BEKANNTE_GEDAECHTNIS_VERSIONEN.includes(d.schema_version)) {
+    fehler.push('Gedaechtnis: schema_version ist ' + JSON.stringify(d.schema_version) +
+      '; bekannt sind ' + BEKANNTE_GEDAECHTNIS_VERSIONEN.join(', ') +
+      '. Eine fremde Fassung wird nicht nach den Regeln der bekannten gelesen.');
+  }
+  if (d.aufnahme !== aufnahme) {
+    fehler.push('Gedaechtnis: nennt die Aufnahme ' + JSON.stringify(d.aufnahme) +
+      ', geplant wird ' + JSON.stringify(aufnahme) + '.');
+  }
+  if (!Array.isArray(d.uploads)) {
+    fehler.push('Gedaechtnis: uploads ist keine Liste.');
+    return { fehler };
+  }
+  const hochgeladen = new Map();
+  d.uploads.forEach((u, i) => {
+    const wo = 'Gedaechtnis: uploads[' + i + ']';
+    if (u === null || typeof u !== 'object') { fehler.push(wo + ' ist kein Objekt.'); return; }
+    if (typeof u.sha256 !== 'string' || !SHA256_FORM.test(u.sha256)) {
+      fehler.push(wo + '.sha256 ist keine sha256-Summe.');
+      return;
+    }
+    // videoId wird auf VORHANDENSEIN geprueft und danach nicht mehr angefasst:
+    // ein Eintrag ohne sie belegt keinen Upload. Ihr WERT geht in keinen Plan,
+    // in keine Ausgabe und in keinen Bericht -- der Planer hat mit dem Kanal
+    // nichts zu tun, und eine videoId, die er nirgends braucht, soll er auch
+    // nirgends hinterlassen.
+    if (typeof u.videoId !== 'string' || !u.videoId.trim()) {
+      fehler.push(wo + ' hat keine videoId und belegt damit keinen Upload.');
+      return;
+    }
+    if (hochgeladen.has(u.sha256)) {
+      fehler.push(wo + '.sha256 steht ein zweites Mal im Gedaechtnis.');
+      return;
+    }
+    hochgeladen.set(u.sha256, u);
+  });
+  if (fehler.length) return { fehler };
+  return {
+    fehler: [],
+    gedaechtnis: d,
+    hochgeladen,
+    sha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // DER PLAN
 // ---------------------------------------------------------------------------
 //
@@ -517,7 +640,8 @@ function leseFreigabe(text, aufnahme) {
 // traegt die Reihenfolge, in der ein Mensch entschieden hat; sie umzusortieren
 // hiesse, eine Entscheidung zu treffen, die niemand getroffen hat.
 
-function planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben = false, jetzt }) {
+function planeAufnahme({ aufnahme, freigabeText, gedaechtnisText = null,
+  planungszeitpunkt, vorgegeben = false, jetzt }) {
   const sperrfehler = pruefeSperrliste();
   if (sperrfehler.length) return { fehler: sperrfehler.map((f) => 'Sperrliste: ' + f) };
 
@@ -542,6 +666,56 @@ function planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben =
     };
   }
 
+  // DAS GEDAECHTNIS. Was hier drinsteht, ist hochgeladen. Ein zweiter Termin
+  // dafuer waere ein zweiter Upload desselben Videos -- und der faellt niemandem
+  // auf, bis er auf dem Kanal steht.
+  //
+  // gedaechtnisText === null heisst: es gab keine Datei. Das ist kein Mangel,
+  // sondern der Normalfall vor dem ersten Upload. Ein leerer String waere etwas
+  // anderes -- eine Datei, die es gibt und die nichts enthaelt -- und faellt
+  // unten als "kein JSON" auf.
+  let gedaechtnisSha = null;
+  let hochgeladen = new Map();
+  if (gedaechtnisText !== null) {
+    const g = leseGedaechtnis(gedaechtnisText, aufnahme);
+    if (g.fehler.length) return { fehler: g.fehler };
+    gedaechtnisSha = g.sha256;
+    hochgeladen = g.hochgeladen;
+  }
+
+  const uebersprungen = [];
+  const offen = [];
+  for (const e of freigegeben) {
+    const u = hochgeladen.get(e.sha256);
+    if (!u) { offen.push(e); continue; }
+    uebersprungen.push({
+      sha256: e.sha256,
+      kennung: e.kennung,
+      titel: e.titel,
+      // Aus dem Gedaechtnis kommt NUR der Zeitpunkt. Die videoId steht dort und
+      // bleibt dort (siehe leseGedaechtnis).
+      hochgeladen_am: typeof u.hochgeladen_am === 'string' ? u.hochgeladen_am : null,
+      grund: 'steht im Gedaechtnis: schon hochgeladen',
+    });
+  }
+
+  if (offen.length === 0) {
+    // KEINE LEERE PLANUNGSDATEI -- aus demselben Grund wie oben, und hier waere
+    // sie noch schlimmer: ein Plan mit null Terminen neben einem Gedaechtnis
+    // voller Uploads liest sich wie "hier war nie etwas zu tun". Der Aufrufer
+    // bekommt keinen Plan, sondern diese Auskunft, und main() macht Klartext
+    // daraus.
+    return {
+      fehler: [],
+      alles_hochgeladen: {
+        aufnahme,
+        freigegeben: freigegeben.length,
+        uebersprungen,
+        gedaechtnis_sha256: gedaechtnisSha,
+      },
+    };
+  }
+
   const { abschnitte, ende, probleme } = nutzbareAbschnitte(planungszeitpunkt);
   if (probleme.length) return { fehler: probleme };
   if (!abschnitte.length) {
@@ -549,7 +723,11 @@ function planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben =
       ortszeitText(ende) + ' liegt keine nutzbare Zeit im Tagesfenster 08:00-20:00.'] };
   }
 
-  const { termine, gesamtMs, schrittMs } = verteile(abschnitte, freigegeben.length);
+  // Verteilt werden die OFFENEN, nicht alle freigegebenen: die uebersprungenen
+  // haben ihren Termin laengst gehabt. Zwoelf Freigaben mit drei Uploads ergeben
+  // neun Termine ueber das ganze Fenster, nicht neun auf den ersten neun
+  // Plaetzen von zwoelf.
+  const { termine, gesamtMs, schrittMs } = verteile(abschnitte, offen.length);
 
   const plan = {
     artifact_type: PLAN_ARTIFACT_TYPE,
@@ -595,10 +773,30 @@ function planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben =
     },
     freigabedatei: 'data/freigaben/' + aufnahme + '.json',
     freigabe_sha256: gelesen.sha256,
+    // WELCHES GEDAECHTNIS BEIM PLANEN VORLAG -- als Pruefsumme, oder
+    // ausdruecklich, dass keines dalag. Ohne diese Zeilen ist an einem Plan
+    // spaeter nicht zu sehen, ob er neun Termine traegt, weil drei Shorts schon
+    // hochgeladen waren, oder weil die Freigabe nur neun hatte. Das ist genau
+    // die Frage, die man stellt, wenn drei Videos fehlen.
+    gedaechtnis_datei: 'data/uploads/' + aufnahme + '.json',
+    gedaechtnis_vorhanden: gedaechtnisSha !== null,
+    gedaechtnis_sha256: gedaechtnisSha,
+    hinweis_gedaechtnis: gedaechtnisSha === null
+      ? 'Beim Planen lag KEIN Gedaechtnis vor -- data/uploads/' + aufnahme +
+        '.json gab es nicht. Es wurde kein Eintrag uebersprungen; aus dieser ' +
+        'Aufnahme war zu diesem Zeitpunkt nichts hochgeladen.'
+      : 'Beim Planen lag das Gedaechtnis mit der oben genannten sha256 vor. Jeder ' +
+        'freigegebene Eintrag, dessen sha256 darin steht, ist uebersprungen worden ' +
+        'und steht einzeln unter uebersprungen_hochgeladen.',
     freigaben_gesamt: gelesen.eintraege.length,
-    freigaben_geplant: freigegeben.length,
+    freigaben_geplant: offen.length,
     freigaben_abgelehnt: abgelehnt,
-    termine: freigegeben.map((e, i) => ({
+    freigaben_uebersprungen: uebersprungen.length,
+    // EINZELN, nicht gezaehlt. Eine Zahl "3 uebersprungen" laesst nicht
+    // nachsehen, WELCHE drei -- und das ist die einzige Frage, die dazu je
+    // gestellt wird.
+    uebersprungen_hochgeladen: uebersprungen,
+    termine: offen.map((e, i) => ({
       sha256: e.sha256,
       kennung: e.kennung,
       titel: e.titel,
@@ -607,7 +805,7 @@ function planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben =
     })),
   };
 
-  const nachpruefung = pruefePlan(plan, planungszeitpunkt);
+  const nachpruefung = pruefePlan(plan, planungszeitpunkt, hochgeladen);
   if (nachpruefung.length) return { fehler: nachpruefung, plan };
   return { fehler: [], plan };
 }
@@ -616,16 +814,40 @@ function planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben =
 // fertigen Zeitstempel noch einmal ein und laesst sich von Intl sagen, welche
 // Ortszeit dahintersteht. Eine Verteilung, die um eine Stunde daneben liegt,
 // faellt hier auf -- und nicht erst dem Zuschauer um 06:00 morgens.
-function pruefePlan(plan, planungszeitpunkt) {
+// hochgeladen (Map sha256 -> Eintrag) ist wahlweise; wird sie mitgegeben,
+// prueft die Nachpruefung ausserdem, dass kein uebersprungener Short doch einen
+// Termin bekommen hat. Das ist nicht dieselbe Rechnung wie oben noch einmal,
+// sondern dieselbe FRAGE ein zweites Mal -- diesmal an das fertige Ergebnis.
+function pruefePlan(plan, planungszeitpunkt, hochgeladen = null) {
   const fehler = [];
   const ende = planungszeitpunkt + VORLAUF_MS;
   if (plan.termine.length !== plan.freigaben_geplant) {
     fehler.push('termine hat ' + plan.termine.length + ' Eintraege, freigaben_geplant sagt ' +
       plan.freigaben_geplant + '.');
   }
+  if (Array.isArray(plan.uebersprungen_hochgeladen) &&
+      plan.uebersprungen_hochgeladen.length !== plan.freigaben_uebersprungen) {
+    fehler.push('uebersprungen_hochgeladen hat ' + plan.uebersprungen_hochgeladen.length +
+      ' Eintraege, freigaben_uebersprungen sagt ' + plan.freigaben_uebersprungen + '.');
+  }
+  // Die Rechnung muss aufgehen: geplant + uebersprungen + abgelehnt sind alle
+  // Eintraege der Freigabedatei. Geht sie nicht auf, ist irgendwo ein Short
+  // stillschweigend verschwunden -- und das ist der Fehler, den man nicht sieht.
+  if (typeof plan.freigaben_uebersprungen === 'number' &&
+      plan.freigaben_geplant + plan.freigaben_uebersprungen + plan.freigaben_abgelehnt !==
+        plan.freigaben_gesamt) {
+    fehler.push('Die Rechnung geht nicht auf: ' + plan.freigaben_geplant + ' geplant + ' +
+      plan.freigaben_uebersprungen + ' uebersprungen + ' + plan.freigaben_abgelehnt +
+      ' abgelehnt ergibt nicht ' + plan.freigaben_gesamt + ' Eintraege der Freigabedatei.');
+  }
   let vorher = null;
   plan.termine.forEach((t, i) => {
     const wo = 'termine[' + i + '] (' + t.kennung + ')';
+    if (hochgeladen && hochgeladen.has(t.sha256)) {
+      fehler.push(wo + ': dieser Short steht schon im Gedaechtnis und haette ' +
+        'uebersprungen werden muessen. Ein Termin dafuer waere ein zweiter Upload ' +
+        'desselben Videos.');
+    }
     const ms = Date.parse(t.publish_at);
     if (!Number.isFinite(ms)) { fehler.push(wo + ': publish_at ist kein Zeitstempel.'); return; }
     if (vorher !== null && ms <= vorher) {
@@ -694,6 +916,11 @@ function formatiere(plan) {
   z.push('Aufnahme:            ' + plan.aufnahme);
   z.push('Freigabedatei:       ' + plan.freigabedatei);
   z.push('  sha256:            ' + plan.freigabe_sha256);
+  z.push('Gedaechtnis:         ' + plan.gedaechtnis_datei +
+    (plan.gedaechtnis_vorhanden ? '' : '   (gab es nicht)'));
+  z.push('  sha256:            ' + (plan.gedaechtnis_sha256 === null
+    ? 'keines -- aus dieser Aufnahme war nichts hochgeladen'
+    : plan.gedaechtnis_sha256));
   z.push('Planungszeitpunkt:   ' + plan.planungszeitpunkt + '   = ' + plan.planungszeitpunkt_ortszeit);
   if (plan.planungszeitpunkt_vorgegeben) {
     z.push('                     (vorgegeben mit --jetzt=, nicht die Uhr dieses Rechners)');
@@ -715,10 +942,24 @@ function formatiere(plan) {
   z.push('  Summe' + ' '.repeat(26) + String(plan.fenster.nutzbare_minuten).padStart(4) + ' Minuten');
   z.push('');
   z.push('Eintraege der Freigabedatei: ' + plan.freigaben_gesamt +
-    '   davon freigegeben: ' + plan.freigaben_geplant +
-    '   abgelehnt (nicht geplant): ' + plan.freigaben_abgelehnt);
+    '   geplant: ' + plan.freigaben_geplant +
+    '   abgelehnt: ' + plan.freigaben_abgelehnt +
+    '   schon hochgeladen: ' + plan.freigaben_uebersprungen);
   z.push('Abstand: ' + plan.fenster.nutzbare_minuten + ' Minuten / (' +
     plan.freigaben_geplant + ' + 1) = ' + plan.fenster.abstand_minuten + ' Minuten');
+  if (plan.freigaben_uebersprungen > 0) {
+    // EINZELN. Wer hier "3 uebersprungen" liest und die drei nicht sieht, muss
+    // in einer JSON-Datei nachschlagen, um zu erfahren, welche Shorts heute
+    // NICHT online gehen.
+    z.push('');
+    z.push('Uebersprungen -- steht schon im Gedaechtnis, also schon hochgeladen:');
+    for (const u of plan.uebersprungen_hochgeladen) {
+      z.push('  - ' + u.kennung + '   schon hochgeladen' +
+        (u.hochgeladen_am ? ' am ' + u.hochgeladen_am : ''));
+      z.push('      ' + u.titel);
+    }
+    z.push('  Fuer diese Shorts entsteht KEIN zweiter Termin: das waere ein zweiter Upload.');
+  }
   z.push('');
   z.push('   #  publish_at (verbindlich)  Ortszeit ' + ZONE);
   z.push('      Kennung / Titel');
@@ -834,6 +1075,10 @@ function main() {
     process.exit(EXIT_MANGEL);
   }
 
+  // GELESEN, NICHT GESCHRIEBEN. readFileSync ist der einzige Zugriff dieses
+  // Programms auf die Freigabedatei. Es gibt in dieser Datei kein
+  // writeFileSync, das auf data/freigaben zeigt, und das ist Absicht -- die
+  // Begruendung steht ueber leseFreigabe.
   let freigabeText;
   try {
     freigabeText = fs.readFileSync(quelle, 'utf8');
@@ -842,7 +1087,79 @@ function main() {
     process.exit(EXIT_MANGEL);
   }
 
-  const ergebnis = planeAufnahme({ aufnahme, freigabeText, planungszeitpunkt, vorgegeben, jetzt });
+  // DAS GEDAECHTNIS -- wenn es eines gibt. Gibt es keines, ist das kein Mangel:
+  // dann wurde aus dieser Aufnahme noch nie etwas hochgeladen, und der Planer
+  // verhaelt sich wie vor DOa.
+  const gPfad = gedaechtnisPfad(projektwurzel, aufnahme);
+  let gedaechtnisText = null;
+  if (fs.existsSync(gPfad)) {
+    try {
+      gedaechtnisText = fs.readFileSync(gPfad, 'utf8');
+    } catch (e) {
+      console.error('');
+      console.error('ABBRUCH: das Gedaechtnis liegt da, ist aber nicht lesbar (' + e.code + '):');
+      console.error('  ' + gPfad);
+      console.error('');
+      console.error('Solange nicht feststeht, was schon hochgeladen ist, entsteht kein Plan.');
+      console.error('Ein Plan ohne diese Auskunft koennte ein Video ein zweites Mal einplanen,');
+      console.error('und das faellt erst auf dem Kanal auf.');
+      console.error('');
+      process.exit(EXIT_MANGEL);
+    }
+  }
+
+  const ergebnis = planeAufnahme({
+    aufnahme, freigabeText, gedaechtnisText, planungszeitpunkt, vorgegeben, jetzt,
+  });
+
+  // ALLES SCHON HOCHGELADEN. Kein Plan, keine leere Datei, Klartext.
+  //
+  // WARUM DER RUECKGABEWERT 1 (BEFUND) IST UND NICHT 0: Das Programm hat die
+  // Lage angesehen und legt nichts an -- genau das sagt BEFUND, und der Grund
+  // liegt im Zustand der Platte. Vor allem aber: wer "planen && hochladen"
+  // hintereinanderhaengt, muss hier stehenbleiben. Mit 0 liefe der Uploader los
+  // und suchte einen Plan, den es nicht gibt. Kaputt ist nichts, und die
+  // Ausgabe sagt das auch -- sie geht darum auf stdout und nicht auf stderr.
+  if (ergebnis.alles_hochgeladen) {
+    const a = ergebnis.alles_hochgeladen;
+    if (alsJson) {
+      console.log(JSON.stringify({
+        ergebnis: 'alles_hochgeladen',
+        aufnahme: a.aufnahme,
+        plan_geschrieben: false,
+        freigegeben: a.freigegeben,
+        uebersprungen_hochgeladen: a.uebersprungen,
+        gedaechtnis_datei: 'data/uploads/' + a.aufnahme + '.json',
+        gedaechtnis_sha256: a.gedaechtnis_sha256,
+      }, null, 2));
+    } else {
+      console.log('');
+      console.log('KEIN PLAN: alle freigegebenen Shorts dieser Aufnahme sind schon hochgeladen.');
+      console.log('');
+      console.log('  Aufnahme:                ' + a.aufnahme);
+      console.log('  Freigegeben:             ' + a.freigegeben);
+      console.log('  Davon schon hochgeladen: ' + a.uebersprungen.length);
+      console.log('  Gedaechtnis:             data/uploads/' + a.aufnahme + '.json');
+      console.log('    sha256:                ' + a.gedaechtnis_sha256);
+      console.log('');
+      for (const u of a.uebersprungen) {
+        console.log('  - ' + u.kennung + '   schon hochgeladen' +
+          (u.hochgeladen_am ? ' am ' + u.hochgeladen_am : ''));
+        console.log('      ' + u.titel);
+      }
+      console.log('');
+      console.log('Es wurde KEINE Planungsdatei angelegt -- auch keine leere. Eine Datei mit');
+      console.log('null Terminen waere spaeter nicht von einem Plan zu unterscheiden, der nie');
+      console.log('etwas zu tun hatte.');
+      console.log('');
+      console.log('Die Freigabedatei wurde nur gelesen. Wer diese Aufnahme wirklich noch einmal');
+      console.log('hochladen will, raeumt das Gedaechtnis weg (verschieben, nicht loeschen: es');
+      console.log('traegt die videoIds) -- die Freigabedatei bleibt, wie sie ist.');
+      console.log('');
+    }
+    process.exit(EXIT_MANGEL);
+  }
+
   if (ergebnis.fehler.length) {
     console.error('');
     console.error('ABBRUCH: der Plan wurde nicht erstellt.');
@@ -900,10 +1217,12 @@ module.exports = {
   ZONE, TAGESFENSTER_VON_MIN, TAGESFENSTER_BIS_MIN, VORLAUF_MS, MINUTE_MS,
   PLAN_ARTIFACT_TYPE, PLAN_SCHEMA_VERSION,
   FREIGABE_ARTIFACT_TYPE, BEKANNTE_FREIGABE_VERSIONEN,
+  GEDAECHTNIS_ARTIFACT_TYPE, BEKANNTE_GEDAECHTNIS_VERSIONEN,
   ERLAUBTE_ARGUMENTE, EXIT_OK, EXIT_MANGEL, EXIT_AUFRUFFEHLER, EXIT_GESPERRT,
   GESPERRTE_AUFNAHMEN, pruefeSperrliste, sperreFuer,
   zonenTeile, versatzMinuten, versatzText, instantsFuerOrtszeit, ortszeitText, ortsminuten,
   nutzbareAbschnitte, verteile,
-  freigabePfad, planPfad, leseFreigabe, planeAufnahme, pruefePlan,
+  freigabePfad, planPfad, gedaechtnisPfad, leseFreigabe, leseGedaechtnis,
+  planeAufnahme, pruefePlan,
   schreibePlanAtomar, formatiere, umbrich,
 };

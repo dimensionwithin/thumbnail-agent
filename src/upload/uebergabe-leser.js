@@ -74,11 +74,13 @@ const EXIT_CODES = [
       'sich aus einer eingetragenen Regel heraus, nicht wegen der Daten.',
   },
   {
-    // Reserviert, nicht in Gebrauch: heute vergibt keines der drei Skripte
-    // diesen Wert. Er steht hier, damit die zweite Bedeutung von 3 einen
-    // eigenen Platz hat: die archivierte upload-probe meldete mit 3, dass sie
-    // den Menschen nicht fragen konnte (Eingabe weggefallen). Kommt so etwas
-    // zurueck, bekommt es 4 und nicht wieder 3.
+    // IN GEBRAUCH seit DO: der Uploader vergibt diesen Wert, wenn er vor dem
+    // ersten Upload nicht fragen kann (src/upload/uploader.js,
+    // EXIT_KEINE_ANTWORT). Bis dahin war er reserviert -- er stand hier, damit
+    // die zweite Bedeutung von 3 einen eigenen Platz hat: die archivierte
+    // upload-probe meldete mit 3, dass sie den Menschen nicht fragen konnte
+    // (Eingabe weggefallen). Kommt so etwas zurueck, bekommt es 4 und nicht
+    // wieder 3.
     wert: 4, name: 'KEINE_ANTWORT',
     bedeutung: 'Es konnte nicht gefragt werden -- die Eingabe ist weggefallen. Das Programm hat ' +
       'weder eine Zustimmung noch eine Ablehnung gehoert.',

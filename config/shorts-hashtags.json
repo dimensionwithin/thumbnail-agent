@@ -1,0 +1,34 @@
+{
+  "erklaerung": [
+    "Zuordnung von Stichwort zu Hashtags fuer die Shorts. Getroffen wird am TITEL des Shorts.",
+    "Ein Stichwort trifft nur als GANZES WORT, Gross-/Kleinschreibung ist egal: 'BTC' trifft 'BTC' und 'btc', aber nicht 'BTCUSD'. Ein Stichwort aus zwei Woertern ('Alltime High') trifft nur, wenn beide Woerter so hintereinander im Titel stehen.",
+    "Hashtags OHNE #-Zeichen eintragen, das # setzt der Uploader. Keine Leerzeichen im Hashtag.",
+    "Neue Gruppe: einen Block in 'gruppen' kopieren, 'name', 'stichwoerter' und 'hashtags' eintragen. Die Reihenfolge der Gruppen ist die Reihenfolge der Hashtags unter dem Short.",
+    "'immer' kommt bei JEDEM Short dazu, auch wenn kein Stichwort trifft. Trifft kein Stichwort, bleiben nur diese.",
+    "Hoechstens 15 Hashtags je Short, denn ab dem sechzehnten ignoriert YouTube ALLE. Der Uploader zaehlt Titel und Beschreibung zusammen und bricht vorher ab.",
+    "Diese Erklaerung wird vom Uploader nicht gelesen. Alles andere in dieser Datei schon."
+  ],
+  "immer": ["Krypto", "Crypto", "Shorts"],
+  "gruppen": [
+    {
+      "name": "Bitcoin",
+      "stichwoerter": ["Bitcoin", "BTC"],
+      "hashtags": ["Bitcoin", "BTC"]
+    },
+    {
+      "name": "XRP",
+      "stichwoerter": ["XRP", "Ripple"],
+      "hashtags": ["XRP", "Ripple"]
+    },
+    {
+      "name": "Hyperliquid",
+      "stichwoerter": ["Hyperliquid", "HYPE"],
+      "hashtags": ["Hyperliquid", "HYPE"]
+    },
+    {
+      "name": "Wyckoff",
+      "stichwoerter": ["Wyckoff"],
+      "hashtags": ["Wyckoff"]
+    }
+  ]
+}

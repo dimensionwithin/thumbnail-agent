@@ -24,7 +24,8 @@
     "members:list-old": "node src/publish/list-old-members-only.js",
     "shorts:lesen": "node src/upload/uebergabe-leser.js",
     "shorts:freigabe": "node src/upload/freigabe-server.js",
-    "shorts:planen": "node src/upload/planer.js"
+    "shorts:planen": "node src/upload/planer.js",
+    "shorts:hochladen": "node src/upload/uploader.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

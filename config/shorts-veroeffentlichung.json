@@ -1,0 +1,14 @@
+{
+  "erklaerung": [
+    "Die Felder, die fuer ALLE Shorts gleich sind. Der Uploader sendet sie bei jedem videos.insert mit.",
+    "categoryId: YouTube-Kategorie als Zahl in Anfuehrungszeichen. 27 = Bildung (Education), so stehen die bestehenden Videos des Kanals (am 2026-09-01 an fuenf oeffentlichen Videos nachgesehen). 22 waere 'Menschen & Blogs', 28 'Wissenschaft & Technik'.",
+    "defaultLanguage: Sprache von Titel und Beschreibung (BCP-47, z. B. 'de'). defaultAudioLanguage: gesprochene Sprache im Video ('de-DE'). Beide Werte wie bei den bestehenden Videos des Kanals.",
+    "selfDeclaredMadeForKids: false heisst 'nicht fuer Kinder'. Muss bei jedem Upload angegeben werden; ohne Angabe legt YouTube es selbst fest.",
+    "privacyStatus steht NICHT hier. Er ist im Uploader fest auf 'private' verdrahtet und laesst sich in keiner Datei und mit keinem Argument aendern. Oeffentlich wird das Video allein ueber publishAt aus dem Plan.",
+    "Diese Erklaerung wird vom Uploader nicht gelesen. Alle anderen Felder muessen vorhanden sein; unbekannte Felder sind ein Fehler."
+  ],
+  "categoryId": "27",
+  "defaultLanguage": "de",
+  "defaultAudioLanguage": "de-DE",
+  "selfDeclaredMadeForKids": false
+}

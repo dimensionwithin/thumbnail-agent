@@ -610,7 +610,31 @@ function selbstpruefung() {
 // Blindheit. Deshalb steht neben jedem Eintrag auch, warum er wegfaellt.
 function porcelainDateien() {
   const roh = execSync('git status --porcelain --untracked-files=all', { encoding: 'utf8' });
-  const zeilen = roh.split('\n').filter((z) => z.length > 3);
+
+  // DQ Punkt 4: Bis hierher stand an dieser Stelle
+  //     .filter((z) => z.length > 3)
+  // ohne Zaehler und ohne Meldung. Der Filter ist richtig -- eine Porcelain-
+  // Zeile ist "XY pfad" und damit mindestens vier Zeichen lang -- aber er hat
+  // NICHT gesagt, was er wegwirft. Dieselbe Regel wie in DFa Punkt 2 und ein
+  // paar Zeilen weiter unten: was eine Pruefung nicht ansieht, muss sie beim
+  // Namen nennen, sonst liest sich ihr Ergebnis vollstaendiger, als es ist.
+  //
+  // Die LEERE Schlusszeile ist die einzige Ausnahme, und sie ist eine echte:
+  // split('\n') erzeugt sie bei jedem Lauf, sie traegt keine Information, und
+  // sie in jedem Lauf zu melden wuerde die Meldung entwerten, auf die es
+  // ankommt. Alles andere Kurze wird genannt -- auch wenn es heute nie kommt.
+  const zeilen = [];
+  const zuKurz = [];
+  for (const z of roh.split('\n')) {
+    if (z.length > 3) zeilen.push(z);
+    else if (z.trim() !== '') zuKurz.push(z);
+  }
+  if (zuKurz.length > 0) {
+    console.log(`Hinweis: ${zuKurz.length} Zeile(n) aus git status sind zu kurz fuer ` +
+      `"XY pfad" und werden nicht geprueft:`);
+    for (const z of zuKurz) console.log(`  ${JSON.stringify(z)} (${z.length} Zeichen)`);
+    console.log('');
+  }
 
   const dateien = [];
   const uebersprungen = [];
@@ -643,9 +667,38 @@ function porcelainDateien() {
 // Das Commit-Gate bleibt auf dem Porcelain-Lauf. Dieser hier ist zusaetzlich:
 // er sieht auch an, was laengst committet ist und deshalb nie wieder geprueft
 // wird. -z, damit Pfade mit Leerzeichen nicht zerfallen.
+//
+// DQ Punkt 4: auch hier wurde still gekuerzt. Der Filter
+//     .filter((f) => fs.existsSync(f) && fs.statSync(f).isFile())
+// warf jeden Eintrag weg, den git kennt und die Platte nicht -- geloescht und
+// noch nicht committet, ein Symlink ins Leere, ein nicht ausgecheckter
+// Submodul-Pfad -- und sagte darueber kein Wort. Der Vollbaum-Lauf meldete
+// dann "Zu pruefende Dateien: N" mit einem N, das kleiner war als das, was
+// git ls-files genannt hatte, und niemand konnte die Differenz sehen.
+// Dieselbe Regel wie in porcelainDateien(): nennen, was wegfaellt, und warum.
 function vollbaumDateien() {
   const roh = execSync('git ls-files -z', { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  return roh.split('\0').filter(Boolean).filter((f) => fs.existsSync(f) && fs.statSync(f).isFile());
+  const alle = roh.split('\0').filter(Boolean);
+
+  const dateien = [];
+  const uebersprungen = [];
+  for (const f of alle) {
+    if (!fs.existsSync(f)) {
+      uebersprungen.push({ f, grund: 'von git gefuehrt, aber nicht auf der Platte' });
+    } else if (!fs.statSync(f).isFile()) {
+      uebersprungen.push({ f, grund: 'keine regulaere Datei -- Inhalt NICHT geprueft' });
+    } else {
+      dateien.push(f);
+    }
+  }
+
+  if (uebersprungen.length > 0) {
+    console.log(`Hinweis: ${uebersprungen.length} von ${alle.length} Eintraegen aus ` +
+      `git ls-files werden nicht geprueft:`);
+    for (const u of uebersprungen) console.log(`  ${u.f} -- ${u.grund}`);
+    console.log('');
+  }
+  return dateien;
 }
 
 function main() {

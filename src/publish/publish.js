@@ -28,6 +28,20 @@ const readline = require('readline');
 const { darfThumbnailGesetztWerden, sperreShortsOderWirf } = require('./short-guard');
 const { pruefeArgumenteStrikt, TROCKENLAUF_FLAG } = require('./cli-args');
 
+// DQ Punkt 1: pruefeKeineFreienArgumente kommt aus dem Leser und ist NICHT
+// nachgebaut -- es gibt sie dort seit DJb, mit dem Flagnamen als Parameter.
+//
+// URSACHE: unbekannteArgumente in cli-args.js filtert auf startsWith('-').
+// Ein FREIES Argument beginnt nicht mit '-' und ist dieser Pruefung damit
+// unsichtbar. Gemessen in DQ:
+//     node src/publish/publish.js --nur-pruefen quatsch-frei
+// lief durch, ohne das freie Argument mit einem Wort zu erwaehnen. Das ist
+// hier teurer als anderswo: publish.js ist eines der beiden Skripte dieses
+// Projekts, die auf YouTube SCHREIBEN. Wer einen Pfad mit Leerzeichen ohne
+// Anfuehrungszeichen tippt, verliert den zweiten Teil lautlos und laeuft
+// gegen eine andere Datei als gemeint.
+const { pruefeKeineFreienArgumente } = require('../upload/uebergabe-leser');
+
 // CY: Jedes Argument, das hier nicht steht, bricht den Lauf ab (Exit 2).
 const ERLAUBTE_ARGUMENTE = ['--execute', '--yes', TROCKENLAUF_FLAG,
   '--in=', '--thumbs=', '--backups=', '--batch=', '--delay=', '--only='];
@@ -106,6 +120,7 @@ async function buildPlan(targets, manifest, doneSet, thumbsDir) {
 async function main() {
   // CY: VOR allem anderen -- kein Netzaufruf, kein Schreibzugriff davor.
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/publish/publish.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/publish/publish.js', '--in=');
   const args = parseArgs(process.argv);
   if (args.nurPruefen && args.execute) {
     console.error(`Abbruch: ${TROCKENLAUF_FLAG} und --execute schliessen einander aus.`);

@@ -27,6 +27,14 @@ const readline = require('readline');
 const { darfThumbnailGesetztWerden, sperreShortsOderWirf } = require('./short-guard');
 const { pruefeArgumenteStrikt, TROCKENLAUF_FLAG } = require('./cli-args');
 
+// DQ Punkt 1: derselbe Grund wie in publish.js, und dieselbe Funktion aus dem
+// Leser -- importiert, nicht nachgebaut. unbekannteArgumente sieht nur, was
+// mit '-' beginnt; ein freies Argument faellt hindurch. Gemessen in DQ:
+//     node src/publish/restore.js --nur-pruefen quatsch-frei
+// lief kommentarlos durch. restore.js SCHREIBT auf YouTube (thumbnails.set),
+// darum steht die Pruefung hier und nicht nur im Kopfkommentar.
+const { pruefeKeineFreienArgumente } = require('../upload/uebergabe-leser');
+
 // CY: Jedes Argument, das hier nicht steht, bricht den Lauf ab (Exit 2).
 const ERLAUBTE_ARGUMENTE = ['--execute', '--yes', TROCKENLAUF_FLAG,
   '--backups=', '--only=', '--batch=', '--delay='];
@@ -96,6 +104,7 @@ async function buildPlan(manifest, only, doneSet) {
 async function main() {
   // CY: VOR allem anderen -- kein Netzaufruf, kein Schreibzugriff davor.
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/publish/restore.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/publish/restore.js', '--backups=');
   const args = parseArgs(process.argv);
   if (args.nurPruefen && args.execute) {
     console.error(`Abbruch: ${TROCKENLAUF_FLAG} und --execute schliessen einander aus.`);

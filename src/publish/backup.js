@@ -15,6 +15,32 @@
 //   --in=PATH     decisions.json (Default: data/decisions.json, sonst fixtures/…sample).
 //   --out=DIR     Backup-Verzeichnis (Default: backups).
 
+// DQ Punkt 3: backup.js band cli-args nicht ein -- als einziges der Skripte,
+// die mit echten Zugangsdaten ins Netz gehen.
+//
+// GEMESSEN (ueber parseArgs, ohne Lauf -- wie in DE-E1):
+//   --dry-run  -> dryRun=true   -> MOCK
+//   --dryrun   -> dryRun=false  -> LIVE, echter Netzaufruf mit echten Zugangsdaten
+//   --dry_run  -> dryRun=false  -> LIVE
+// Der Grund ist derselbe wie ueberall in diesem Projekt: die parseArgs-Schleife
+// ist eine if/else-Kette ohne else-Zweig. Was sie nicht kennt, faellt hinten
+// heraus. Bei einem Flag, dessen ganzer Zweck "kein Netz" ist, kehrt der
+// Tippfehler die Bedeutung um: aus "kein Netz" wird "Netz".
+//
+// pruefeArgumenteStrikt steht darum als ALLERERSTE Anweisung -- vor dotenv, vor
+// jedem require, vor jedem Lesen. pruefeKeineFreienArgumente kommt aus dem
+// Leser und ist NICHT nachgebaut; sie faengt, was startsWith('-') nicht sieht:
+// ein freies Argument haette hier genauso still zu einem LIVE-Lauf gefuehrt.
+const { pruefeArgumenteStrikt } = require('./cli-args');
+const { pruefeKeineFreienArgumente } = require('../upload/uebergabe-leser');
+
+const ERLAUBTE_ARGUMENTE = ['--dry-run', '--in=', '--out='];
+
+if (require.main === module) {
+  pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/publish/backup.js');
+  pruefeKeineFreienArgumente(process.argv, 'src/publish/backup.js', '--in=');
+}
+
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');

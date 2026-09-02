@@ -674,7 +674,7 @@ test('Trockenlauf schreibt nichts, --execute schreibt, und ein Plan wird nie ers
   fs.mkdirSync(path.dirname(freigabe), { recursive: true });
   fs.writeFileSync(freigabe, JSON.stringify(d, null, 2) + '\n', 'utf8');
   try {
-    const jetzt = '--jetzt=2026-09-01T17:00:00+02:00';
+    const jetzt = '--jetzt=2035-06-06T17:00:00+02:00';
 
     // 1. Trockenlauf: gibt aus, legt nichts an.
     const trocken = spawnSync(process.execPath, [SKRIPT, '--freigabe=' + probe, jetzt],
@@ -999,7 +999,11 @@ test('DOa: der Kommentar zu 1d steht im Quelltext, nicht nur im Bericht', () => 
 // laeuft das Programm wirklich, mit Dateien, die dieser Test selbst anlegt und
 // wieder wegraeumt.
 
-function mitProbe(name, n, gedaechtnisEintraege, fn) {
+// DS: fremde ist eine Liste [{aufnahme, termine:[iso...]}]. Diese
+// Gedaechtnisdateien gehoeren NICHT zur geplanten Aufnahme -- sie sind der
+// Grund, warum es DS gibt: der Planer muss sie trotzdem sehen. Sie werden
+// angelegt und im finally wieder weggeraeumt, wie alles andere hier auch.
+function mitProbe(name, n, gedaechtnisEintraege, fn, fremde = []) {
   const freigabe = P.freigabePfad(WURZEL, name);
   const plan = P.planPfad(WURZEL, name);
   const ged = P.gedaechtnisPfad(WURZEL, name);
@@ -1012,9 +1016,18 @@ function mitProbe(name, n, gedaechtnisEintraege, fn) {
     fs.mkdirSync(path.dirname(ged), { recursive: true });
     fs.writeFileSync(ged, gedaechtnisMit(gedaechtnisEintraege, name), 'utf8');
   }
+  const fremdePfade = [];
+  for (const f of fremde) {
+    const p = P.gedaechtnisPfad(WURZEL, f.aufnahme);
+    assert.ok(!fs.existsSync(p), 'die fremde Wegwerf-Aufnahme gibt es schon: ' + p);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, f.text !== undefined ? f.text : gedaechtnisDatei(f.aufnahme, f.termine).text,
+      'utf8');
+    fremdePfade.push(p);
+  }
   const vorher = fs.readFileSync(freigabe, 'utf8');
   try {
-    fn({ freigabe, plan, ged });
+    fn({ freigabe, plan, ged, fremdePfade });
     // 1d, gemessen: die Freigabedatei ist nach jedem Lauf Byte fuer Byte die
     // alte. Das ist die einzige Pruefung, die einen stillen Vermerk faende.
     assert.equal(fs.readFileSync(freigabe, 'utf8'), vorher,
@@ -1023,13 +1036,14 @@ function mitProbe(name, n, gedaechtnisEintraege, fn) {
     fs.rmSync(freigabe, { force: true });
     fs.rmSync(plan, { force: true });
     fs.rmSync(ged, { force: true });
+    for (const p of fremdePfade) fs.rmSync(p, { force: true });
   }
 }
 
 test('DOa (CLI): drei im Gedaechtnis -- neun Termine, drei einzeln genannt', () => {
   mitProbe('2000-04-04 04-04-04', 12, 3, ({ plan }) => {
     const r = spawnSync(process.execPath,
-      [SKRIPT, '--freigabe=2000-04-04 04-04-04', '--jetzt=2026-09-01T17:00:00+02:00', '--execute'],
+      [SKRIPT, '--freigabe=2000-04-04 04-04-04', '--jetzt=2035-06-06T17:00:00+02:00', '--execute'],
       { encoding: 'utf8' });
     assert.equal(r.status, P.EXIT_OK, r.stderr);
     const d = JSON.parse(fs.readFileSync(plan, 'utf8'));
@@ -1049,7 +1063,7 @@ test('DOa (CLI): alles im Gedaechtnis -- kein Plan, keine leere Datei, Klartext'
   mitProbe('2000-05-05 05-05-05', 12, 12, ({ plan }) => {
     for (const args of [[], ['--execute']]) {
       const r = spawnSync(process.execPath,
-        [SKRIPT, '--freigabe=2000-05-05 05-05-05', '--jetzt=2026-09-01T17:00:00+02:00', ...args],
+        [SKRIPT, '--freigabe=2000-05-05 05-05-05', '--jetzt=2035-06-06T17:00:00+02:00', ...args],
         { encoding: 'utf8' });
       assert.equal(r.status, P.EXIT_MANGEL, JSON.stringify(args) + ': ' + r.stdout + r.stderr);
       assert.match(r.stdout, /KEIN PLAN: alle freigegebenen Shorts/);
@@ -1068,7 +1082,7 @@ test('DOa (CLI): alles im Gedaechtnis -- kein Plan, keine leere Datei, Klartext'
 test('DOa (CLI): ohne Gedaechtnis bleibt alles, wie es war', () => {
   mitProbe('2000-06-06 06-06-06', 12, 0, ({ plan }) => {
     const r = spawnSync(process.execPath,
-      [SKRIPT, '--freigabe=2000-06-06 06-06-06', '--jetzt=2026-09-01T17:00:00+02:00', '--execute'],
+      [SKRIPT, '--freigabe=2000-06-06 06-06-06', '--jetzt=2035-06-06T17:00:00+02:00', '--execute'],
       { encoding: 'utf8' });
     assert.equal(r.status, P.EXIT_OK, r.stderr);
     const d = JSON.parse(fs.readFileSync(plan, 'utf8'));
@@ -1078,6 +1092,415 @@ test('DOa (CLI): ohne Gedaechtnis bleibt alles, wie es war', () => {
     assert.equal(d.gedaechtnis_sha256, null);
     assert.equal(d.fenster.abstand_minuten, 55.38);
   });
+});
+
+
+// ---------------------------------------------------------------------------
+// DS: DER ANSCHLUSS -- DER PLANER KENNT ALLE AUSSTEHENDEN TERMINE
+// ---------------------------------------------------------------------------
+//
+// Der Fehler, gegen den dieser Abschnitt steht, sieht aus wie ein richtiger
+// Plan: zwoelf Zeilen, aufsteigende Uhrzeiten, plausible Abstaende -- und er
+// legt sich ueber Termine, die auf dem Kanal schon vergeben sind. Geprueft wird
+// deshalb beides: DASS angeschlossen wird, und dass ohne ausstehende Termine
+// nichts anders ist als vorher.
+
+// Eine Gedaechtnisdatei einer beliebigen Aufnahme, in der Form, die
+// leseGedaechtnisverzeichnis liefert. Die videoIds sind erfunden und ohne
+// Bezug zu irgendeinem Kanal.
+function gedaechtnisDatei(aufnahme, termine) {
+  const uploads = termine.map((iso, i) => ({
+    sha256: crypto.createHash('sha256').update(aufnahme + '#' + i).digest('hex'),
+    kennung: aufnahme + '/t' + (i + 1),
+    videoId: 'PROBE-ohne-Bezug-' + i,
+    hochgeladen_am: '2026-09-01T10:00:00.000Z',
+    publish_at: iso,
+    titel: 'Probe ' + (i + 1),
+  }));
+  const text = JSON.stringify({
+    artifact_type: 'adw_shorts_uploads',
+    schema_version: '1.0',
+    aufnahme,
+    plan_datei: 'data/plaene/' + aufnahme + '.json',
+    plan_sha256: crypto.createHash('sha256').update('plan#' + aufnahme).digest('hex'),
+    angelegt_am: '2026-09-01T10:00:00.000Z',
+    zuletzt_geschrieben_am: '2026-09-01T12:00:00.000Z',
+    uploads,
+  }, null, 2) + '\n';
+  return {
+    aufnahme,
+    datei: 'data/uploads/' + aufnahme + '.json',
+    pfad: path.join(WURZEL, 'data', 'uploads', aufnahme + '.json'),
+    text,
+  };
+}
+
+// Die zwoelf Termine, die am 02.09.2026 wirklich auf dem Kanal standen -- die
+// Lage, an der DS gemessen wurde. Sie stehen hier als Zahlen und nicht als
+// Verweis auf data/uploads: dieser Test soll in einem Jahr noch dasselbe
+// messen, auch wenn dort laengst etwas anderes liegt.
+const ECHTE_LAGE = [
+  '2026-09-02T10:48:00.000Z', '2026-09-02T11:43:00.000Z', '2026-09-02T12:39:00.000Z',
+  '2026-09-02T13:34:00.000Z', '2026-09-02T14:30:00.000Z', '2026-09-02T15:25:00.000Z',
+  '2026-09-02T16:20:00.000Z', '2026-09-02T17:16:00.000Z', '2026-09-03T06:11:00.000Z',
+  '2026-09-03T07:07:00.000Z', '2026-09-03T08:02:00.000Z', '2026-09-03T08:57:00.000Z',
+];
+
+test('DS: der Startpunkt ist das spaetere von jetzt und dem letzten ausstehenden Termin', () => {
+  const jetzt = Date.parse('2026-09-02T16:44:00+02:00');   // = 14:44 UTC
+  const dateien = [gedaechtnisDatei('2026-08-31 17-36-21', ECHTE_LAGE)];
+  const g = P.sammleAusstehende(dateien, jetzt);
+  assert.deepEqual(g.fehler, []);
+  assert.equal(g.termine_gesamt, 12, 'nicht alle Termine wurden angesehen');
+  // Fuenf liegen vor 14:44 UTC -- die sind veroeffentlicht und zaehlen nicht.
+  assert.equal(g.ausstehend.length, 7);
+  assert.equal(g.ausstehend[0].publish_at, '2026-09-02T15:25:00.000Z');
+  assert.equal(g.ausstehend[6].publish_at, '2026-09-03T08:57:00.000Z');
+  // Und sie sind aufsteigend sortiert, egal wie sie in der Datei standen.
+  for (let i = 1; i < g.ausstehend.length; i++) {
+    assert.ok(g.ausstehend[i].ms > g.ausstehend[i - 1].ms);
+  }
+
+  const st = P.bestimmeStartpunkt(jetzt, g.ausstehend);
+  assert.equal(st.grund, 'ausstehender_termin');
+  assert.equal(new Date(st.startpunkt).toISOString(), '2026-09-03T08:57:00.000Z');
+  assert.equal(st.anker.aufnahme, '2026-08-31 17-36-21');
+  assert.equal(st.anker.kennung, '2026-08-31 17-36-21/t12');
+});
+
+test('DS: N1 -- kein neuer Termin liegt vor dem letzten alten, und der Abstand ist derselbe', () => {
+  const jetzt = Date.parse('2026-09-02T16:44:00+02:00');
+  const dateien = [gedaechtnisDatei('2026-08-31 17-36-21', ECHTE_LAGE)];
+  const g = P.sammleAusstehende(dateien, jetzt);
+  const e = P.planeAufnahme({
+    aufnahme: '2026-09-02 12-10-37',
+    freigabeText: freigabeText('2026-09-02 12-10-37'),
+    planungszeitpunkt: jetzt, vorgegeben: true, jetzt,
+    ausstehende: g.ausstehend,
+    gedaechtnisdateien: dateien.map((d) => d.datei),
+  });
+  assert.deepEqual(e.fehler, [], 'der Plan kam nicht zustande');
+  const p = e.plan;
+
+  // Neun freigegebene Shorts -- nicht zehn. Steht die Zahl hier falsch, ist
+  // jede Erwartung an Abstand und Uhrzeit unten ebenfalls falsch.
+  assert.equal(p.freigaben_geplant, 9);
+
+  const anker = Date.parse('2026-09-03T08:57:00.000Z');
+  assert.equal(Date.parse(p.fenster.beginn), anker);
+  assert.equal(Date.parse(p.fenster.ende), anker + P.VORLAUF_MS);
+  assert.equal(p.fenster.nutzbare_minuten, 720);
+  assert.equal(p.fenster.abstand_minuten, 72);          // 720 / (9 + 1)
+
+  // KEIN Termin liegt vor dem letzten ausstehenden.
+  for (const t of p.termine) {
+    assert.ok(Date.parse(t.publish_at) > anker,
+      t.kennung + ' liegt nicht nach dem letzten ausstehenden Termin');
+  }
+  // Und der Abstand ueber die Naht ist derselbe wie im Plan.
+  const schritte = [Date.parse(p.termine[0].publish_at) - anker];
+  for (let i = 1; i < p.termine.length; i++) {
+    schritte.push(Date.parse(p.termine[i].publish_at) - Date.parse(p.termine[i - 1].publish_at));
+  }
+  // Innerhalb eines Abschnitts sind es 72 Minuten; ueber die Nacht hinweg ist
+  // die Uhrzeit groesser, die NUTZBARE Zeit aber dieselbe. Geprueft wird
+  // deshalb: jeder Schritt ist mindestens 72 Minuten, und der ueber die Naht
+  // ist genau 72 -- der Anker liegt im Tagesfenster.
+  assert.equal(schritte[0], 72 * P.MINUTE_MS);
+  for (const sch of schritte) assert.ok(sch >= 72 * P.MINUTE_MS);
+
+  // Der Kopf sagt, woran angeschlossen wurde -- ohne dass jemand nachrechnet.
+  assert.equal(p.anschluss.grund, 'ausstehender_termin');
+  assert.equal(p.anschluss.ausstehende_termine_gesamt, 7);
+  assert.equal(p.anschluss.ausstehende_termine.length, 7);
+  assert.equal(p.anschluss.letzter_ausstehender.aufnahme, '2026-08-31 17-36-21');
+  assert.equal(p.anschluss.letzter_ausstehender.publish_at, '2026-09-03T08:57:00.000Z');
+  assert.deepEqual(p.anschluss.gelesene_gedaechtnisdateien,
+    ['data/uploads/2026-08-31 17-36-21.json']);
+  // Und keine videoId, nirgends.
+  assert.ok(!/videoId|PROBE-ohne-Bezug/.test(JSON.stringify(p) + P.formatiere(p)));
+});
+
+test('DS: N2 -- ohne ausstehende Termine bleibt der Plan der von DN', () => {
+  const e = plane('2026-09-01T17:00:00+02:00');
+  const p = e.plan;
+  assert.equal(p.anschluss.grund, 'jetzt');
+  assert.equal(p.anschluss.letzter_ausstehender, null);
+  assert.equal(p.anschluss.ausstehende_termine_gesamt, 0);
+  assert.deepEqual(p.anschluss.ausstehende_termine, []);
+  assert.equal(p.fenster.beginn, p.planungszeitpunkt);
+  assert.equal(p.fenster.nutzbare_minuten, 720);
+  assert.equal(p.fenster.abstand_minuten, 55.38);
+  // Die zwoelf Zeitstempel, die DN gerechnet hat -- ausgeschrieben, damit der
+  // Vergleich nicht an derselben Rechnung haengt, die er pruefen soll.
+  assert.deepEqual(p.termine.map((t) => t.publish_at), [
+    '2026-09-01T15:55:00.000Z', '2026-09-01T16:50:00.000Z', '2026-09-01T17:46:00.000Z',
+    '2026-09-02T06:41:00.000Z', '2026-09-02T07:36:00.000Z', '2026-09-02T08:32:00.000Z',
+    '2026-09-02T09:27:00.000Z', '2026-09-02T10:23:00.000Z', '2026-09-02T11:18:00.000Z',
+    '2026-09-02T12:13:00.000Z', '2026-09-02T13:09:00.000Z', '2026-09-02T14:04:00.000Z',
+  ]);
+});
+
+test('DS: N3 -- liegen alle Termine in der Vergangenheit, ist der Startpunkt jetzt', () => {
+  const jetzt = Date.parse('2026-09-10T17:00:00+02:00');
+  const dateien = [gedaechtnisDatei('2026-08-31 17-36-21', ECHTE_LAGE)];
+  const g = P.sammleAusstehende(dateien, jetzt);
+  assert.deepEqual(g.fehler, []);
+  assert.equal(g.termine_gesamt, 12);
+  assert.deepEqual(g.ausstehend, [], 'ein vergangener Termin gilt als ausstehend');
+
+  const st = P.bestimmeStartpunkt(jetzt, g.ausstehend);
+  assert.equal(st.grund, 'jetzt');
+  assert.equal(st.startpunkt, jetzt);
+  assert.equal(st.anker, null);
+
+  // Der Plan ist derselbe wie ohne jedes Gedaechtnis -- nicht der, der beim
+  // letzten VERGANGENEN Termin ansetzt.
+  const felder = { aufnahme: AUFNAHME, freigabeText: freigabeText(),
+    planungszeitpunkt: jetzt, vorgegeben: true, jetzt };
+  const mit = P.planeAufnahme(Object.assign({}, felder, {
+    ausstehende: g.ausstehend, gedaechtnisdateien: dateien.map((d) => d.datei) }));
+  const ohne = P.planeAufnahme(felder);
+  assert.deepEqual(mit.plan.termine, ohne.plan.termine);
+  assert.equal(mit.plan.fenster.beginn, new Date(jetzt).toISOString());
+});
+
+test('DS: N4 -- ein ausstehender Termin um 23:30 zieht das Fenster auf 23:30', () => {
+  const jetzt = Date.parse('2026-09-02T16:00:00+02:00');
+  // 23:30 Ortszeit im Sommer = 21:30 UTC.
+  const dateien = [gedaechtnisDatei('2026-08-30 12-00-00', ['2026-09-02T21:30:00.000Z'])];
+  const g = P.sammleAusstehende(dateien, jetzt);
+  assert.equal(g.ausstehend.length, 1);
+  assert.equal(g.ausstehend[0].publish_at_ortszeit, '2026-09-02 23:30 (UTC+02:00)');
+
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(6),
+    planungszeitpunkt: jetzt, vorgegeben: true, jetzt,
+    ausstehende: g.ausstehend, gedaechtnisdateien: dateien.map((d) => d.datei),
+  });
+  assert.deepEqual(e.fehler, []);
+  const p = e.plan;
+  // Das 24-Stunden-Fenster laeuft ab 23:30 -- nicht ab dem naechsten Morgen.
+  assert.equal(p.fenster.beginn, '2026-09-02T21:30:00.000Z');
+  assert.equal(p.fenster.ende, '2026-09-03T21:30:00.000Z');
+  // Nutzbar ist davon nur der 03.09., 08:00 bis 20:00.
+  assert.deepEqual(p.fenster.abschnitte.map((a) => a.datum), ['2026-09-03']);
+  assert.equal(p.fenster.abschnitte[0].von_ortszeit.slice(11, 16), '08:00');
+  assert.equal(p.fenster.abschnitte[0].bis_ortszeit.slice(11, 16), '20:00');
+  assert.equal(p.fenster.nutzbare_minuten, 720);
+  // Und kein Termin faellt in die Nacht.
+  for (const t of p.termine) {
+    const min = P.ortsminuten(Date.parse(t.publish_at));
+    assert.ok(min >= P.TAGESFENSTER_VON_MIN && min <= P.TAGESFENSTER_BIS_MIN,
+      t.publish_at_ortszeit + ' liegt ausserhalb des Tagesfensters');
+  }
+});
+
+test('DS: N5 -- eine unlesbare Gedaechtnisdatei bricht ab, mit Nennung der Datei', () => {
+  const jetzt = Date.parse('2026-09-02T16:44:00+02:00');
+  const gut = gedaechtnisDatei('2026-08-31 17-36-21', ECHTE_LAGE);
+  const kaputt = { aufnahme: '2026-08-30 12-00-00',
+    datei: 'data/uploads/2026-08-30 12-00-00.json',
+    pfad: '/w/data/uploads/2026-08-30 12-00-00.json', text: '{kaputt' };
+  const g = P.sammleAusstehende([gut, kaputt], jetzt);
+  assert.ok(g.fehler.length >= 1, 'eine kaputte Datei wurde uebergangen');
+  assert.ok(g.fehler[0].startsWith('data/uploads/2026-08-30 12-00-00.json -- '),
+    'die Meldung nennt die Datei nicht: ' + g.fehler[0]);
+  assert.match(g.fehler[0], /kein JSON/);
+  // Und es kommt KEINE Liste ausstehender Termine heraus, die dann nach
+  // "nichts ausstehend" aussaehe.
+  assert.equal(g.ausstehend, undefined);
+
+  // Ein Eintrag ohne publish_at ist genauso wenig lesbar: ohne ihn ist nicht zu
+  // sagen, ob dieser Upload noch aussteht.
+  const ohneZeit = JSON.parse(gut.text);
+  delete ohneZeit.uploads[3].publish_at;
+  const g2 = P.sammleAusstehende(
+    [Object.assign({}, gut, { text: JSON.stringify(ohneZeit) })], jetzt);
+  assert.ok(g2.fehler.some((f) => /publish_at ist kein Zeitstempel/.test(f)), g2.fehler.join(' | '));
+
+  // Auf der Platte: eine Datei, die sich nicht lesen laesst (hier ein
+  // Verzeichnis mit dem Namen einer Gedaechtnisdatei -- EISDIR).
+  const verz = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'ds-uploads-'));
+  try {
+    fs.mkdirSync(path.join(verz, '2026-01-01 00-00-00.json'));
+    const v = P.leseGedaechtnisverzeichnis(verz);
+    assert.equal(v.dateien, undefined);
+    assert.equal(v.fehler.length, 1);
+    assert.match(v.fehler[0], /2026-01-01 00-00-00\.json/);
+    assert.match(v.fehler[0], /nicht lesbar \(EISDIR\)/);
+
+    // Eine .json-Datei, deren Name keine Aufnahme ist, wird ebenfalls nicht
+    // uebergangen -- es koennte ein Gedaechtnis darin stehen.
+    fs.rmSync(path.join(verz, '2026-01-01 00-00-00.json'), { recursive: true });
+    fs.writeFileSync(path.join(verz, 'notizen.json'), '{}', 'utf8');
+    const v2 = P.leseGedaechtnisverzeichnis(verz);
+    assert.equal(v2.dateien, undefined);
+    assert.match(v2.fehler[0], /notizen\.json/);
+    assert.match(v2.fehler[0], /nicht die Form/);
+
+    // Was nicht auf .json endet, wird uebergangen: so heissen die
+    // Temporaerdateien des atomaren Schreibens.
+    fs.rmSync(path.join(verz, 'notizen.json'));
+    fs.writeFileSync(path.join(verz, '.2026-01-01 00-00-00.json.tmp.4711.1'), 'halb', 'utf8');
+    const v3 = P.leseGedaechtnisverzeichnis(verz);
+    assert.deepEqual(v3.fehler, []);
+    assert.deepEqual(v3.dateien, []);
+  } finally {
+    fs.rmSync(verz, { recursive: true, force: true });
+  }
+
+  // Kein Verzeichnis heisst: noch nie etwas hochgeladen. Kein Mangel.
+  const nie = P.leseGedaechtnisverzeichnis(
+    path.join(WURZEL, 'data', 'uploads-gibt-es-nicht'));
+  assert.deepEqual(nie, { fehler: [], dateien: [] });
+});
+
+test('DS: N6 -- die eigene Aufnahme wird uebersprungen UND zaehlt als ausstehend', () => {
+  const jetzt = Date.parse('2026-09-02T16:44:00+02:00');
+  // Drei Shorts der EIGENEN Aufnahme sind hochgeladen; ihre Termine liegen in
+  // der Zukunft. Beides muss gelten: sie bekommen keinen zweiten Termin, und
+  // der Plan setzt hinter ihrem letzten an.
+  const eigenes = gedaechtnisMit(3, AUFNAHME);
+  const g = JSON.parse(eigenes);
+  g.uploads[0].publish_at = '2026-09-02T15:00:00.000Z';
+  g.uploads[1].publish_at = '2026-09-02T16:00:00.000Z';
+  g.uploads[2].publish_at = '2026-09-02T17:00:00.000Z';
+  const text = JSON.stringify(g, null, 2) + '\n';
+  const dateien = [{ aufnahme: AUFNAHME, datei: 'data/uploads/' + AUFNAHME + '.json',
+    pfad: path.join(WURZEL, 'data', 'uploads', AUFNAHME + '.json'), text }];
+  const gesammelt = P.sammleAusstehende(dateien, jetzt);
+  assert.equal(gesammelt.ausstehend.length, 3);
+
+  const e = P.planeAufnahme({
+    aufnahme: AUFNAHME, freigabeText: freigabeMit(12), gedaechtnisText: text,
+    planungszeitpunkt: jetzt, vorgegeben: true, jetzt,
+    ausstehende: gesammelt.ausstehend, gedaechtnisdateien: dateien.map((d) => d.datei),
+  });
+  assert.deepEqual(e.fehler, []);
+  const p = e.plan;
+  // uebersprungen: dieselben drei wie vor DS.
+  assert.equal(p.freigaben_uebersprungen, 3);
+  assert.equal(p.termine.length, 9);
+  for (const u of p.uebersprungen_hochgeladen) {
+    assert.ok(!p.termine.some((t) => t.sha256 === u.sha256),
+      u.kennung + ' hat trotzdem einen Termin bekommen');
+  }
+  // ausstehend: ihr spaetester Termin ist der Anker.
+  assert.equal(p.anschluss.grund, 'ausstehender_termin');
+  assert.equal(p.anschluss.letzter_ausstehender.aufnahme, AUFNAHME);
+  assert.equal(p.anschluss.letzter_ausstehender.publish_at, '2026-09-02T17:00:00.000Z');
+  assert.equal(p.fenster.beginn, '2026-09-02T17:00:00.000Z');
+  for (const t of p.termine) {
+    assert.ok(Date.parse(t.publish_at) > Date.parse('2026-09-02T17:00:00.000Z'));
+  }
+});
+
+test('DS: die Nachpruefung faellt auf, wenn ein Termin auf dem letzten alten liegt', () => {
+  const jetzt = Date.parse('2026-09-02T16:44:00+02:00');
+  const dateien = [gedaechtnisDatei('2026-08-31 17-36-21', ECHTE_LAGE)];
+  const g = P.sammleAusstehende(dateien, jetzt);
+  const e = P.planeAufnahme({
+    aufnahme: '2026-09-02 12-10-37', freigabeText: freigabeText('2026-09-02 12-10-37'),
+    planungszeitpunkt: jetzt, vorgegeben: true, jetzt,
+    ausstehende: g.ausstehend, gedaechtnisdateien: dateien.map((d) => d.datei),
+  });
+  const anfang = Date.parse(e.plan.fenster.beginn);
+  // Sauber: die Nachpruefung schweigt.
+  assert.deepEqual(P.pruefePlan(e.plan, anfang), []);
+
+  // Verbogen: ein Termin genau auf dem letzten ausstehenden.
+  const kaputt = JSON.parse(JSON.stringify(e.plan));
+  kaputt.termine[0].publish_at = '2026-09-03T08:57:00.000Z';
+  kaputt.termine[0].publish_at_ortszeit = P.ortszeitText(Date.parse('2026-09-03T08:57:00.000Z'));
+  assert.ok(P.pruefePlan(kaputt, anfang)
+    .some((x) => /nicht nach dem letzten ausstehenden Termin/.test(x)),
+    P.pruefePlan(kaputt, anfang).join(' | '));
+
+  // Und ein Kopf, der einen anderen Startpunkt behauptet, als gerechnet wurde.
+  const luegt = JSON.parse(JSON.stringify(e.plan));
+  luegt.anschluss.startpunkt = '2026-09-02T14:44:00.000Z';
+  assert.ok(P.pruefePlan(luegt, anfang).some((x) => /nicht der Anfang des Fensters/.test(x)));
+});
+
+test('DS: die Grenze der Regel steht im Quelltext, im Plan und in der Ausgabe', () => {
+  // Sie gehoert dorthin, wo jemand den Plan ansieht -- nicht in eine Fussnote.
+  assert.match(QUELLTEXT, /von Hand im YouTube-Studio/);
+  assert.match(QUELLTEXT, /ABSICHTLICH keine Abfrage gegen YouTube/);
+  const p = plane('2026-09-01T17:00:00+02:00').plan;
+  assert.equal(p.anschluss.grenze, P.GRENZE_HANDPLANUNG);
+  assert.match(p.anschluss.grenze, /von Hand im YouTube-Studio/);
+  const text = P.formatiere(p);
+  assert.ok(text.includes('GRENZE:'), 'die Ausgabe nennt die Grenze nicht');
+  assert.ok(text.includes('YouTube-Studio'), 'die Ausgabe nennt die Handplanung nicht');
+  // Und der Planer fragt weiterhin niemanden.
+  assert.ok(!/fetch\(|require\('https'\)|googleapis/.test(NURCODE));
+});
+
+test('DS: die Ausgabe zeigt die Naht -- letzter alter Termin, dann der erste neue', () => {
+  const jetzt = Date.parse('2026-09-02T16:44:00+02:00');
+  const dateien = [gedaechtnisDatei('2026-08-31 17-36-21', ECHTE_LAGE)];
+  const g = P.sammleAusstehende(dateien, jetzt);
+  const p = P.planeAufnahme({
+    aufnahme: '2026-09-02 12-10-37', freigabeText: freigabeText('2026-09-02 12-10-37'),
+    planungszeitpunkt: jetzt, vorgegeben: true, jetzt,
+    ausstehende: g.ausstehend, gedaechtnisdateien: dateien.map((d) => d.datei),
+  }).plan;
+  const text = P.formatiere(p);
+  const zeilen = text.split('\n');
+  // Der letzte ausstehende Termin steht in der Tabelle, mit "--" statt Nummer,
+  // unmittelbar vor dem ersten neuen.
+  const naht = zeilen.findIndex((z) => z.startsWith('  --  2026-09-03T08:57:00.000Z'));
+  assert.ok(naht > 0, 'die Naht steht nicht in der Tabelle');
+  assert.ok(zeilen[naht + 1].includes('2026-08-31 17-36-21/t12'));
+  assert.ok(zeilen[naht + 1].includes('steht schon auf dem Kanal'));
+  const ersteNeue = zeilen.findIndex((z) => z.startsWith('   1  ' + p.termine[0].publish_at));
+  assert.ok(ersteNeue > naht, 'der erste neue Termin steht nicht unter der Naht');
+  // Und der Abstand ueber die Naht steht daneben, nicht nur die Uhrzeiten.
+  assert.ok(text.includes('Abstand bis zum ersten neuen Termin: 72 Minuten'));
+  // Die ausstehenden Termine stehen einzeln, nicht nur als Zahl.
+  assert.ok(text.includes('Ausstehende Termine aus frueheren Laeufen: 7'));
+  for (const a of p.anschluss.ausstehende_termine) {
+    assert.ok(text.includes(a.kennung), a.kennung + ' fehlt in der Ausgabe');
+  }
+});
+
+test('DS (CLI): eine fremde Aufnahme mit offenen Terminen verschiebt das Fenster', () => {
+  const fremd = '2000-07-07 07-07-07';
+  mitProbe('2000-08-08 08-08-08', 4, 0, ({ plan }) => {
+    const r = spawnSync(process.execPath,
+      [SKRIPT, '--freigabe=2000-08-08 08-08-08', '--jetzt=2035-06-06T17:00:00+02:00', '--execute'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, P.EXIT_OK, r.stderr);
+    const d = JSON.parse(fs.readFileSync(plan, 'utf8'));
+    assert.equal(d.anschluss.grund, 'ausstehender_termin');
+    assert.equal(d.anschluss.letzter_ausstehender.aufnahme, fremd);
+    assert.equal(d.anschluss.letzter_ausstehender.publish_at, '2035-06-07T09:00:00.000Z');
+    assert.equal(d.fenster.beginn, '2035-06-07T09:00:00.000Z');
+    for (const t of d.termine) {
+      assert.ok(Date.parse(t.publish_at) > Date.parse('2035-06-07T09:00:00.000Z'),
+        t.kennung + ' liegt vor dem letzten ausstehenden Termin');
+    }
+    // Die Ausgabe nennt die fremde Aufnahme -- wer sie liest, sieht die Naht.
+    assert.ok(r.stdout.includes(fremd));
+    assert.ok(r.stdout.includes('steht schon auf dem Kanal'));
+    // Und keine videoId.
+    assert.ok(!/PROBE-ohne-Bezug/.test(r.stdout + fs.readFileSync(plan, 'utf8')));
+  }, [{ aufnahme: fremd, termine: ['2035-06-07T08:00:00.000Z', '2035-06-07T09:00:00.000Z'] }]);
+});
+
+test('DS (CLI): eine kaputte fremde Gedaechtnisdatei bricht ab und nennt sie', () => {
+  const fremd = '2000-09-09 09-09-09';
+  mitProbe('2000-10-10 10-10-10', 4, 0, ({ plan }) => {
+    const r = spawnSync(process.execPath,
+      [SKRIPT, '--freigabe=2000-10-10 10-10-10', '--jetzt=2035-06-06T17:00:00+02:00', '--execute'],
+      { encoding: 'utf8' });
+    assert.equal(r.status, P.EXIT_MANGEL, r.stdout + r.stderr);
+    assert.match(r.stderr, /ABBRUCH/);
+    assert.ok(r.stderr.includes('data/uploads/' + fremd + '.json'),
+      'die Meldung nennt die kaputte Datei nicht:\n' + r.stderr);
+    assert.ok(!fs.existsSync(plan), 'es ist trotzdem ein Plan entstanden');
+  }, [{ aufnahme: fremd, text: '{ das ist kein JSON' }]);
 });
 
 // ---------------------------------------------------------------------------

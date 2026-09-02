@@ -142,6 +142,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 #laufZeilen .dienst { color: #8fb0ff; }
 .kettezeile { font-size: 13px; color: #9aa3b2; }
 .kettezeile b { color: #c8d0dd; }
+/* DS: Der Anschluss und seine Grenze. Ein eigener Rahmen, damit die beiden
+   Absaetze nicht als Kleingedrucktes zwischen den Schritten untergehen --
+   ueberlesen worden ist diese Auskunft schon einmal, und danach lagen zwei
+   Plaene uebereinander. */
+.anschluss { border-left: 3px solid #5b8cff; background: #171c26; border-radius: 0 6px 6px 0;
+  padding: 10px 14px; margin: 0 0 14px; color: #b8c0cd; font-size: 13px; max-width: 90ch; }
+.anschluss b { color: #e6e8ec; }
+.anschluss.grenze { border-left-color: #b4823a; background: #221c14; }
+.anschluss p { margin: 6px 0 0; }
+.anschluss code { background: #12141a; border: 1px solid #262b33; border-radius: 4px;
+  padding: 1px 5px; }
 `;
 
 const SKRIPT = String.raw`
@@ -913,6 +924,32 @@ function baueSeite(sitzung) {
     '<p>Ruft den Planer (schreibt <code>data/plaene/&lt;aufnahme&gt;.json</code>) und danach ' +
       'den Trockenlauf des Uploaders. Der Trockenlauf macht keinen Netzaufruf und laedt ' +
       'nichts hoch.</p>',
+    // DS: WORAN DER PLAN ANSCHLIESST -- an der Stelle, an der geplant wird.
+    // Diese beiden Absaetze sind woertlicher Text der Seite und enthalten
+    // keinen Wert aus der Lieferung; sie duerfen darum als Markup hier stehen
+    // (siehe den Kopf dieser Datei). Was sie sagen, sagt der Planer in seiner
+    // Ausgabe und im Kopf der Planungsdatei noch einmal -- diese Seite ist
+    // nicht die einzige Stelle, an der es steht.
+    '<div class="anschluss">',
+    '<b>Woran der Plan anschliesst.</b> Der Planer setzt den Anfang seines ' +
+      '24-Stunden-Fensters auf das <b>spaetere</b> von zwei Zeitpunkten: auf jetzt, oder ' +
+      'auf den spaetesten Termin, der aus einem frueheren Lauf noch aussteht. So legen ' +
+      'sich neue Termine nicht ueber schon vergebene.',
+    '<p>Woran <em>dieser</em> Lauf angeschlossen hat, steht im Kopf der Planungsdatei ' +
+      'unter <code>anschluss</code>: der letzte ausstehende Termin mit seiner Aufnahme und ' +
+      'seiner Kennung, alle ausstehenden Termine einzeln, und aus welchen ' +
+      'Gedaechtnisdateien sie stammen. Dieselbe Auskunft steht in der Ausgabe des Planers ' +
+      '&mdash; im Terminal unter dem Befehl, der im Kasten oben genannt wird.</p>',
+    '</div>',
+    '<div class="anschluss grenze">',
+    '<b>Die Grenze dieser Regel.</b> Der Planer sieht nur, was <b>dieses Werkzeug</b> ' +
+      'hochgeladen hat (<code>data/uploads/</code>). Ein Video, das von Hand im ' +
+      'YouTube-Studio eingeplant wurde, steht dort nicht und kommt in der Rechnung nicht ' +
+      'vor: der Planer hat kein Netz, keine Zugangsdaten und fragt den Kanal nicht ' +
+      '&mdash; und das soll so bleiben.',
+    '<p>Wer von Hand einplant, haelt den Plan selbst dagegen. Diese eine Frage nimmt ' +
+      'einem dieser Bildschirm nicht ab.</p>',
+    '</div>',
     '<div class="knoepfe">',
     '<button id="schritt1" class="gross">Einplanen und Vorschau</button>',
     '<button id="archivieren" hidden>Alten Plan archivieren und neu planen</button>',
@@ -921,6 +958,19 @@ function baueSeite(sitzung) {
     '</div>',
     '<div class="schritt" id="vorschau" hidden>',
     '<h3>Schritt 2 &mdash; die Vorschau lesen</h3>',
+    // DS: WAS HIER STEHT UND WAS NICHT. Die Bloecke unten sind woertlich die
+    // Ausgabe des Uploader-Trockenlaufs. Der kennt den Plan DIESER Aufnahme
+    // und sonst nichts -- die noch ausstehenden Termine anderer Aufnahmen
+    // kommen darin nicht vor. Wer das nicht weiss, liest die Liste unten als
+    // "alles, was ansteht", und genau so ist am 02.09.2026 eine Ueberlappung
+    // durchgegangen.
+    '<div class="anschluss">',
+    '<b>Was hier steht.</b> Die Bloecke unten sind woertlich die Ausgabe des ' +
+      'Trockenlaufs. Er nennt die Termine <b>dieses</b> Laufs. Die Termine, die aus ' +
+      'frueheren Laeufen noch ausstehen, stehen nicht darin &mdash; sie stehen in der ' +
+      'Planungsdatei unter <code>anschluss.ausstehende_termine</code> und in der Ausgabe ' +
+      'des Planers, zusammen mit dem Abstand ueber die Naht.',
+    '</div>',
     '<p class="kettezeile" id="vorschauKopf"></p>',
     '<div class="vorschauBloecke" id="vorschauBloecke"></div>',
     '<p class="gelesen nein" id="gelesen"></p>',

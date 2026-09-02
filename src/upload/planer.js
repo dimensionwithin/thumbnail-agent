@@ -723,6 +723,13 @@ function gedaechtnisVerzeichnis(projektwurzel) {
   return path.join(projektwurzel, 'data', 'uploads');
 }
 
+// Die Temporaerdateien des atomaren Schreibens. Der Uploader baut sie als
+// '.' + <aufnahme>.json + '.tmp.' + pid + '.' + zaehler (schreibeGedaechtnisAtomar
+// in uploader.js); sie leben Millisekunden und sind das EINZIGE, was in
+// data/uploads ausser Gedaechtnisdateien liegen darf. Nach einem Absturz kann
+// eine liegenbleiben -- darum wird sie uebergangen und bricht nicht ab.
+const GEDAECHTNIS_TMP_FORM = /^\..+\.json\.tmp\.\d+\.\d+$/;
+
 // ALLE Gedaechtnisdateien lesen. Nur Platte, kein Urteil -- das faellt in
 // sammleAusstehende.
 //
@@ -730,21 +737,39 @@ function gedaechtnisVerzeichnis(projektwurzel) {
 // JJJJ-MM-TT HH-MM-SS. Eine ANDERE Datei, die auf .json endet, gehoert dort
 // nicht hin und wird nicht stillschweigend uebergangen: stuende darin ein
 // Gedaechtnis, faenden seine ausstehenden Termine keinen Weg in diesen Plan.
-// Was nicht auf .json endet, wird uebergangen -- die Temporaerdateien des
-// atomaren Schreibens heissen .<name>.json.tmp.<pid>.<n> und fallen darunter.
+//
+// UND ALLES ANDERE EBENSO WENIG -- das ist die Aenderung, und sie hat einen
+// gemessenen Anlass. Bis hierher stand hier "was nicht auf .json endet, wird
+// uebergangen". Damit war der Rat, den Uploader und Planer bei einem
+// Plan-Wechsel gaben -- "das Gedaechtnis wegraeumen: verschieben, nicht
+// loeschen" --, ein Rat in die Stille: nach data/uploads/archiv/ verschoben
+// endet der Name des Unterverzeichnisses nicht auf .json, der Planer ging
+// darueber hinweg, sah "nichts ausstehend" und legte den naechsten Plan ueber
+// dreizehn schon vergebene Termine, ohne ein Wort. Der SICHERE Weg (umbenennen
+// im selben Verzeichnis, mit .json am Ende) meldete sich, der EMPFOHLENE
+// schwieg. Genau diese Reihenfolge dreht diese Funktion um: was in
+// data/uploads liegt und keine Gedaechtnisdatei ist, bricht den Lauf ab und
+// wird beim Namen genannt.
+//
+// Das ist streng, und das ist der Zweck: data/uploads ist kein Ablageort,
+// sondern die vollstaendige Auskunft darueber, welche Termine vergeben sind.
+// Eine Auskunft mit einem Fach, in das sich etwas hineinlegen laesst, ohne
+// dass es mitgezaehlt wird, ist keine.
 //
 // Gibt { fehler: [...] } oder { fehler: [], dateien: [{aufnahme, datei, pfad, text}] }.
 function leseGedaechtnisverzeichnis(verzeichnis) {
   const fehler = [];
   const dateien = [];
-  let namen;
+  let eintraege;
   try {
-    // Kein Vorfiltern auf "gewoehnliche Datei". Was auf .json endet, WIRD
-    // gelesen -- und was sich nicht lesen laesst, faellt unten in den
-    // Fangzweig und bricht ab. Ein Verzeichnis namens
-    // "2026-01-01 00-00-00.json" wuerde ein isFile()-Filter stillschweigend
-    // uebergehen; so meldet es sich als EISDIR und mit seinem Namen.
-    namen = fs.readdirSync(verzeichnis).slice().sort();
+    // MIT withFileTypes, und zwar wegen der Unterverzeichnisse: ein Ordner
+    // namens "archiv" ist der Fall, um den es hier geht, und er soll mit
+    // seinem Namen als Ordner gemeldet werden und nicht als Lesefehler eines
+    // Namens, den niemand als Ordner erkennt. Was sich trotzdem nicht lesen
+    // laesst, faellt weiter unten in den Fangzweig -- eine Verknuepfung auf ein
+    // Verzeichnis ist kein isDirectory() und meldet sich dort als EISDIR.
+    eintraege = fs.readdirSync(verzeichnis, { withFileTypes: true })
+      .slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   } catch (e) {
     // Kein Verzeichnis heisst: aus diesem Projekt wurde noch nie etwas
     // hochgeladen. Das ist der Normalfall vor dem ersten Upload und kein
@@ -754,8 +779,36 @@ function leseGedaechtnisverzeichnis(verzeichnis) {
       '): ' + verzeichnis + '. Solange nicht feststeht, welche Termine noch ausstehen, ' +
       'entsteht kein Plan.'] };
   }
-  for (const name of namen) {
-    if (!name.endsWith('.json')) continue;
+  for (const eintrag of eintraege) {
+    const name = eintrag.name;
+    // Die Temporaerdatei eines abgestuerzten Schreibvorgangs. Sie wird
+    // uebergangen, aber an ihrer FORM erkannt und nicht daran, dass sie nicht
+    // auf .json endet -- sonst waere jeder beliebige Name wieder still.
+    if (GEDAECHTNIS_TMP_FORM.test(name)) continue;
+    // DIE REIHENFOLGE IST ABSICHT. Was auf .json endet, geht zuerst durch die
+    // alten Zweige -- auch ein VERZEICHNIS mit diesem Namen. Es faellt dann
+    // unten in den Fangzweig und meldet sich als EISDIR mit seinem Namen, so
+    // wie seit DS. Erst was gar keine Gedaechtnisdatei sein kann, kommt in die
+    // beiden neuen Zweige darunter.
+    if (!name.endsWith('.json')) {
+      if (eintrag.isDirectory()) {
+        fehler.push('In data/uploads/ liegt das VERZEICHNIS ' + JSON.stringify(name) + '. ' +
+          'Dorthin gehoert je Aufnahme eine Gedaechtnisdatei <JJJJ-MM-TT HH-MM-SS>.json und ' +
+          'sonst nichts. Ein Unterverzeichnis wird weder durchsucht noch uebergangen: laege ' +
+          'darin ein Gedaechtnis -- etwa weil es "weggeraeumt" wurde --, faenden seine ' +
+          'ausstehenden Termine keinen Weg in diesen Plan, und der Plan legte sich still ' +
+          'ueber Termine, die schon vergeben sind. Ein Gedaechtnis wird NICHT weggeraeumt: ' +
+          'es ist die einzige Stelle, an der steht, welche Termine dieses Werkzeug schon ' +
+          'vergeben hat.');
+        continue;
+      }
+      fehler.push('In data/uploads/ liegt ' + JSON.stringify(name) + '. Der Name endet nicht ' +
+        'auf .json und ist damit keine Gedaechtnisdatei. Uebergangen wird er trotzdem nicht: ' +
+        'eine umbenannte Gedaechtnisdatei ("....json.alt", "....json.bak") saehe genauso aus, ' +
+        'und ihre ausstehenden Termine faenden keinen Weg in diesen Plan. Was keine ' +
+        'Gedaechtnisdatei ist, gehoert nicht nach data/uploads.');
+      continue;
+    }
     const aufnahme = name.slice(0, name.length - 5);
     if (!AUFNAHME_FORM.test(aufnahme)) {
       fehler.push('In data/uploads/ liegt die Datei ' + JSON.stringify(name) + '. Ihr Name ' +
@@ -1556,9 +1609,22 @@ function main() {
       console.log('null Terminen waere spaeter nicht von einem Plan zu unterscheiden, der nie');
       console.log('etwas zu tun hatte.');
       console.log('');
-      console.log('Die Freigabedatei wurde nur gelesen. Wer diese Aufnahme wirklich noch einmal');
-      console.log('hochladen will, raeumt das Gedaechtnis weg (verschieben, nicht loeschen: es');
-      console.log('traegt die videoIds) -- die Freigabedatei bleibt, wie sie ist.');
+      // KEIN RAT ZUM WEGRAEUMEN MEHR. Bis hierher stand hier: "wer wirklich noch
+      // einmal hochladen will, raeumt das Gedaechtnis weg (verschieben, nicht
+      // loeschen)". Das war der eine Rat, der die Anschlussregel bricht: das
+      // Gedaechtnis ist die EINZIGE Stelle, an der steht, welche Termine dieses
+      // Werkzeug schon vergeben hat. Aus data/uploads heraus verschoben sieht seine
+      // Lage aus wie "nichts ausstehend", und der naechste Plan legt sich darueber.
+      console.log('Die Freigabedatei wurde nur gelesen, und das Gedaechtnis bleibt liegen, wo es');
+      console.log('liegt. Es NICHT wegzuraeumen ist keine Bequemlichkeit, sondern die Bedingung');
+      console.log('dafuer, dass der naechste Plan an die vergebenen Termine anschliesst: aus');
+      console.log('data/uploads/ heraus verschoben -- auch nach data/uploads/archiv/ -- sieht');
+      console.log('seine Lage aus wie "nichts ausstehend", und der naechste Plan legt sich still');
+      console.log('ueber Termine, die schon vergeben sind.');
+      console.log('');
+      console.log('Diese Aufnahme ein zweites Mal hochzuladen sieht dieses Werkzeug nicht vor.');
+      console.log('Die Videos sind oben, mit ihren Terminen, und ein zweiter Upload machte aus');
+      console.log('jedem ein zweites Video -- nicht dasselbe noch einmal.');
       console.log('');
     }
     process.exit(EXIT_MANGEL);

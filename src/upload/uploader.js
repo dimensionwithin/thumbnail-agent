@@ -87,9 +87,19 @@ const readline = require('readline');
 // Die Zeitdarstellung kommt aus dem Planer, damit ein Termin hier genauso
 // aussieht wie dort. Die Konstanten des Plans ebenfalls: der Uploader liest,
 // was der Planer schreibt, und zwar nach dessen Regeln.
+//
+// DW: Dazu die drei Funktionen, mit denen der Planer die AUSSTEHENDEN Termine
+// aus data/uploads liest. Der Uploader rechnet den Anschluss damit fuer seine
+// Vorschau NEU aus -- er schreibt nicht ab, was im Feld anschluss des Plans
+// steht. Jenes Feld ist ein Schnappschuss vom Augenblick des Planens und
+// altert: zwischen Planen und Hochladen kann ein anderer Lauf Termine vergeben
+// haben, und dann stuende in der Vorschau eine Zahl, die nicht mehr gilt.
+// Gerechnet wird mit DENSELBEN Funktionen wie im Planer, damit hier keine
+// zweite Rechnung entsteht, die eines Tages anders ausgeht.
 const {
   ortszeitText, PLAN_ARTIFACT_TYPE, PLAN_SCHEMA_VERSION,
   GESPERRTE_AUFNAHMEN: SPERREN_DES_PLANERS,
+  gedaechtnisVerzeichnis, leseGedaechtnisverzeichnis, sammleAusstehende,
 } = require('./planer');
 
 // Die Rueckgabewerte kommen aus der EINEN Tabelle in uebergabe-leser.js
@@ -735,11 +745,38 @@ function leseGedaechtnis(projektwurzel, aufnahme, planSha256) {
   if (d.schema_version !== GEDAECHTNIS_SCHEMA_VERSION) fehler.push('Gedaechtnis: schema_version ' + JSON.stringify(d.schema_version) + ' ist unbekannt.');
   if (d.aufnahme !== aufnahme) fehler.push('Gedaechtnis: nennt die Aufnahme ' + JSON.stringify(d.aufnahme) + '.');
   if (d.plan_sha256 !== planSha256) {
+    // DIE WEIGERUNG BLEIBT -- DER RAT DAHINTER NICHT.
+    //
+    // Bis hierher endete diese Meldung mit: "Wer neu anfaengt, raeumt das
+    // Gedaechtnis selbst weg (verschieben, nicht loeschen: es traegt videoIds)."
+    // Das war der eine Satz, der die Anschlussregel des Planers bricht. Nach
+    // data/uploads/archiv/ verschoben war dieses Gedaechtnis fuer den Planer
+    // unsichtbar; er sah dann "nichts ausstehend" und legte den naechsten Plan
+    // ueber Termine, die schon vergeben waren -- ohne Meldung. Der Rat schickte
+    // also in genau die Stille, gegen die dieses Werkzeug sonst gebaut ist.
+    // Gemessen: neun von neun neuen Terminen lagen ueber dreizehn vergebenen.
+    // Seither bricht der Planer bei einem Unterverzeichnis in data/uploads ab
+    // (leseGedaechtnisverzeichnis in planer.js) -- und hier steht, was
+    // stattdessen zu tun ist.
+    //
+    // DER WEG FUEHRT UEBER DEN PLAN. Das Gedaechtnis nennt in plan_datei und
+    // plan_sha256 den Plan, zu dem es gehoert. Der Freigabedienst archiviert
+    // Plaene nach data/plaene/archiv/ und veraendert dabei kein Byte; ihn von
+    // dort auf seinen alten Namen zurueckzulegen stellt dieselbe Pruefsumme
+    // wieder her, und dieser Lauf geht da weiter, wo er stehengeblieben ist.
     fehler.push('Das Gedaechtnis gehoert zu einem ANDEREN Plan (plan_sha256 ' +
       JSON.stringify(d.plan_sha256) + ', die Planungsdatei hat jetzt ' + planSha256 + '). ' +
       'Der Plan wurde nach dem ersten Upload veraendert oder ersetzt. Es ist nicht mehr zu ' +
-      'sagen, ob "schon hochgeladen" noch dasselbe meint -- Abbruch. Wer neu anfaengt, raeumt ' +
-      'das Gedaechtnis selbst weg (verschieben, nicht loeschen: es traegt videoIds).');
+      'sagen, ob "schon hochgeladen" noch dasselbe meint -- Abbruch. DAS GEDAECHTNIS BLEIBT ' +
+      'LIEGEN, WO ES LIEGT: es ist die einzige Stelle, an der steht, welche Termine dieses ' +
+      'Werkzeug schon vergeben hat; aus data/uploads/ heraus verschoben -- auch nach ' +
+      'data/uploads/archiv/ -- legt der naechste Plan sich still darueber. Der Weg zurueck ' +
+      'geht ueber den PLAN: das Gedaechtnis nennt ihn in plan_datei (' +
+      JSON.stringify(d.plan_datei) + '). Diesen Plan wieder an seine Stelle legen -- der ' +
+      'Freigabedienst archiviert Plaene unveraendert nach data/plaene/archiv/ --, dann ' +
+      'stimmt die Pruefsumme wieder und der Lauf geht weiter, wo er stehengeblieben ist. ' +
+      'Soll es wirklich ein NEUER Plan sein, sind die Termine im Gedaechtnis auf YouTube ' +
+      'bereits vergeben und gehoeren von Hand gegen den neuen Plan gehalten.');
   }
   if (!Array.isArray(d.uploads)) fehler.push('Gedaechtnis: uploads ist keine Liste.');
   else {
@@ -757,6 +794,135 @@ function leseGedaechtnis(projektwurzel, aufnahme, planSha256) {
 function schonHochgeladen(gedaechtnis, sha256) {
   if (!gedaechtnis) return null;
   return gedaechtnis.uploads.find((u) => u.sha256 === sha256) || null;
+}
+
+// ---------------------------------------------------------------------------
+// DW -- DER ANSCHLUSS: WORAN DIESER LAUF ANSCHLIESST
+// ---------------------------------------------------------------------------
+//
+// WARUM DAS HIER STEHT UND NICHT AUF DER SEITE. Am 02.09. legte ein Plan sich
+// ueber Termine, die schon vergeben waren, und niemand sah es -- die Vorschau
+// nannte die alten Termine gar nicht. Sie nennt nur, was HOCHGEHT; sie nannte
+// nicht, was schon oben ist. Wer eine Ueberlappung erkennen soll, braucht
+// beides nebeneinander: den letzten schon vergebenen Termin und den ersten
+// neuen darunter.
+//
+// WARUM IM UPLOADER UND NICHT IM FREIGABEDIENST. Die Vorschau, die auf der
+// Seite steht, ist Byte fuer Byte die stdout dieses Programms (DQ-N4, DR-N8) --
+// der Dienst reicht sie durch und formuliert nichts. Steht der Anschluss hier,
+// steht er damit an BEIDEN Stellen: im Terminal und auf der Seite, im selben
+// Wortlaut, ohne dass eine zweite Stelle ihn baut und irgendwann anders baut.
+//
+// WARUM GERECHNET UND NICHT AUS DEM PLAN ABGESCHRIEBEN. Der Plan traegt seit DS
+// ein Feld anschluss. Das ist der Stand vom Augenblick des Planens und altert:
+// zwischen Planen und Hochladen koennen Termine dazugekommen sein (DV, gemessen).
+// Gerechnet wird darum jetzt, aus data/uploads, mit den Funktionen des Planers.
+//
+// Gibt immer ein Objekt. lesbar === false heisst: data/uploads liess sich nicht
+// vollstaendig lesen -- dann steht in der Vorschau, DASS der Anschluss nicht zu
+// berechnen war und warum, und nicht etwa eine Null.
+function bestimmeAnschluss({ projektwurzel, auswahl, jetzt }) {
+  const leer = {
+    lesbar: false, fehler: [], gedaechtnisdateien: [], ausstehende_gesamt: 0,
+    letzter_ausstehender: null, erster_neuer: null, ueberlappend: [],
+  };
+  const verzeichnis = leseGedaechtnisverzeichnis(gedaechtnisVerzeichnis(projektwurzel));
+  if (verzeichnis.fehler.length) return Object.assign(leer, { fehler: verzeichnis.fehler });
+  const gesammelt = sammleAusstehende(verzeichnis.dateien, jetzt);
+  if (gesammelt.fehler.length) return Object.assign(leer, { fehler: gesammelt.fehler });
+
+  // sammleAusstehende sortiert aufsteigend; der letzte ist der spaeteste.
+  const aus = gesammelt.ausstehend;
+  const letzter = aus.length ? aus[aus.length - 1] : null;
+  const erster = auswahl.length ? auswahl[0] : null;
+
+  // UEBERLAPPUNG heisst: ein Termin dieses Laufs liegt NICHT hinter dem
+  // spaetesten schon vergebenen. Verglichen wird je Termin und nicht nur der
+  // erste -- bei einem Lauf, der ueber Nacht laeuft, koennen die ersten drei
+  // darunterliegen und die restlichen nicht.
+  const ueberlappend = letzter === null ? [] : auswahl
+    .filter((s) => Date.parse(s.publish_at) <= letzter.ms)
+    .map((s) => ({ kennung: s.kennung, publish_at: s.publish_at,
+      publish_at_ortszeit: s.publish_at_ortszeit }));
+
+  return {
+    lesbar: true,
+    fehler: [],
+    gedaechtnisdateien: verzeichnis.dateien.map((d) => d.datei),
+    ausstehende_gesamt: aus.length,
+    letzter_ausstehender: letzter === null ? null : {
+      aufnahme: letzter.aufnahme,
+      kennung: letzter.kennung,
+      datei: letzter.datei,
+      publish_at: letzter.publish_at,
+      publish_at_ortszeit: letzter.publish_at_ortszeit,
+      // Die videoId steht in der Gedaechtnisdatei und bleibt dort -- aus
+      // demselben Grund wie im Planer: sie wird hier nirgends gebraucht.
+    },
+    erster_neuer: erster === null ? null : {
+      kennung: erster.kennung,
+      publish_at: erster.publish_at,
+      publish_at_ortszeit: erster.publish_at_ortszeit,
+    },
+    ueberlappend,
+  };
+}
+
+// Die Zeilen, die davon in der Vorschau stehen. Eigene Funktion, damit der
+// Wortlaut an EINER Stelle liegt und ein Test ihn ohne Trockenlauf bekommt.
+function anschlussZeilen(a, { anzahlImLauf = 0 } = {}) {
+  const z = [];
+  z.push('ANSCHLUSS -- woran dieser Lauf anschliesst');
+  if (!a) {
+    z.push('  NICHT BERECHNET: dieser Vorschau wurde kein Anschluss mitgegeben. Ohne ihn ist');
+    z.push('  hier nicht zu sehen, ob sich diese Termine ueber schon vergebene legen.');
+    return z;
+  }
+  if (!a.lesbar) {
+    z.push('  NICHT ZU BERECHNEN: data/uploads liess sich nicht vollstaendig lesen. Damit ist');
+    z.push('  hier NICHT zu sehen, ob sich diese Termine ueber schon vergebene legen -- und');
+    z.push('  "0 ausstehend" waere an dieser Stelle eine Auskunft, die keine ist.');
+    for (const f of a.fehler) for (const zeile of umbrich('  ! ' + f, 78)) z.push(zeile);
+    return z;
+  }
+  z.push('  Gerechnet aus data/uploads/ (' + a.gedaechtnisdateien.length +
+    ' Gedaechtnisdatei(en)), Stand jetzt --');
+  z.push('  nicht aus dem Feld anschluss des Plans: das ist der Stand vom Planen und altert.');
+  z.push('  Ausstehende Termine:   ' + a.ausstehende_gesamt +
+    (a.ausstehende_gesamt === 0
+      ? '  -- in keiner Gedaechtnisdatei steht ein Termin, der noch bevorsteht'
+      : ''));
+  if (a.letzter_ausstehender) {
+    const l = a.letzter_ausstehender;
+    z.push('  Letzter vergebener:    ' + l.publish_at + '   = ' + l.publish_at_ortszeit);
+    z.push('                         Aufnahme ' + l.aufnahme + ', ' + l.kennung);
+  }
+  if (a.erster_neuer) {
+    const e = a.erster_neuer;
+    z.push('  Erster neuer Termin:   ' + e.publish_at + '   = ' + e.publish_at_ortszeit);
+    z.push('                         ' + e.kennung);
+  } else {
+    z.push('  Erster neuer Termin:   keiner -- dieser Lauf laedt nichts hoch.');
+  }
+  if (!a.erster_neuer) return z;
+  if (a.letzter_ausstehender === null) {
+    z.push('  -> Es gibt keinen vergebenen Termin, ueber den sich dieser Lauf legen koennte.');
+    return z;
+  }
+  if (a.ueberlappend.length === 0) {
+    z.push('  -> Der erste neue Termin liegt DAHINTER. Keine Ueberlappung.');
+    return z;
+  }
+  z.push('  -> UEBERLAPPUNG: ' + a.ueberlappend.length + ' von ' + anzahlImLauf +
+    ' Terminen dieses Laufs liegen NICHT');
+  z.push('     hinter dem letzten vergebenen, sondern darueber:');
+  for (const u of a.ueberlappend) {
+    z.push('       ' + u.kennung + '   ' + u.publish_at + '  = ' + u.publish_at_ortszeit);
+  }
+  z.push('     Das ist die Lage vom 02.09.: ein Plan, der sich ueber vergebene Termine legt.');
+  z.push('     Zwei Videos auf denselben Platz zu legen, faellt hinterher auf dem Kanal auf');
+  z.push('     und nicht hier -- der Plan gehoert neu gerechnet, bevor etwas hochgeht.');
+  return z;
 }
 
 // ATOMAR: temporaere Datei im SELBEN Verzeichnis, fsync, dann umbenennen --
@@ -1353,9 +1519,18 @@ function bereiteVor({ projektwurzel, wurzel, aufnahme, anzahl = null, jetzt }) {
   });
   if (fehler.length) return { fehler };
 
+  // DW: DER ANSCHLUSS -- ZULETZT, WEIL ER AUF DER AUSWAHL BERUHT.
+  //
+  // Er BRICHT NICHT AB, auch wenn data/uploads sich nicht lesen laesst. Der
+  // Grund steht in anschlussZeilen: die Weigerung gehoert dorthin, wo Termine
+  // VERGEBEN werden -- in den Planer, der bei derselben Lage abbricht --, und
+  // nicht in das Programm, das einen fertigen, geprueften Plan abarbeitet. Was
+  // hierher gehoert, ist die Auskunft, und die faellt dann laut aus.
+  const anschluss = bestimmeAnschluss({ projektwurzel, auswahl, jetzt });
+
   return {
     fehler: [], aufnahme, plan, planSha256, planPfad: pp, konfig, gedaechtnis,
-    auswahl, schonDa, nichtGewaehlt, jetzt,
+    auswahl, schonDa, nichtGewaehlt, jetzt, anschluss,
   };
 }
 
@@ -1665,6 +1840,16 @@ function formatiereVorschau(v, { mitPruefsumme = true } = {}) {
   }
   z.push('');
 
+  // DW: DER ANSCHLUSS -- VOR DEN SHORTS UND VOR DEM GEMEINSAMEN TEIL.
+  //
+  // Er steht in der LAGE dieses Laufs, also in dem Block, den die Seite oben
+  // als "Lage dieses Laufs" ueberschreibt (freigabe-seite.js schneidet an der
+  // ersten Zeile aus 78 Gleichheitszeichen). Weiter unten, hinter neun
+  // Beschreibungen, waere er das, was er nicht sein darf: eine Zeile, die man
+  // ueberliest -- dieselbe Begruendung wie fuer den BEFUND weiter unten.
+  for (const zeile of anschlussZeilen(v.anschluss, { anzahlImLauf: v.auswahl.length })) z.push(zeile);
+  z.push('');
+
   // DT: JE SHORT NUR DAS UNTERSCHIEDLICHE -- DER GEMEINSAME TEIL EINMAL.
   //
   // Bis DT stand unter jedem Short die vollstaendige Beschreibung, rund 2400
@@ -1918,6 +2103,13 @@ async function main() {
       nicht_in_diesem_lauf: v.nichtGewaehlt.length,
       kennungen: v.auswahl.map((s) => s.kennung),
       jetzt: new Date(v.jetzt).toISOString(),
+      // DW: DER ANSCHLUSS AUCH ALS FELDER, nicht nur als Text in der Vorschau.
+      // Die Vorschau oben ist fuer Menschen; dieser Block ist fuer den
+      // Freigabedienst, der ihn nach kettenstand() durchreicht. Beide kommen
+      // aus DERSELBEN Rechnung (bestimmeAnschluss) -- es gibt keine zweite
+      // Stelle, die den Anschluss selbst ausrechnet und eines Tages anders
+      // ausrechnet.
+      anschluss: v.anschluss,
     }));
   }
 
@@ -2067,6 +2259,7 @@ module.exports = {
   gedaechtnisPfad, neuesGedaechtnis, leseGedaechtnis, schonHochgeladen, schreibeGedaechtnisAtomar,
   leseUebergabePfade, sha256Datei, pruefsummenstand,
   bereiteVor, fuehreUploadsAus, echterUpload,
+  bestimmeAnschluss, anschlussZeilen,
   textNichtInteraktiv, bestaetigungEinholen, formatiereVorschau, umbrich,
   GEMEINSAM_UEBERSCHRIFT, GEMEINSAM_BEFUND, zerlegeBeschreibung, gemeinsamerTeil,
 };

@@ -1042,6 +1042,9 @@ function kettenstand(sitzung) {
       kanal_bekannt: k.vorschau.kanal_bekannt,
       kanal_grund: k.vorschau.kanal_grund,
       kanal_erzeugt_am: k.vorschau.kanal_erzeugt_am,
+      // DW: durchgereicht, nicht neu gebildet. Der Dienst rechnet hier nichts
+      // aus -- er gibt weiter, was der Uploader gerechnet hat.
+      anschluss: k.vorschau.anschluss || null,
     },
     lauf: k.lauf === null ? null : {
       laeuft: k.lauf.laeuft,
@@ -1562,6 +1565,20 @@ function baueDienst(sitzung) {
       kanal_name: kanal.ok ? kanal.name : null,
       kanal_erzeugt_am: kanal.ok ? kanal.erzeugt_am : null,
       kanal_grund: kanal.ok ? null : kanal.grund,
+      // DW: DER ANSCHLUSS -- WORAN DIESER LAUF ANSCHLIESST.
+      //
+      // Er kommt aus derselben stderr-Zeile wie alle anderen Zahlen und damit
+      // aus dem Uploader, der ihn beim Trockenlauf frisch aus data/uploads
+      // rechnet. NICHT aus der stdout des Planers, wie der DS-Bericht es
+      // vorschlug, und aus zwei Gruenden: erstens ist das Feld anschluss des
+      // Plans der Stand vom Augenblick des Planens und altert (DV, gemessen);
+      // zweitens laeuft der Planer hier gar nicht, wenn schon ein Plan dalag --
+      // dann gaebe es keine Planerausgabe, und die Seite bliebe in genau der
+      // Lage stumm, in der ein Mensch die Ueberlappung sehen muesste.
+      //
+      // Im TEXT der Vorschau steht dasselbe schon; dieses Feld ist fuer alles,
+      // was den Text nicht liest.
+      anschluss: zahlen.anschluss || null,
     };
     if (k.meldung === null) {
       k.meldung = { art: 'bereit',

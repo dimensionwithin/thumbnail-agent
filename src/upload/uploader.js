@@ -44,10 +44,19 @@
 // macht keinen einzigen Netzaufruf -- er laedt nicht einmal googleapis. Das ist
 // nachpruefbar: unter der Netzwache (data/backup-audit/netzwache.cjs) bleibt
 // das Protokoll leer. Der Trockenlauf ist die Pruefung durch den Menschen: er
-// zeigt je Short Titel, FERTIGE Beschreibung, Hashtags einzeln mit
-// Herleitung, publishAt in UTC und Ortszeit, Dateipfad und Pruefsummenstand.
-// Die Hashtags sind das einzige Hergeleitete in der ganzen Kette; deshalb
-// stehen sie dort vollstaendig und lesbar, bevor irgendetwas hochgeht.
+// zeigt je Short Titel, Hashtags einzeln mit Herleitung, publishAt in UTC und
+// Ortszeit, Dateipfad und Pruefsummenstand. Die Hashtags sind das einzige
+// Hergeleitete in der ganzen Kette; deshalb stehen sie dort vollstaendig und
+// lesbar, bevor irgendetwas hochgeht.
+//
+// DT: VON DER BESCHREIBUNG STEHT JE SHORT NUR, WAS SICH UNTERSCHEIDET -- die
+// erste Zeile (der Titel) und die Hashtag-Zeile am Schluss. Der Teil
+// dazwischen ist bei allen derselbe und steht EINMAL, am Ende, vollstaendig
+// und im Wortlaut. Er faellt nicht weg: er ist die einzige Stelle, an der ein
+// Mensch sieht, was unter jedem Video steht. Dass er wirklich bei allen gleich
+// ist, wird Zeichen fuer Zeichen geprueft und nicht angenommen -- weicht einer
+// ab, faellt die Zusammenfassung aus und jede Beschreibung steht wieder
+// einzeln da. Der Grund fuer die Kuerzung steht bei formatiereVorschau().
 
 const { pruefeArgumenteStrikt, TROCKENLAUF_FLAG } = require('../publish/cli-args');
 
@@ -1565,6 +1574,73 @@ function meldeInteraktivitaet() {
 // AUSGABE FUER MENSCHEN -- der Trockenlauf ist die Pruefung durch den Menschen
 // ---------------------------------------------------------------------------
 
+// DT: DIE MARKEN, AN DENEN DIE SEITE DIE BEIDEN SONDERBLOECKE ERKENNT.
+//
+// Die Freigabeseite zeigt woertlich diese Ausgabe und schneidet sie an den
+// Trennzeilen aus Gleichheitszeichen in Bloecke. Damit sie den gemeinsamen
+// Teil zusammenklappen und den Befund hervorheben kann, muss sie beide Bloecke
+// erkennen -- und zwar an ihrer ERSTEN Zeile, denn mehr sieht der Schnitt
+// nicht. Die beiden Zeichenketten stehen darum hier, wo sie erzeugt werden,
+// und in src/upload/freigabe-seite.js noch einmal, wo sie gesucht werden. Wer
+// eine aendert, aendert beide; tests/dt-vorschau.test.cjs haelt sie
+// gegeneinander und schlaegt an, sobald sie auseinanderlaufen.
+const GEMEINSAM_UEBERSCHRIFT = 'DER GEMEINSAME TEIL DER BESCHREIBUNG';
+const GEMEINSAM_BEFUND = 'BEFUND: DER GEMEINSAME TEIL IST NICHT BEI ALLEN SHORTS GLEICH';
+
+// DT: Zerlegt eine fertige Beschreibung in die drei Teile, aus denen sie
+// besteht -- erste Zeile, Mittelteil, letzte Zeile. Es wird nichts gedeutet
+// und nichts gesucht: geschnitten wird an Zeilenumbruechen, sonst nichts.
+// Bei weniger als drei Zeilen gibt es keinen Mittelteil; dann ist er leer,
+// und die Kuerzung unten greift nicht.
+function zerlegeBeschreibung(text) {
+  const zeilen = String(text).split('\n');
+  if (zeilen.length < 3) {
+    return {
+      erste: zeilen[0] === undefined ? '' : zeilen[0],
+      mitte: '',
+      letzte: zeilen.length > 1 ? zeilen[zeilen.length - 1] : null,
+    };
+  }
+  return { erste: zeilen[0], mitte: zeilen.slice(1, -1).join('\n'), letzte: zeilen[zeilen.length - 1] };
+}
+
+// DT: IST DER MITTELTEIL BEI ALLEN DERSELBE? GEPRUEFT, NICHT ANGENOMMEN.
+//
+// Dass alle Beschreibungen aus derselben Vorlage kommen, ist eine Annahme --
+// sie stimmt, solange die Vorlage genau zwei Platzhalter hat und die in der
+// ersten bzw. letzten Zeile stehen. Steht {titel} eines Tages mitten im Text,
+// oder kommt ein dritter Platzhalter dazu, stimmt sie nicht mehr. Dann darf
+// nicht gekuerzt werden: eine Kuerzung, die einen Unterschied verschluckt, ist
+// schlimmer als die Wand aus Text, gegen die sie gebaut ist.
+//
+// Verglichen wird Zeichen fuer Zeichen. Gibt:
+//   { gekuerzt: true,  text, zeichen, zeilen }                       -- alle gleich
+//   { gekuerzt: false, grund: 'abweichung', massgeblich, abweichungen }
+//   { gekuerzt: false, grund: <Text> }                               -- nichts zu kuerzen
+function gemeinsamerTeil(auswahl) {
+  const teile = auswahl.map((s) => Object.assign({ kennung: s.kennung }, zerlegeBeschreibung(s.beschreibung)));
+  if (!teile.length) {
+    return { gekuerzt: false, grund: 'kein Short in diesem Lauf', abweichungen: [] };
+  }
+  const massgeblich = teile[0];
+  const abweichungen = teile.slice(1).filter((x) => x.mitte !== massgeblich.mitte);
+  if (abweichungen.length) {
+    return { gekuerzt: false, grund: 'abweichung', massgeblich, abweichungen };
+  }
+  if (!massgeblich.mitte.length) {
+    return {
+      gekuerzt: false, abweichungen: [],
+      grund: 'zwischen erster und letzter Zeile steht nichts -- es gibt nichts zusammenzufassen',
+    };
+  }
+  return {
+    gekuerzt: true, grund: null, abweichungen: [],
+    text: massgeblich.mitte,
+    zeichen: massgeblich.mitte.length,
+    zeilen: massgeblich.mitte.split('\n').length,
+  };
+}
+
 function formatiereVorschau(v, { mitPruefsumme = true } = {}) {
   const z = [];
   const k = v.konfig.veroeffentlichung;
@@ -1589,6 +1665,44 @@ function formatiereVorschau(v, { mitPruefsumme = true } = {}) {
   }
   z.push('');
 
+  // DT: JE SHORT NUR DAS UNTERSCHIEDLICHE -- DER GEMEINSAME TEIL EINMAL.
+  //
+  // Bis DT stand unter jedem Short die vollstaendige Beschreibung, rund 2400
+  // Zeichen. Bei neun Shorts war das eine Wand aus neunmal fast demselben
+  // Text, und der Zweck der Vorschau -- dass ein Mensch hinsieht -- ging genau
+  // an dieser Laenge zugrunde. Verschieden sind nur die erste Zeile (der
+  // Titel) und die Hashtag-Zeile am Schluss; alles dazwischen kommt aus
+  // derselben Vorlage.
+  //
+  // Der gemeinsame Teil FAELLT NICHT WEG. Er ist die einzige Stelle, an der
+  // ein Mensch sieht, was unter jedem Video steht, und er aendert sich, sobald
+  // jemand config/shorts-beschreibung.txt anfasst. Er steht darum weiter
+  // unten -- einmal, am Stueck, vollstaendig und im Wortlaut.
+  const g = gemeinsamerTeil(v.auswahl);
+
+  // Der Befund steht VOR den Shorts. Am Ende, hinter neun vollstaendigen
+  // Beschreibungen, waere er genau das, was er nicht sein darf: eine Zeile,
+  // die man ueberliest.
+  if (g.grund === 'abweichung') {
+    z.push('=' .repeat(78));
+    z.push(GEMEINSAM_BEFUND);
+    z.push('');
+    z.push('Der Teil zwischen erster und letzter Zeile sollte bei allen Shorts derselbe sein --');
+    z.push('er kommt aus ' + BESCHREIBUNG_DATEI + '. Er ist es nicht. Die Zusammenfassung faellt');
+    z.push('fuer diesen Lauf aus: jede Beschreibung steht unten wieder einzeln und vollstaendig');
+    z.push('da, damit der Unterschied zu sehen ist und nicht in einer Kuerzung verschwindet.');
+    z.push('');
+    z.push('  Massgeblich (der erste Short):  ' + g.massgeblich.kennung +
+      '  -- ' + g.massgeblich.mitte.length + ' Zeichen dazwischen');
+    for (const a of g.abweichungen) {
+      z.push('  WEICHT AB:                     ' + a.kennung +
+        '  -- ' + a.mitte.length + ' Zeichen dazwischen');
+    }
+    z.push('');
+    z.push('Es wurde nichts hochgeladen -- der Trockenlauf laedt ohnehin nichts hoch. Zu pruefen');
+    z.push('ist ' + BESCHREIBUNG_DATEI + ' und ob dort ein Platzhalter mitten im Text steht.');
+  }
+
   v.auswahl.forEach((s, i) => {
     z.push('=' .repeat(78));
     z.push('[' + (i + 1) + '/' + v.auswahl.length + ']  ' + s.kennung);
@@ -1603,11 +1717,41 @@ function formatiereVorschau(v, { mitPruefsumme = true } = {}) {
     for (const h of s.herleitung) {
       z.push('    ' + ('#' + h.hashtag).padEnd(18) + h.quelle);
     }
+    // Zeichen- und Bytezahl sind die der VOLLSTAENDIGEN Beschreibung, auch
+    // wenn darunter nur zwei Zeilen stehen. Sie sind die Zahlen, die gegen die
+    // Grenzen der API gehalten werden; eine gekuerzte Zahl waere hier eine
+    // Luege ueber das, was hochgeht.
     z.push('  Beschreibung (' + s.beschreibung.length + ' Zeichen, ' + Buffer.byteLength(s.beschreibung, 'utf8') +
-      ' Bytes UTF-8) -- Wortlaut, wie er auf YouTube stuende:');
-    for (const zeile of s.beschreibung.split('\n')) z.push('    | ' + zeile);
+      ' Bytes UTF-8)' + (g.gekuerzt
+        ? ' -- erste und letzte Zeile; dazwischen der gemeinsame Teil:'
+        : ' -- Wortlaut, wie er auf YouTube stuende:'));
+    if (g.gekuerzt) {
+      const teile = zerlegeBeschreibung(s.beschreibung);
+      z.push('    | ' + teile.erste);
+      z.push('    [ dazwischen der gemeinsame Teil: ' + g.zeichen + ' Zeichen, ' + g.zeilen +
+        ' Zeilen -- er steht unten einmal vollstaendig ]');
+      z.push('    | ' + teile.letzte);
+    } else {
+      for (const zeile of s.beschreibung.split('\n')) z.push('    | ' + zeile);
+    }
   });
   z.push('=' .repeat(78));
+
+  // DT: DER GEMEINSAME TEIL -- EINMAL, VOLLSTAENDIG, IM WORTLAUT.
+  //
+  // Im Terminal steht er hier, am Ende des Trockenlaufs. Auf der Freigabeseite
+  // steht derselbe Block zugeklappt hinter einem Knopf -- dieselbe Ausgabe,
+  // woertlich; die Seite schneidet sie nur an den Trennzeilen. Erkannt wird er
+  // dort an seiner ersten Zeile, GEMEINSAM_UEBERSCHRIFT.
+  if (g.gekuerzt) {
+    z.push(GEMEINSAM_UEBERSCHRIFT + ' -- bei allen ' + v.auswahl.length +
+      ' Shorts dieses Laufs Zeichen fuer Zeichen derselbe.');
+    z.push(g.zeichen + ' Zeichen, ' + g.zeilen + ' Zeilen. Er steht unter jedem dieser Videos,');
+    z.push('zwischen der ersten Zeile (dem Titel) und der Hashtag-Zeile am Schluss.');
+    z.push('Geaendert wird er in ' + BESCHREIBUNG_DATEI + ' -- was dort steht, steht hier.');
+    for (const zeile of g.text.split('\n')) z.push('    | ' + zeile);
+    z.push('=' .repeat(78));
+  }
   z.push('');
   return z.join('\n');
 }
@@ -1924,4 +2068,5 @@ module.exports = {
   leseUebergabePfade, sha256Datei, pruefsummenstand,
   bereiteVor, fuehreUploadsAus, echterUpload,
   textNichtInteraktiv, bestaetigungEinholen, formatiereVorschau, umbrich,
+  GEMEINSAM_UEBERSCHRIFT, GEMEINSAM_BEFUND, zerlegeBeschreibung, gemeinsamerTeil,
 };

@@ -131,6 +131,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .vorschauBloecke pre { margin: 0; padding: 10px 12px; white-space: pre-wrap;
   word-break: break-word; font: 12.5px/1.5 "Cascadia Mono", Consolas, monospace;
   color: #c8d0dd; }
+/* DT: Der Termin in eigener Farbe. Beide Zeilen -- UTC und Ortszeit -- bleiben
+   stehen und bekommen dieselbe Farbe: verbindlich ist weiterhin UTC, und eine
+   Farbe, die nur eine der beiden Zeilen traefe, waere eine Auswahl und keine
+   Hervorhebung. Warmes Gelb gegen das kuehle Grau ringsum; dazu halbfett,
+   damit die Zeile auch dann auffaellt, wenn jemand Farben nicht unterscheidet. */
+.vorschauBloecke .termin { color: #ffd479; font-weight: 600; }
+/* DT: Der Kopf des gemeinsamen Teils -- Knopf und Erklaerung bleiben sichtbar,
+   nur der Wortlaut darunter klappt weg. */
+.vorschauBloecke .aufklapp { padding: 8px 12px; border-top: 1px solid #262b33; }
+.vorschauBloecke .aufklapp button { font: inherit; font-size: 12.5px; padding: 5px 12px; }
 .gelesen { font-size: 13px; margin-top: 8px; }
 .gelesen.nein { color: #f0d3a6; }
 .gelesen.ja { color: #7bd79a; }
@@ -575,6 +585,12 @@ document.getElementById('beenden').addEventListener('click', async () => {
 //   - Sie baut keine Vorschau. Was in den Bloecken steht, ist woertlich die
 //     Ausgabe des Trockenlaufs, wie sie im Terminal stuende -- ueber
 //     textContent in den Baum gesetzt, nicht als Markup.
+//     DT: Sie kuerzt sie auch nicht. Dass je Short nur die erste und die
+//     letzte Zeile des Textes unter dem Video dasteht und der gemeinsame Teil
+//     einmal am Ende, entscheidet der Uploader; diese Seite klappt den einen
+//     Block zusammen und faerbt die beiden Terminzeilen -- mehr nicht. Der
+//     Wortlaut bleibt Zeichen fuer Zeichen der des Trockenlaufs, auch der
+//     zugeklappte.
 //   - Sie kennt keinen Kanal, keine Pruefsumme und keine Zahl, die sie sich
 //     selbst ausgerechnet haette.
 //
@@ -588,6 +604,11 @@ const ZEITGRENZE_LAUF_MS = 15000;
 
 let kette = null;
 let vorschauGelesen = false;
+// DT: Der gemeinsame Teil des Textes unter dem Video -- ob er in dieser
+// Vorschau ueberhaupt vorkommt, und ob ihn jemand aufgeklappt hat. Beides geht
+// in die Lesesperre ein; warum, steht bei pruefeGelesen().
+let gemeinsamVorhanden = false;
+let gemeinsamAufgeklappt = false;
 let laufAb = 0;
 let laufSchleifeLaeuft = false;
 
@@ -623,6 +644,43 @@ function setzeMeldung(m) {
   }
 }
 
+// DT: DIE BEIDEN MARKEN AUS DEM UPLOADER.
+//
+// Woertlich dieselben Zeichenketten stehen in src/upload/uploader.js als
+// GEMEINSAM_UEBERSCHRIFT und GEMEINSAM_BEFUND -- dort werden sie geschrieben,
+// hier gesucht. Sie stehen hier ein zweites Mal und nicht per require, weil
+// dieser Text im Browser laeuft und dieses Modul absichtlich weder fs noch
+// den Uploader kennt. Dass beide Stellen dasselbe sagen, prueft
+// tests/dt-vorschau.test.cjs -- laufen sie auseinander, schlaegt der Test an,
+// und nicht erst ein Mensch, dem der Knopf fehlt.
+const GEMEINSAM_MARKE = 'DER GEMEINSAME TEIL DER BESCHREIBUNG';
+const BEFUND_MARKE = 'BEFUND: DER GEMEINSAME TEIL IST NICHT BEI ALLEN SHORTS GLEICH';
+
+// DT: Die Terminzeilen des Trockenlaufs. Erkannt am Wortlaut, den der Uploader
+// schreibt -- nicht an einer Position und nicht an einem Datumsmuster.
+const TERMINZEILE = /^\s*publishAt (UTC|Ortszeit):/;
+
+// DT: Faerbt die Terminzeilen in einem <pre>, das seinen Text bereits hat.
+//
+// ERST DER TEXT, DANN DIE FARBE -- und in dieser Reihenfolge aus einem Grund:
+// der Block geht unveraendert ueber textContent in den Baum, so wie vor DT.
+// Was danach hier geschieht, ist reines Umhaengen: derselbe Text wird
+// zeilenweise wieder eingesetzt, zwei Zeilen davon in einem <span>. Vorher und
+// nachher ist textContent Zeichen fuer Zeichen derselbe. Die Seite faerbt --
+// sie formuliert nicht, sie kuerzt nicht, und sie kann es hier auch nicht,
+// weil sie nur wieder einsetzt, was sie vorgefunden hat.
+function faerbeTermine(pre) {
+  const zeilen = pre.textContent.split('\n');
+  if (!zeilen.some((z) => TERMINZEILE.test(z))) return pre;
+  pre.textContent = '';
+  zeilen.forEach((zeile, i) => {
+    const inhalt = zeile + (i < zeilen.length - 1 ? '\n' : '');
+    if (TERMINZEILE.test(zeile)) pre.append(el('span', 'termin', inhalt));
+    else pre.append(document.createTextNode(inhalt));
+  });
+  return pre;
+}
+
 // Die Vorschau in Bloecken statt als Klumpen. Der Trockenlauf trennt seine
 // Shorts mit einer Zeile aus 78 Gleichheitszeichen; genau daran wird
 // geschnitten. Faende sich keine, stuende alles in einem Block -- dann waere
@@ -630,6 +688,8 @@ function setzeMeldung(m) {
 function baueVorschau(v) {
   const bereich = kel('vorschauBloecke');
   bereich.textContent = '';
+  gemeinsamVorhanden = false;
+  gemeinsamAufgeklappt = false;
   const teile = v.text.split(/\n=+\n/);
   let nr = 0;
   for (const teil of teile) {
@@ -637,14 +697,54 @@ function baueVorschau(v) {
     const block = el('div', 'block');
     const ersteZeile = teil.trim().split('\n')[0].trim();
     const istShort = /^\[\d+\/\d+\]/.test(ersteZeile);
+    const istGemeinsam = ersteZeile.indexOf(GEMEINSAM_MARKE) === 0;
+    const istBefund = ersteZeile.indexOf(BEFUND_MARKE) === 0;
     if (istShort) nr += 1;
     // Vor dem ersten Short steht die Lage des Laufs, danach die Schlusszeilen
     // des Trockenlaufs. Beide sind keine Shorts und bekommen darum eine
     // Ueberschrift, die sagt, was sie sind -- zweimal "Lage dieses Laufs"
     // waere eine Ueberschrift, die luegt.
     block.append(el('h4', null,
-      istShort ? ersteZeile : (nr === 0 ? 'Lage dieses Laufs' : 'Was der Trockenlauf zum Schluss sagt')));
-    block.append(el('pre', null, teil.replace(/^\n+|\n+$/g, '')));
+      istShort ? ersteZeile
+        : istGemeinsam ? 'Der gemeinsame Teil — er steht unter jedem dieser Videos'
+        : istBefund ? 'BEFUND — der gemeinsame Teil ist nicht bei allen gleich'
+        : (nr === 0 ? 'Lage dieses Laufs' : 'Was der Trockenlauf zum Schluss sagt')));
+    // DT: Der gemeinsame Teil wird an der ersten Zeile geteilt, die der
+    // Uploader mit "| " einrueckt -- das ist bei ihm die erste Zeile des
+    // Wortlauts. Die Erklaerung darueber bleibt sichtbar, der Wortlaut klappt
+    // weg. Findet sich keine solche Zeile, bleibt alles sichtbar: lieber zu
+    // viel Text als ein Knopf, hinter dem nichts ist.
+    const zeilen = teil.replace(/^\n+|\n+$/g, '').split('\n');
+    let ab = -1;
+    if (istGemeinsam) {
+      for (let i = 0; i < zeilen.length; i++) {
+        if (/^\s*\| /.test(zeilen[i])) { ab = i; break; }
+      }
+    }
+    if (ab > 0) {
+      block.append(el('pre', null, zeilen.slice(0, ab).join('\n')));
+      const wortlaut = el('pre', null, zeilen.slice(ab).join('\n'));
+      wortlaut.hidden = true;
+      const leiste = el('div', 'aufklapp');
+      const knopf = el('button', null, 'Den gemeinsamen Teil aufklappen');
+      knopf.addEventListener('click', () => {
+        wortlaut.hidden = !wortlaut.hidden;
+        knopf.textContent = wortlaut.hidden
+          ? 'Den gemeinsamen Teil aufklappen'
+          : 'Den gemeinsamen Teil zuklappen';
+        if (!wortlaut.hidden) gemeinsamAufgeklappt = true;
+        pruefeGelesen();
+      });
+      leiste.append(knopf);
+      block.append(leiste);
+      block.append(wortlaut);
+      gemeinsamVorhanden = true;
+    } else {
+      // Woertlich wie vor DT: der Block geht als EIN Text ueber textContent in
+      // den Baum, und zwar bevor irgendetwas gefaerbt wird.
+      block.append(el('pre', null, teil.replace(/^\n+|\n+$/g, '')));
+    }
+    for (const pre of block.querySelectorAll('pre')) faerbeTermine(pre);
     bereich.append(block);
   }
   kel('vorschau').hidden = false;
@@ -661,15 +761,38 @@ function baueVorschau(v) {
 // ins Feld, gibt es nichts zu scrollen und sie gilt sofort als gesehen -- eine
 // Huerde, die sich nicht ueberwinden LAESST, waere keine Huerde, sondern ein
 // Fehler.
+//
+// DT: DER ZUGEKLAPPTE TEIL ZAEHLT MIT -- ER MUSS AUFGEKLAPPT GEWESEN SEIN.
+//
+// Seit DT ist die Vorschau kuerzer, und das ist beabsichtigt: eine Huerde, die
+// leichter zu nehmen ist, weil weniger Wand davorsteht, bleibt eine Huerde.
+// Was sie NICHT werden darf, ist eine Formalitaet. Genau das waere passiert,
+// haette der zugeklappte Teil nicht mitgezaehlt: zugeklappt passt die Vorschau
+// womoeglich ganz ins Feld, gaelte damit im selben Augenblick als gesehen --
+// und der eine Text, der unter JEDEM der Videos steht, waere der einzige, den
+// niemand mehr zu Gesicht bekaeme. Das Feld, auf das die Sperre zielt, waere
+// das einzige geworden, das sie nicht mehr deckt.
+//
+// Darum: solange ein gemeinsamer Teil da ist und zugeklappt, gilt die Vorschau
+// nicht als gelesen -- weder durch Scrollen noch dadurch, dass sie ins Feld
+// passt. Ein Klick, danach gilt die alte Regel unveraendert weiter. Gibt es
+// keinen gemeinsamen Teil (ein Short, ein Befund, eine Vorlage ohne
+// Mittelteil), gibt es auch nichts aufzuklappen, und es bleibt bei der alten
+// Regel -- eine Huerde, die sich nicht nehmen laesst, waere wieder ein Fehler.
 function pruefeGelesen() {
   const bereich = kel('vorschauBloecke');
-  if (!vorschauGelesen && bereich.scrollHeight - bereich.clientHeight <= 4) vorschauGelesen = true;
+  const offen = !gemeinsamVorhanden || gemeinsamAufgeklappt;
+  if (!vorschauGelesen && offen && bereich.scrollHeight - bereich.clientHeight <= 4) vorschauGelesen = true;
   const hinweis = kel('gelesen');
   hinweis.className = 'gelesen ' + (vorschauGelesen ? 'ja' : 'nein');
   hinweis.textContent = vorschauGelesen
     ? 'Vorschau bis zum Ende gesehen.'
-    : 'Die Vorschau ist laenger als das Feld. Der Knopf "Hochladen" bleibt gesperrt, bis sie ' +
-      'einmal bis unten durchgelaufen ist -- was gleich veroeffentlicht wird, steht darin.';
+    : (!offen
+      ? 'Der gemeinsame Teil ist noch zugeklappt. Er ist der Text, der unter JEDEM dieser ' +
+        'Videos steht -- der Knopf "Hochladen" bleibt gesperrt, bis er einmal aufgeklappt ' +
+        'und die Vorschau bis unten durchgelaufen ist.'
+      : 'Die Vorschau ist laenger als das Feld. Der Knopf "Hochladen" bleibt gesperrt, bis sie ' +
+        'einmal bis unten durchgelaufen ist -- was gleich veroeffentlicht wird, steht darin.');
   zeichneKette();
 }
 
@@ -807,6 +930,10 @@ async function ladeKette() {
 
 kel('vorschauBloecke').addEventListener('scroll', () => {
   const b = kel('vorschauBloecke');
+  // DT: Bis unten gescrollt zaehlt nur, wenn der gemeinsame Teil dabei offen
+  // war. Sonst waere "bis unten" das Ende einer Vorschau, aus der genau der
+  // Text herausgeklappt ist, um den es geht.
+  if (gemeinsamVorhanden && !gemeinsamAufgeklappt) return;
   if (b.scrollTop + b.clientHeight >= b.scrollHeight - 4) {
     if (!vorschauGelesen) { vorschauGelesen = true; pruefeGelesen(); }
   }
@@ -970,6 +1097,19 @@ function baueSeite(sitzung) {
       'frueheren Laeufen noch ausstehen, stehen nicht darin &mdash; sie stehen in der ' +
       'Planungsdatei unter <code>anschluss.ausstehende_termine</code> und in der Ausgabe ' +
       'des Planers, zusammen mit dem Abstand ueber die Naht.',
+    // DT: Warum je Short nur zwei Zeilen des Textes unter dem Video dastehen.
+    // Kein Feldname des Uploaders steht in diesem Absatz, und das ist keine
+    // Umstaendlichkeit: auf diese Seite gehoert keines seiner Metadatenfelder
+    // (tests/freigabe-server.test.cjs haelt das fest). Gesagt wird, was ein
+    // Mensch sieht -- der Text unter dem Video -- und nicht, wie das Feld bei
+    // YouTube heisst.
+    '<p>Von dem Text unter dem Video steht je Short nur, was sich <b>unterscheidet</b>: die ' +
+      'erste Zeile (der Titel) und die Hashtag-Zeile am Schluss. Der Teil dazwischen ist bei ' +
+      'allen derselbe &mdash; er steht einmal, ganz unten, vollstaendig und im Wortlaut, ' +
+      'hinter dem Knopf &bdquo;Den gemeinsamen Teil aufklappen&ldquo;. Er muss einmal ' +
+      'aufgeklappt gewesen sein, sonst bleibt Schritt 3 gesperrt: er steht unter ' +
+      '<em>jedem</em> dieser Videos, und er aendert sich, sobald jemand ' +
+      '<code>config/shorts-beschreibung.txt</code> anfasst.</p>',
     '</div>',
     '<p class="kettezeile" id="vorschauKopf"></p>',
     '<div class="vorschauBloecke" id="vorschauBloecke"></div>',

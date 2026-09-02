@@ -136,7 +136,13 @@ test('pruefeArgumenteStrikt und pruefeKeineFreienArgumente stehen vor allem ande
   assert.ok(!/function pruefeArgumenteStrikt/.test(NURCODE), 'nachgebaut statt importiert');
   assert.ok(!/const AUFNAHME_FORM\s*=/.test(NURCODE), 'AUFNAHME_FORM nachgebaut statt importiert');
   assert.match(NURCODE, /pruefeKeineFreienArgumente\(process\.argv, 'src\/upload\/uploader\.js', '--plan='\)/);
-  assert.deepEqual(U.ERLAUBTE_ARGUMENTE, ['--plan=', '--anzahl=', '--execute', '--nur-pruefen']);
+  // DR: zwei neue Argumente. --bestaetigt-durch= nimmt die Einmal-Ermaechtigung
+  // des Freigabedienstes entgegen, --vorschau-json legt neben die Vorschau eine
+  // Zeile mit deren Zahlen (auf stderr, damit stdout woertlich die Ausgabe des
+  // Terminalwegs bleibt). Die Liste steht hier vollstaendig: ein Argument, das
+  // sich hineinschleicht, faellt auf.
+  assert.deepEqual(U.ERLAUBTE_ARGUMENTE,
+    ['--plan=', '--anzahl=', '--execute', '--bestaetigt-durch=', '--vorschau-json', '--nur-pruefen']);
 });
 
 test('privacyStatus ist fest auf private verdrahtet und kommt aus keiner Variablen', () => {
@@ -171,15 +177,38 @@ test('genau ein schreibender API-Aufruf: videos.insert -- und sonst keiner', () 
   assert.ok(NURCODE.indexOf("require('../youtube/auth')") > NURCODE.indexOf('async function main()'));
 });
 
-test('jeder Schreibaufruf auf die Platte steht in schreibeGedaechtnisAtomar', () => {
-  const start = NURCODE.indexOf('function schreibeGedaechtnisAtomar');
-  const ende = NURCODE.indexOf('\nfunction ', start + 1);
-  assert.ok(start > 0 && ende > start);
-  const drin = (i) => i > start && i < ende;
+test('jeder Schreibaufruf auf die Platte steht in einer der beiden Schreibfunktionen', () => {
+  // DR: Bis hierher hiess diese Zusage "steht in schreibeGedaechtnisAtomar".
+  // Mit der Einmal-Ermaechtigung schreibt der Uploader eine zweite Datei --
+  // die Liste der verbrauchten Zufallswerte -- und loescht die Ermaechtigung.
+  // Statt die Zusage aufzuweichen, wird sie wie im Freigabedienst als
+  // AUFZAEHLUNG gefuehrt: zwei Funktionen duerfen schreiben, jede andere
+  // Zeile faellt durch.
+  const bereich = (name) => {
+    const start = NURCODE.indexOf('function ' + name);
+    assert.ok(start > 0, name + ' gefunden');
+    const ende = NURCODE.indexOf('\nfunction ', start + 1);
+    assert.ok(ende > start, name + ' hat ein Ende');
+    return { start, ende };
+  };
+  const bereiche = [
+    bereich('schreibeGedaechtnisAtomar'),  // data/uploads/<aufnahme>.json
+    bereich('verbraucheErmaechtigung'),    // verbraucht.json + Loeschen der Ermaechtigung
+  ];
+  const drin = (i) => bereiche.some((b) => i > b.start && i < b.ende);
   for (const muster of [/fs\.writeFileSync\(/g, /fs\.openSync\([^)]*'wx'\)/g, /fs\.renameSync\(/g, /fs\.unlinkSync\(/g, /fs\.mkdirSync\(/g, /fs\.fsyncSync\(/g]) {
     const stellen = [...NURCODE.matchAll(muster)];
     assert.ok(stellen.length >= 1, muster + ' fehlt');
-    for (const s of stellen) assert.ok(drin(s.index), muster + ' steht ausserhalb von schreibeGedaechtnisAtomar');
+    for (const s of stellen) {
+      assert.ok(drin(s.index), muster + ' steht ausserhalb der beiden Schreibfunktionen: ' +
+        NURCODE.slice(s.index - 60, s.index + 60));
+    }
+  }
+  // Und jede der beiden schreibt auch wirklich.
+  for (const b of bereiche) {
+    const rumpf = NURCODE.slice(b.start, b.ende);
+    assert.ok(/fs\.(writeFileSync|renameSync|unlinkSync)\(/.test(rumpf),
+      'eine Schreibfunktion, die nicht schreibt, ist ein Freibrief');
   }
   for (const nie of ['fs.writeFile(', 'fs.appendFileSync', 'fs.rmSync', 'fs.rmdirSync', 'fs.copyFileSync', 'fs.createWriteStream']) {
     assert.ok(!NURCODE.includes(nie), nie + ' kommt vor');

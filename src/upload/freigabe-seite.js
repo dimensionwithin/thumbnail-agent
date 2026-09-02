@@ -107,6 +107,41 @@ kbd { background: #262b33; border: 1px solid #3a424f; border-bottom-width: 2px;
 #karten.vorbei { opacity: 0.55; }
 #karten.vorbei .karte { filter: grayscale(0.6); }
 .karte.nichtgespeichert { border-color: #dd7c5e; box-shadow: 0 0 0 1px #dd7c5e inset; }
+
+/* DR: die Kette unterhalb der Karten */
+#kette { border-top: 2px solid #2e333c; margin: 26px 20px 40px; padding-top: 20px;
+  max-width: 1180px; }
+#kette h2 { font-size: 16px; margin: 0 0 6px; }
+#kette .erklaerung { color: #9aa3b2; font-size: 13px; margin: 0 0 14px; max-width: 90ch; }
+.schritt { border: 1px solid #2e333c; border-radius: 8px; background: #191c22;
+  padding: 14px 16px; margin-bottom: 14px; }
+.schritt.aus { opacity: 0.5; }
+.schritt h3 { font-size: 14px; margin: 0 0 8px; color: #c8d0dd; }
+.schritt p { margin: 6px 0; color: #9aa3b2; font-size: 13px; }
+button.gross { padding: 10px 20px; font-weight: 600; }
+button.scharf { border-color: #b4543a; background: #2a1d19; }
+button.scharf:enabled:hover { background: #3a2620; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.vorschauBloecke { max-height: 460px; overflow: auto; border: 1px solid #262b33;
+  border-radius: 6px; background: #101218; padding: 10px; }
+.vorschauBloecke .block { border: 1px solid #262b33; border-radius: 6px; background: #14161c;
+  margin-bottom: 10px; }
+.vorschauBloecke .block > h4 { margin: 0; padding: 7px 12px; font-size: 13px;
+  background: #1b1f27; border-bottom: 1px solid #262b33; color: #e6e8ec; }
+.vorschauBloecke pre { margin: 0; padding: 10px 12px; white-space: pre-wrap;
+  word-break: break-word; font: 12.5px/1.5 "Cascadia Mono", Consolas, monospace;
+  color: #c8d0dd; }
+.gelesen { font-size: 13px; margin-top: 8px; }
+.gelesen.nein { color: #f0d3a6; }
+.gelesen.ja { color: #7bd79a; }
+#laufZeilen { max-height: 420px; overflow: auto; margin: 0; padding: 10px 12px;
+  background: #101218; border: 1px solid #262b33; border-radius: 6px;
+  white-space: pre-wrap; word-break: break-word;
+  font: 12.5px/1.5 "Cascadia Mono", Consolas, monospace; color: #c8d0dd; }
+#laufZeilen .err { color: #f0b49a; }
+#laufZeilen .dienst { color: #8fb0ff; }
+.kettezeile { font-size: 13px; color: #9aa3b2; }
+.kettezeile b { color: #c8d0dd; }
 `;
 
 const SKRIPT = String.raw`
@@ -402,15 +437,36 @@ document.addEventListener('keydown', (e) => {
 // Freigabeskript und wie netstat in DJa.
 //
 // Ausgeloest wird das hier ausschliesslich von einer ANTWORT: der auf
-// POST /beenden, oder einer ausbleibenden auf POST /urteil. Die Seite holt
-// keinen neuen Stand, hat kein setInterval und bekommt keines -- sie erfaehrt
+// POST /beenden, oder einer ausbleibenden auf POST /urteil. Die Seite erfaehrt
 // nur, was auf ihre eigenen Anfragen zurueckkommt.
+//
+// DR: Bis hierher hiess diese Zusage zusaetzlich "holt keinen neuen Stand, hat
+// kein setInterval und bekommt keines". Der erste Teil stimmt so nicht mehr,
+// und er wird berichtigt statt weiter behauptet: die Seite fragt beim Laden
+// einmal /kette ab und waehrend eines LAUFENDEN Uploads wiederholt /lauf.
+//
+// Was gleich bleibt und der eigentliche Punkt war: die Seite fragt nie im
+// Hintergrund nach einem Zustand, den niemand angestossen hat. Der einzige
+// wiederholte Aufruf ist /lauf; er beginnt mit einem Klick auf Schritt 3 (oder
+// mit dem Laden einer Seite, waehrend ein Lauf schon laeuft), und er endet an
+// der Antwort des Dienstes -- laeuft:false --, nicht an einer Zeitrechnung
+// hier. Es gibt weiterhin kein setInterval, kein Neuladen, kein EventSource
+// und kein WebSocket, und die Karten holen sich weiterhin nichts.
 let sitzungVorbei = false;
 
 function sperreAlleKarten() {
   const felder = document.querySelectorAll('#karten input, #karten textarea, #karten button');
   for (let i = 0; i < felder.length; i++) felder[i].disabled = true;
   document.getElementById('karten').classList.add('vorbei');
+  // DR: Die Kette gehoert dazu. Ihre Knoepfe sprechen mit demselben Dienst;
+  // nach dem Abschalten haetten sie nur noch "antwortet nicht" zu bieten, und
+  // ein Knopf, der ins Leere greift, sieht aus wie ein kaputter.
+  const kette = document.getElementById('kette');
+  if (kette) {
+    const kk = kette.querySelectorAll('button');
+    for (let i = 0; i < kk.length; i++) kk[i].disabled = true;
+    kette.classList.add('vorbei');
+  }
 }
 
 function zeigeSitzungsende() {
@@ -492,6 +548,308 @@ document.getElementById('beenden').addEventListener('click', async () => {
     zeigeDienstWeg();
   }
 });
+
+// ---------------------------------------------------------------------------
+// DR: DIE KETTE -- Einplanen, Vorschau lesen, Hochladen
+// ---------------------------------------------------------------------------
+//
+// Bis DR endete diese Seite an den Karten, und danach tippte ein Mensch zwei
+// Befehle ins Terminal. Hier stehen jetzt drei Schritte. Was diese Seite dabei
+// NICHT tut, ist der Punkt:
+//
+//   - Sie entscheidet nichts. Ob Schritt 3 gehen darf, sagt der Dienst
+//     (Feld schritt3 aus /kette); der Knopf hier ist gesperrt, WEIL der Dienst
+//     das sagt, und nicht damit der Dienst es nicht mehr sagen muss. Eine
+//     Anfrage, die diesen Browser umgeht, faellt dort und nicht hier.
+//   - Sie baut keine Vorschau. Was in den Bloecken steht, ist woertlich die
+//     Ausgabe des Trockenlaufs, wie sie im Terminal stuende -- ueber
+//     textContent in den Baum gesetzt, nicht als Markup.
+//   - Sie kennt keinen Kanal, keine Pruefsumme und keine Zahl, die sie sich
+//     selbst ausgerechnet haette.
+//
+// ZEITGRENZEN: Schritt 1 startet den Planer und einen Trockenlauf, der ueber
+// jede Videodatei eine sha256 rechnet. Acht Sekunden reichen dafuer nicht --
+// darum eine eigene, lange Grenze. Ohne Grenze bliebe der Knopf bei einem
+// abgestuerzten Dienst fuer immer im Zustand "laeuft", und das ist genau das
+// Fehlerbild, gegen das ZEITGRENZE_MS oben gebaut ist.
+const ZEITGRENZE_KETTE_MS = 300000;
+const ZEITGRENZE_LAUF_MS = 15000;
+
+let kette = null;
+let vorschauGelesen = false;
+let laufAb = 0;
+let laufSchleifeLaeuft = false;
+
+function kel(id) { return document.getElementById(id); }
+
+async function hole(pfad, verfahren, grenze) {
+  const res = await fetch(pfad, {
+    method: verfahren,
+    headers: { 'X-Freigabe-Token': TOKEN },
+    signal: AbortSignal.timeout(grenze),
+  });
+  let leib = null;
+  try { leib = await res.json(); } catch (e) { leib = null; }
+  if (!res.ok) {
+    const e = new Error((leib && leib.meldung) ? leib.meldung : 'HTTP ' + res.status);
+    e.status = res.status;
+    throw e;
+  }
+  return leib;
+}
+
+function setzeMeldung(m) {
+  const kasten = kel('kettemeldung');
+  if (!m) { kasten.hidden = true; return; }
+  kasten.hidden = false;
+  kasten.className = 'warnung' + (m.art === 'bereit' ? ' ende' : (m.art === 'fehler' || m.art === 'gesperrt' ? ' weg' : ''));
+  kasten.textContent = '';
+  kasten.append(el('b', null, m.ueberschrift));
+  if (m.text) kasten.append(el('pre', null, m.text));
+  if (m.befehl) {
+    kasten.append(el('p', null, 'Derselbe Schritt im Terminal:'));
+    kasten.append(el('code', null, m.befehl));
+  }
+}
+
+// Die Vorschau in Bloecken statt als Klumpen. Der Trockenlauf trennt seine
+// Shorts mit einer Zeile aus 78 Gleichheitszeichen; genau daran wird
+// geschnitten. Faende sich keine, stuende alles in einem Block -- dann waere
+// die Ausgabe ein Klumpen, und das saehe man auch.
+function baueVorschau(v) {
+  const bereich = kel('vorschauBloecke');
+  bereich.textContent = '';
+  const teile = v.text.split(/\n=+\n/);
+  let nr = 0;
+  for (const teil of teile) {
+    if (!teil.trim()) continue;
+    const block = el('div', 'block');
+    const ersteZeile = teil.trim().split('\n')[0].trim();
+    const istShort = /^\[\d+\/\d+\]/.test(ersteZeile);
+    if (istShort) nr += 1;
+    // Vor dem ersten Short steht die Lage des Laufs, danach die Schlusszeilen
+    // des Trockenlaufs. Beide sind keine Shorts und bekommen darum eine
+    // Ueberschrift, die sagt, was sie sind -- zweimal "Lage dieses Laufs"
+    // waere eine Ueberschrift, die luegt.
+    block.append(el('h4', null,
+      istShort ? ersteZeile : (nr === 0 ? 'Lage dieses Laufs' : 'Was der Trockenlauf zum Schluss sagt')));
+    block.append(el('pre', null, teil.replace(/^\n+|\n+$/g, '')));
+    bereich.append(block);
+  }
+  kel('vorschau').hidden = false;
+  kel('vorschauKopf').textContent =
+    v.anzahl + ' Short(s) in diesem Lauf, ' + v.termine_im_plan + ' Termine im Plan, ' +
+    v.schon_hochgeladen + ' schon hochgeladen. Plan-sha256 ' + v.plan_sha256 + '. ' +
+    'Erzeugt ' + v.erstellt_am + ' -- woertlich die Ausgabe von: ' + (v.befehl || '');
+  vorschauGelesen = false;
+  pruefeGelesen();
+}
+
+// "Wer sie ueberspringt, soll das merken." Der scharfe Knopf bleibt gesperrt,
+// bis die Vorschau einmal bis unten durchgelaufen ist. Passt sie ohnehin ganz
+// ins Feld, gibt es nichts zu scrollen und sie gilt sofort als gesehen -- eine
+// Huerde, die sich nicht ueberwinden LAESST, waere keine Huerde, sondern ein
+// Fehler.
+function pruefeGelesen() {
+  const bereich = kel('vorschauBloecke');
+  if (!vorschauGelesen && bereich.scrollHeight - bereich.clientHeight <= 4) vorschauGelesen = true;
+  const hinweis = kel('gelesen');
+  hinweis.className = 'gelesen ' + (vorschauGelesen ? 'ja' : 'nein');
+  hinweis.textContent = vorschauGelesen
+    ? 'Vorschau bis zum Ende gesehen.'
+    : 'Die Vorschau ist laenger als das Feld. Der Knopf "Hochladen" bleibt gesperrt, bis sie ' +
+      'einmal bis unten durchgelaufen ist -- was gleich veroeffentlicht wird, steht darin.';
+  zeichneKette();
+}
+
+function zeichneKette() {
+  if (kette === null) return;
+  // Nach dem Sitzungsende bleibt gesperrt, was gesperrt wurde.
+  if (sitzungVorbei) return;
+  const k = kette;
+
+  kel('ketteLage').textContent =
+    'Aufnahme ' + k.aufnahme + '   —   Plan: ' +
+    (k.plan_vorhanden ? 'vorhanden (' + k.plan_pfad + ')' : 'noch keiner');
+
+  const s1 = kel('schritt1');
+  s1.disabled = !!(k.lauf && k.lauf.laeuft) || !k.eigene_projektwurzel;
+
+  const arch = kel('archivieren');
+  arch.hidden = !k.plan_vorhanden;
+  arch.disabled = !!(k.lauf && k.lauf.laeuft);
+
+  const s3 = kel('schritt3');
+  const v = k.vorschau;
+  s3.textContent = (v && v.anzahl)
+    ? 'Schritt 3: ' + v.anzahl + ' Short(s) hochladen — als PRIVAT auf den Kanal "' +
+      (v.kanal_name || '?') + '"'
+    : 'Schritt 3: Hochladen';
+  const serverBereit = k.schritt3 && k.schritt3.bereit;
+  s3.disabled = !serverBereit || !vorschauGelesen;
+  kel('schritt3grund').textContent = serverBereit
+    ? (vorschauGelesen
+      ? 'Ein Klick, kein getipptes Wort. Der Dienst schreibt dabei eine Einmal-Ermaechtigung; ' +
+        'der Uploader prueft sie, verbraucht sie und loescht sie.'
+      : 'Erst die Vorschau lesen.')
+    : (k.schritt3 ? k.schritt3.grund : '');
+
+  const kanalzeile = kel('kanalzeile');
+  if (v && v.kanal_bekannt) {
+    kanalzeile.textContent = 'Kanal laut data/inventory.json: "' + v.kanal_name + '"' +
+      (v.kanal_erzeugt_am ? ' (Stand ' + v.kanal_erzeugt_am + ')' : '') +
+      '. Die Kanalkennung geht in die Ermaechtigung; der Uploader haelt sie gegen den ' +
+      'angemeldeten Kanal und laedt nichts hoch, wenn sie abweicht.';
+  } else if (v) {
+    kanalzeile.textContent = 'KEIN KANAL ZU BENENNEN: ' + v.kanal_grund;
+  } else {
+    kanalzeile.textContent = '';
+  }
+}
+
+function zeichneLauf(daten) {
+  kel('lauf').hidden = false;
+  const kopf = kel('laufKopf');
+  kopf.textContent = '';
+  if (daten.lauf) {
+    kopf.append(el('p', 'kettezeile',
+      'Gestartet ' + daten.lauf.gestartet_am + ' — ' + daten.lauf.anzahl +
+      ' Short(s) auf "' + daten.lauf.kanal + '".'));
+    kopf.append(el('code', null, daten.lauf.befehl));
+  }
+  const ziel = kel('laufZeilen');
+  for (const z of daten.zeilen) {
+    const zeile = el('div', z.art === 'err' ? 'err' : (z.art === 'dienst' ? 'dienst' : ''), z.zeile);
+    ziel.append(zeile);
+  }
+  ziel.scrollTop = ziel.scrollHeight;
+  laufAb = daten.gesamt !== undefined ? daten.gesamt : laufAb;
+
+  const ende = kel('laufEnde');
+  if (daten.ende) {
+    ende.hidden = false;
+    ende.className = 'warnung ' + (daten.ende.code === 0 ? 'ende' : 'weg');
+    ende.textContent = '';
+    ende.append(el('b', null, daten.ende.code === 0
+      ? 'Der Uploader ist sauber durchgelaufen (Rueckgabewert 0).'
+      : 'Der Uploader ist mit Rueckgabewert ' + daten.ende.code + ' beendet.'));
+    ende.append(el('p', null,
+      daten.ende.code === 0
+        ? 'Was hochgeladen wurde, was uebersprungen und wo das Gedaechtnis liegt, steht in den ' +
+          'letzten Zeilen oben — sie sind woertlich die des Uploaders.'
+        : 'Der Grund steht oben im Wortlaut. Es ist nichts geraten und nichts ergaenzt.'));
+    ende.append(el('p', null, daten.ende.ermaechtigung_noch_da
+      ? 'ACHTUNG: die Ermaechtigungsdatei liegt noch da — der Uploader hat sie nicht ' +
+        'verbraucht. Sie laeuft von selbst ab.'
+      : 'Die Ermaechtigung ist verbraucht und geloescht. Ein weiterer Upload braucht wieder ' +
+        'Schritt 1 und Schritt 3.'));
+  }
+}
+
+function schlaf(ms) { return new Promise((f) => setTimeout(f, ms)); }
+
+// Der einzige wiederholte Aufruf dieser Seite -- und er laeuft NUR, solange
+// ein Lauf laeuft, den dieser Browser selbst angestossen hat. Er hoert von
+// selbst auf: das Ende kommt aus der Antwort des Dienstes, nicht aus einer
+// Zeitrechnung hier.
+async function verfolgeLauf() {
+  if (laufSchleifeLaeuft) return;
+  laufSchleifeLaeuft = true;
+  try {
+    for (;;) {
+      let daten;
+      try {
+        daten = await hole('/lauf?ab=' + laufAb, 'GET', ZEITGRENZE_LAUF_MS);
+      } catch (e) {
+        kel('laufEnde').hidden = false;
+        kel('laufEnde').className = 'warnung weg';
+        kel('laufEnde').textContent =
+          'Der Dienst antwortet nicht mehr (' + e.message + '). Was der Uploader tut, ist von ' +
+          'hier aus nicht mehr zu sehen — im Terminal des Dienstes steht es weiter.';
+        return;
+      }
+      zeichneLauf(daten);
+      if (!daten.laeuft) {
+        kette = await hole('/kette', 'GET', ZEITGRENZE_LAUF_MS);
+        zeichneKette();
+        return;
+      }
+      await schlaf(700);
+    }
+  } finally {
+    laufSchleifeLaeuft = false;
+  }
+}
+
+async function ladeKette() {
+  try {
+    kette = await hole('/kette', 'GET', ZEITGRENZE_LAUF_MS);
+  } catch (e) {
+    kel('ketteLage').textContent = 'Der Zustand der Kette ist nicht abrufbar: ' + e.message;
+    return;
+  }
+  setzeMeldung(kette.meldung);
+  if (kette.vorschau) baueVorschau(kette.vorschau);
+  zeichneKette();
+  if (kette.lauf) { laufAb = 0; kel('laufZeilen').textContent = ''; verfolgeLauf(); }
+}
+
+kel('vorschauBloecke').addEventListener('scroll', () => {
+  const b = kel('vorschauBloecke');
+  if (b.scrollTop + b.clientHeight >= b.scrollHeight - 4) {
+    if (!vorschauGelesen) { vorschauGelesen = true; pruefeGelesen(); }
+  }
+});
+
+async function knopfLauf(knopf, text, arbeit) {
+  const alt = knopf.textContent;
+  knopf.disabled = true;
+  knopf.textContent = text;
+  try {
+    await arbeit();
+  } catch (e) {
+    setzeMeldung({ art: 'fehler', ueberschrift: 'Der Schritt ist nicht durchgelaufen.',
+      text: e.message, befehl: null });
+  } finally {
+    knopf.textContent = alt;
+    zeichneKette();
+  }
+}
+
+kel('schritt1').addEventListener('click', () => knopfLauf(kel('schritt1'),
+  'plane ein und rechne die Vorschau ...', async () => {
+    kel('vorschau').hidden = true;
+    kel('lauf').hidden = true;
+    kette = await hole('/planen', 'POST', ZEITGRENZE_KETTE_MS);
+    setzeMeldung(kette.meldung);
+    if (kette.vorschau) baueVorschau(kette.vorschau);
+  }));
+
+kel('archivieren').addEventListener('click', () => {
+  const weiter = window.confirm(
+    'Den bestehenden Plan nach data/plaene/archiv/ verschieben und danach neu planen?\n\n' +
+    'Er wird verschoben, nicht geloescht. Ein Plan ist der Beleg dafuer, was hochgeladen ' +
+    'werden sollte — deshalb ist das ein eigener Knopf und kein Zwischenschritt.');
+  if (!weiter) return;
+  knopfLauf(kel('archivieren'), 'archiviere ...', async () => {
+    kel('vorschau').hidden = true;
+    kette = await hole('/archivieren', 'POST', ZEITGRENZE_KETTE_MS);
+    setzeMeldung(kette.meldung);
+  });
+});
+
+kel('schritt3').addEventListener('click', () => knopfLauf(kel('schritt3'),
+  'starte den Uploader ...', async () => {
+    laufAb = 0;
+    kel('laufZeilen').textContent = '';
+    kel('laufEnde').hidden = true;
+    await hole('/hochladen', 'POST', ZEITGRENZE_LAUF_MS);
+    kette = await hole('/kette', 'GET', ZEITGRENZE_LAUF_MS);
+    zeichneKette();
+    verfolgeLauf();
+  }));
+
+ladeKette();
 `;
 
 // sitzung: { aufnahme, freigabePfad, token, eingabeSha256, karten, stand }
@@ -539,6 +897,49 @@ function baueSeite(sitzung) {
     // an einer Antwort des Dienstes -- Sitzungsende oder "antwortet nicht".
     '<div class="warnung" id="beendet" hidden></div>',
     '<main id="karten"></main>',
+    // DR: Die Kette. Sie steht UNTERHALB der Karten und nicht darueber: erst
+    // wird geurteilt, dann geplant, dann hochgeladen. Wer hier oben anfaengt,
+    // plant Urteile ein, die noch niemand gefaellt hat.
+    '<section id="kette">',
+    '<h2>Nach der Freigabe &mdash; einplanen, lesen, hochladen</h2>',
+    '<p class="erklaerung">Diese drei Schritte ersetzen die beiden Befehle, die bisher ins ' +
+      'Terminal getippt wurden. Der Terminalweg bleibt vollstaendig bestehen und verlangt ' +
+      'dort weiterhin das getippte Wort &mdash; er ist der Rueckfallweg, wenn dieser Dienst ' +
+      'nicht laeuft. Was hier wegfaellt, ist das Tippen. Was nicht wegfaellt: dass ein ' +
+      'Mensch unmittelbar vorher sieht, was veroeffentlicht wird.</p>',
+    '<p class="kettezeile" id="ketteLage"></p>',
+    '<div class="schritt">',
+    '<h3>Schritt 1 &mdash; einplanen und Vorschau rechnen</h3>',
+    '<p>Ruft den Planer (schreibt <code>data/plaene/&lt;aufnahme&gt;.json</code>) und danach ' +
+      'den Trockenlauf des Uploaders. Der Trockenlauf macht keinen Netzaufruf und laedt ' +
+      'nichts hoch.</p>',
+    '<div class="knoepfe">',
+    '<button id="schritt1" class="gross">Einplanen und Vorschau</button>',
+    '<button id="archivieren" hidden>Alten Plan archivieren und neu planen</button>',
+    '</div>',
+    '<div class="warnung" id="kettemeldung" hidden></div>',
+    '</div>',
+    '<div class="schritt" id="vorschau" hidden>',
+    '<h3>Schritt 2 &mdash; die Vorschau lesen</h3>',
+    '<p class="kettezeile" id="vorschauKopf"></p>',
+    '<div class="vorschauBloecke" id="vorschauBloecke"></div>',
+    '<p class="gelesen nein" id="gelesen"></p>',
+    '</div>',
+    '<div class="schritt">',
+    '<h3>Schritt 3 &mdash; hochladen</h3>',
+    '<p class="kettezeile" id="kanalzeile"></p>',
+    '<div class="knoepfe">',
+    '<button id="schritt3" class="gross scharf" disabled>Schritt 3: Hochladen</button>',
+    '</div>',
+    '<p class="kettezeile" id="schritt3grund"></p>',
+    '</div>',
+    '<div class="schritt" id="lauf" hidden>',
+    '<h3>Der Lauf</h3>',
+    '<div id="laufKopf"></div>',
+    '<pre id="laufZeilen"></pre>',
+    '<div class="warnung" id="laufEnde" hidden></div>',
+    '</div>',
+    '</section>',
     '<script>',
     'const DATEN = ' + jsonFuerSkriptblock(nutzlast) + ';',
     // Auch die beiden Kopfzeilen gehen ueber textContent, nicht ueber Markup:

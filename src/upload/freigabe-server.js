@@ -24,8 +24,14 @@
 //    Pfadsperre -- und der stuende direkt neben den Ordnern "(vor-auflage)" und
 //    "(vor-pausenfix)", deren Inhalt von den guten Shorts nicht zu
 //    unterscheiden ist. In dieser Datei kommt der Dateiname "uebergabe.json"
-//    darum nur in Kommentaren vor, und fs.readFileSync wird auf genau zwei
-//    Dinge angewandt: die Freigabedatei und eine Videodatei aus der Sperre.
+//    darum nur in Kommentaren vor.
+//
+//    DR: fs.readFileSync trifft jetzt vier Dinge -- die Freigabedatei, eine
+//    Videodatei aus der Sperre, die Sperrdatei und data/inventory.json (fuer
+//    den Kanalnamen auf dem Knopf). Keines davon ist die Lieferung: Pfade,
+//    Pruefsummen und Titel kommen weiterhin ausschliesslich aus der Ausgabe
+//    des Lesers, und was der Uploader ueber Plan und Lieferung weiss, sagt er
+//    selbst -- dieser Dienst liest weder Plan noch Uebergabedatei.
 //
 // 2. KEIN KINDPROZESS ENTSTEHT ALS FOLGE EINES URTEILS.
 //
@@ -34,9 +40,14 @@
 //    aendert -- in DJ waren es zwei, mit dem Browser aus DJb sind es drei, und
 //    die Commit-Nachricht von 8061609 sagt sogar "der einzige". Alle drei
 //    Fassungen meinten dasselbe und keine sagte es: es geht nicht darum, WIE
-//    VIELE Prozesse starten, sondern WANN.
+//    VIELE Prozesse starten, sondern WOFUER.
 //
-//    Es gibt DREI Kindprozesse, alle beim Start, keinen danach:
+//    DR: Und genau deshalb steht die Zusage noch, obwohl es jetzt fuenf sind.
+//    Bis DR hiess der Zusatz "alle beim Start, keinen danach". Das stimmt
+//    nicht mehr -- die Kette startet Kindprozesse mitten im Betrieb. Der Kern
+//    stimmt weiter: KEIN URTEIL LOEST EINEN AUS.
+//
+//    Drei gehoeren zum Start:
 //      - der Leser (ruftLeser)          -- die EINGABE des Dienstes. Vor dem
 //        Port, vor der ersten Karte, bei jedem Start.
 //      - netstat (haelterDesPorts)      -- nur bei belegtem Port, und dann
@@ -44,13 +55,20 @@
 //      - der Browser (oeffneImBrowser)  -- einmal, nach listen(), ausser bei
 //        --no-browser. Scheitert er, laeuft der Dienst weiter.
 //
-//    NACH dem Start startet dieser Dienst nichts mehr. POST /urteil fuehrt zu
-//    schreibeFreigaben() und zu keinem spawn; POST /beenden schaltet ab und
-//    ruft nichts auf. Der Cutter macht nach seinem Urteilslauf von selbst
-//    weiter -- wir nicht.
+//    Zwei gehoeren zur Kette und haengen an je einem eigenen, benannten Knopf:
+//      - der Planer und der Trockenlauf des Uploaders (ruftPlaner,
+//        ruftUploaderTrocken) -- Schritt 1, "Einplanen und Vorschau".
+//      - der scharfe Uploader (starteUploaderLauf) -- Schritt 3, "Hochladen",
+//        und nur mit einer Einmal-Ermaechtigung, die dieser Dienst beim Klick
+//        schreibt.
 //
-//    Wer hier einen vierten anfuegt, muss sagen, ob er vor dem ersten Urteil
-//    liegt oder danach. Danach waere er eine Folge, und dann faellt der Test
+//    POST /urteil fuehrt weiterhin zu schreibeFreigaben() und zu keinem
+//    spawn; POST /beenden schaltet ab und ruft nichts auf. Der Weg vom Urteil
+//    zum Upload existiert nicht -- er geht ueber zwei weitere Klicks und eine
+//    Vorschau, die ein Mensch gelesen haben muss.
+//
+//    Wer hier einen sechsten anfuegt, muss sagen, an welcher Handlung eines
+//    Menschen er haengt. Haengt er an einem Urteil, faellt der Test
 //    'kein Kindprozess entsteht als Folge eines Urteils'.
 //
 // 3. ES GIBT KEINEN WEG VON EINER ANFRAGE ZU EINEM DATEISYSTEMPFAD.
@@ -59,22 +77,33 @@
 //    sperre.oeffnen() im Leser -- und zwar woertlich dieselbe Funktion, sie
 //    wird von dort importiert, damit es nicht zwei Fassungen davon gibt.
 //
-// 4. DER DIENST SCHREIBT ZWEI DATEIEN, JEDE DURCH GENAU EINE FUNKTION.
+// 4. DER DIENST SCHREIBT VIER DATEIEN, JEDE DURCH GENAU EINE FUNKTION.
 //
 //    Bis DJ hiess diese Zeile "ausschliesslich die Freigabedatei". Mit der
-//    Einzelinstanz-Sperre (DJa) stimmt das nicht mehr, und die Zeile wurde
-//    berichtigt statt weiter behauptet -- eine Zusage, die man nachtraeglich
-//    zurechtbiegt, ist keine.
+//    Einzelinstanz-Sperre (DJa) wurden zwei daraus, mit der Kette (DR) vier.
+//    Die Zeile wird jedes Mal BERICHTIGT statt weiter behauptet -- eine
+//    Zusage, die man nachtraeglich zurechtbiegt, ist keine. Was sich NICHT
+//    aendert, ist ihre Form: eine aufgezaehlte Liste von Zielen, je Ziel genau
+//    eine Funktion, und jede andere Zeile faellt durch den Test.
 //
-//      data/freigaben/<aufnahme>.json         <- schreibeFreigaben()
-//      data/freigaben/<aufnahme>.sperre.json  <- nimmSperre() /
-//                                                schreibeSperrinhalt() /
-//                                                gibSperreFrei()
+//      data/freigaben/<aufnahme>.json          <- schreibeFreigaben()
+//      data/freigaben/<aufnahme>.sperre.json   <- nimmSperre() /
+//                                                 schreibeSperrinhalt() /
+//                                                 gibSperreFrei()
+//      data/plaene/archiv/<aufnahme>.…json     <- archiviereAltenPlan()
+//      data/ermaechtigungen/ermaechtigung-….json
+//                                              <- schreibeErmaechtigung()
 //
-//    Beide liegen unter data/, und data/ steht in .gitignore. Ein dritter Ort
+//    Alle liegen unter data/, und data/ steht in .gitignore. Ein fuenfter Ort
 //    kommt nicht dazu. Das ist nachpruefbar, und tests/freigabe-server.test.cjs
 //    rechnet es bei jedem Lauf nach: JEDER Schreibaufruf dieser Datei muss im
-//    Rumpf einer dieser vier Funktionen liegen, sonst faellt der Test.
+//    Rumpf einer dieser sechs Funktionen liegen, sonst faellt der Test.
+//
+//    NICHT GEZAEHLT SIND DIE KINDPROZESSE. Der Planer schreibt
+//    data/plaene/<aufnahme>.json, der Uploader data/uploads/<aufnahme>.json
+//    und data/ermaechtigungen/verbraucht.json -- das sind Schreibzugriffe
+//    IHRER Module, nach IHREN Regeln, mit IHREN Tests. Dieser Dienst ruft sie
+//    auf; er schreibt diese Dateien nicht.
 
 const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 
@@ -285,9 +314,14 @@ function baueKarten(bericht) {
 // Beschneiden hiesse, dass jemand einen anderen Titel veroeffentlicht als den,
 // den er gelesen hat.
 //
-// Gezaehlt werden Codepunkte (Array.from), nicht UTF-16-Einheiten. Ein Emoji
-// ist damit EIN Zeichen -- so, wie ein Mensch zaehlt, wenn er "hoechstens 100
-// Zeichen" liest.
+// GEZAEHLT WIRD MIT DER ZAEHLFUNKTION DES UPLOADERS, nicht mit einer eigenen.
+//
+// Bis DR stand hier ein eigenes Array.from() und im Uploader ein .length --
+// Codepunkte gegen UTF-16-Einheiten. Bei einem Titel mit einem Emoji hiess das
+// 57 gegen 102: diese Seite haette ihn angenommen und der Uploader ihn
+// abgewiesen, und zwar erst nach der Freigabe. Beide Seiten rufen jetzt
+// dieselbe Funktion, und die Begruendung fuer ihre Zaehlweise steht dort --
+// gemessen an 998 Titeln, die YouTube fuer diesen Kanal angenommen hat.
 function pruefeTitel(roh) {
   if (typeof roh !== 'string') {
     return { ok: false, code: 'titel_kein_text',
@@ -302,7 +336,7 @@ function pruefeTitel(roh) {
       meldung: 'Der Titel besteht nur aus Leerzeichen (' + roh.length + ' Stueck). ' +
         'Das ist kein Titel, sieht aber im Feld wie einer aus.' };
   }
-  const zeichen = Array.from(roh).length;
+  const zeichen = UPLOADER_MODUL.zaehleTitelZeichen(roh);
   if (zeichen > TITEL_MAX_ZEICHEN) {
     return { ok: false, code: 'titel_zu_lang',
       meldung: 'Der Titel hat ' + zeichen + ' Zeichen, hoechstens ' + TITEL_MAX_ZEICHEN +
@@ -700,6 +734,328 @@ function meldeFremdeSperre(ergebnis, aufnahme) {
 }
 
 // ---------------------------------------------------------------------------
+// DIE KETTE (DR) -- EINPLANEN, VORSCHAU, HOCHLADEN
+// ---------------------------------------------------------------------------
+//
+// WAS SICH HIER AENDERT, UND WAS AUSDRUECKLICH NICHT.
+//
+// Bis DR endete dieser Dienst an der Freigabeseite. Danach tippte Joshua zwei
+// Befehle ins Terminal: den Planer und den Uploader, den zweiten mit --execute
+// und einem getippten HOCHLADEN. Das faellt hier weg -- drei Schritte auf der
+// Seite treten an seine Stelle:
+//
+//   Schritt 1  "Einplanen und Vorschau"   -> ruftPlaner + ruftUploaderTrocken
+//   Schritt 2  die Vorschau lesen          -> nichts; das tut ein Mensch
+//   Schritt 3  "Hochladen"                 -> schreibeErmaechtigung +
+//                                             starteUploaderLauf
+//
+// DER TERMINALWEG BLEIBT VOLLSTAENDIG BESTEHEN UND UNVERAENDERT. Er ist der
+// Rueckfallweg, wenn dieser Dienst nicht laeuft, und er verlangt weiterhin das
+// getippte Wort. Nichts an planer.js oder am Terminalzweig von uploader.js ist
+// dafuer angefasst worden.
+//
+// DREI ZUSAGEN DIESES DIENSTES SIND DAMIT ANDERS GEWORDEN. Sie werden hier
+// NEU FORMULIERT und nicht stillschweigend fallengelassen:
+//
+//   (a) "Der Dienst schreibt ZWEI Dateien" (harte Linie 4) heisst jetzt VIER,
+//       jede weiterhin durch genau eine Funktion. Dazu unten.
+//   (b) "Es gibt drei Kindprozesse, alle beim Start" (harte Linie 2) stimmt
+//       nicht mehr. Was stimmt und was der Punkt daran war, steht dort.
+//   (c) "Ein Urteil loest nichts aus -- kein Upload, kein Folgeschritt"
+//       (Commit 8061609) gilt UNVERAENDERT: kein Urteil loest hier etwas aus.
+//       Ausgeloest wird die Kette von drei eigenen, benannten Knoepfen, jeder
+//       mit einer eigenen Route, und keiner davon haengt an POST /urteil.
+//
+// WARUM DER DIENST DEN PLANER UND DEN UPLOADER AUFRUFT UND NICHT NACHBAUT:
+// derselbe Grund wie beim Leser (siehe oben bei LESER). Ein zweiter Planer
+// waere ein zweiter, der die 08-20-Uhr-Regel kennt; ein zweiter Uploader waere
+// einer ohne die Sperrliste, ohne die Pruefsummenpruefung und ohne das fest
+// verdrahtete privacyStatus. Hier stehen spawn-Aufrufe auf ihre Dateien und
+// kein Nachbau ihrer Regeln.
+
+const PLANER = path.join(__dirname, 'planer.js');
+const UPLOADER = path.join(__dirname, 'uploader.js');
+
+// Die Form der Ermaechtigung kommt von dem, der sie PRUEFT -- aus uploader.js.
+// Sie hier ein zweites Mal hinzuschreiben hiesse, die Felder des scharfen
+// Laufs an zwei Stellen zu pflegen; die zweite waere ausgerechnet die, die ihn
+// ausloest.
+const UPLOADER_MODUL = require('./uploader');
+
+// Die Projektwurzel DIESES Moduls. Sie ist zugleich die des Planers und die
+// des Uploaders -- alle drei liegen in src/upload/ und rechnen sie gleich aus.
+// Genau deshalb darf die Kette nur auf einer Sitzung laufen, die dieselbe
+// Wurzel traegt: ein Kindprozess koennte gar nicht auf eine andere gelenkt
+// werden, und ein Dienst, der auf Wurzel A zeigt, waehrend seine Kinder auf B
+// schreiben, waere die gefaehrlichste Art von Missverstaendnis.
+const PROJEKTWURZEL = path.join(__dirname, '..', '..');
+
+const ARCHIV_ORDNER = 'archiv';
+
+// Der Plan- und der Ermaechtigungspfad kommen aus uploader.js. Es gibt damit
+// weiterhin genau eine Stelle je Zielordner im Projekt.
+function planPfadDerKette(projektwurzel, aufnahme) {
+  return UPLOADER_MODUL.planPfad(projektwurzel, aufnahme);
+}
+
+// Wie sperrPfad ueber freigabePfad geht, geht dieser hier ueber planPfad: der
+// Ordner data/plaene steht nicht ein zweites Mal im Projekt.
+function archivPfad(projektwurzel, aufnahme, jetzt) {
+  const plan = planPfadDerKette(projektwurzel, aufnahme);
+  const stempel = new Date(jetzt).toISOString().replace(/[:.]/g, '-');
+  return path.join(path.dirname(plan), ARCHIV_ORDNER, aufnahme + '.archiviert-' + stempel + '.json');
+}
+
+// SCHREIBWEG 3: DAS ARCHIVIEREN.
+//
+// Der Planer weigert sich, einen bestehenden Plan zu ueberschreiben, und das
+// bleibt so -- es ist die richtige Weigerung: ein Plan ist der Beleg dafuer,
+// was hochgeladen werden sollte. Wer neu planen will, raeumt den alten weg,
+// und das ist eine HANDLUNG EINES MENSCHEN. Auf der Seite steht dafuer ein
+// eigener, benannter Knopf; es gibt keinen stillen Zwischenschritt, der das
+// nebenbei erledigt.
+//
+// VERSCHOBEN, NICHT GELOESCHT. renameSync innerhalb desselben Ordnerbaums:
+// entweder ist der Plan danach im Archiv oder er liegt noch da, wo er lag. Ein
+// dritter Ausgang -- weg -- kann nicht entstehen.
+function archiviereAltenPlan(projektwurzel, aufnahme, jetzt = Date.now()) {
+  const quelle = planPfadDerKette(projektwurzel, aufnahme);
+  const ziel = archivPfad(projektwurzel, aufnahme, jetzt);
+  fs.mkdirSync(path.dirname(ziel), { recursive: true });
+  fs.renameSync(quelle, ziel);
+  return { quelle, ziel };
+}
+
+// SCHREIBWEG 4: DIE EINMAL-ERMAECHTIGUNG.
+//
+// Atomar wie die Freigabedatei: temporaere Datei im selben Verzeichnis, fsync,
+// umbenennen. Eine halb geschriebene Ermaechtigung waere hier kein Datenverlust
+// -- der Uploader wuerde sie ablehnen --, aber sie waere ein Fehlerbild, das
+// wie ein Angriff aussieht und keiner ist.
+//
+// WARUM SIE UEBERHAUPT UEBER EINE DATEI GEHT und nicht ueber ein Argument:
+// ein Argument stuende in der Prozessliste jedes Benutzers dieses Rechners,
+// und der Uploader koennte nicht pruefen, WANN es entstanden ist. Die Datei
+// traegt ihren Zeitpunkt in sich und wird beim Verbrauch geloescht.
+function schreibeErmaechtigung(pfad, inhalt) {
+  const text = JSON.stringify(inhalt, null, 2) + '\n';
+  const verzeichnis = path.dirname(pfad);
+  fs.mkdirSync(verzeichnis, { recursive: true });
+  const tmp = path.join(verzeichnis,
+    '.' + path.basename(pfad) + '.tmp.' + process.pid + '.' + (++tmpZaehler));
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'wx');
+    fs.writeFileSync(fd, text, 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, pfad);
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (x) { /* egal */ } }
+    try { fs.unlinkSync(tmp); } catch (x) { /* war nie da */ }
+    throw e;
+  }
+  return text;
+}
+
+// AUF WELCHEN KANAL? Die Frage stand bisher in der getippten Rueckfrage des
+// Uploaders, und sie muss auf dem Knopf stehen -- ein Knopf, der nicht sagt,
+// wohin er sendet, ist keine Bestaetigung.
+//
+// DIESER DIENST FRAGT DAFUER NICHT DAS NETZ. Er hat noch nie einen Netzaufruf
+// gemacht, und das soll so bleiben; die Seite selbst darf nach ihrer eigenen
+// Richtlinie ohnehin nur mit ihm sprechen. Genommen wird darum, was der letzte
+// Lauf von `npm run inventory` auf die Platte geschrieben hat.
+//
+// DAS IST NUR DIE ANZEIGE. Verbindlich wird die Angabe erst dadurch, dass die
+// Kanalkennung in die Ermaechtigung geht und der Uploader sie gegen
+// channels.list haelt -- er ist der einzige hier, der den Kanal wirklich
+// fragen kann. Stimmt sie nicht, laedt er nichts hoch. Fehlt inventory.json,
+// wird Schritt 3 gar nicht erst angeboten: ein Knopf, der den Kanal nicht
+// nennen kann, erfuellt seine Aufgabe nicht.
+function leseKanal(projektwurzel) {
+  const p = path.join(projektwurzel, 'data', 'inventory.json');
+  let text;
+  try { text = fs.readFileSync(p, 'utf8'); } catch (e) {
+    return { ok: false, pfad: p,
+      grund: 'data/inventory.json ist nicht lesbar (' + (e.code || e.message) + '). Ohne sie ' +
+        'kann dieser Dienst den Kanal nicht benennen. Einmal `npm run inventory` laufen ' +
+        'lassen -- oder den Terminalweg nehmen, dort nennt der Uploader den Kanal selbst.' };
+  }
+  let d;
+  try { d = JSON.parse(text); } catch (e) {
+    return { ok: false, pfad: p, grund: 'data/inventory.json ist kein JSON (' + e.message + ').' };
+  }
+  if (!d || typeof d.channelId !== 'string' || !d.channelId.trim() ||
+      typeof d.channelTitle !== 'string' || !d.channelTitle.trim()) {
+    return { ok: false, pfad: p,
+      grund: 'data/inventory.json nennt keinen Kanal (channelId/channelTitle fehlen).' };
+  }
+  return { ok: true, pfad: p, id: d.channelId, name: d.channelTitle,
+    erzeugt_am: typeof d.generatedAt === 'string' ? d.generatedAt : null };
+}
+
+// ---------------------------------------------------------------------------
+// Die beiden Kindprozesse der Kette
+// ---------------------------------------------------------------------------
+
+// Beide sind spawnSync und blockieren damit den Dienst, solange sie laufen.
+// Das ist Absicht: waehrend Schritt 1 laeuft, soll auf dieser Seite nichts
+// anderes gehen -- schon gar kein zweiter Schritt 1. Ein Mensch, der auf eine
+// Vorschau wartet, spielt kein Video ab.
+
+function ruftPlaner(aufnahme) {
+  const argumente = [PLANER, '--freigabe=' + aufnahme, '--execute', '--json'];
+  const lauf = spawnSync(process.execPath, argumente, {
+    encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 170000,
+  });
+  return {
+    befehl: 'node ' + path.relative(PROJEKTWURZEL, PLANER) + ' --freigabe="' + aufnahme +
+      '" --execute --json',
+    code: lauf.status, fehler: lauf.error ? lauf.error.message : null,
+    aus: lauf.stdout || '', err: lauf.stderr || '',
+  };
+}
+
+// Der Trockenlauf des Uploaders -- WOERTLICH derselbe, der im Terminal steht.
+// Kein Netzaufruf, kein Upload; --vorschau-json legt auf stderr eine Zeile mit
+// den Zahlen dazu, damit dieser Dienst die Vorschau nicht nach ihnen absuchen
+// muss. stdout bleibt Byte fuer Byte die Ausgabe des Terminalwegs.
+function ruftUploaderTrocken(aufnahme) {
+  const argumente = [UPLOADER, '--plan=' + aufnahme, '--vorschau-json'];
+  const lauf = spawnSync(process.execPath, argumente, {
+    encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 170000,
+  });
+  return {
+    befehl: 'node ' + path.relative(PROJEKTWURZEL, UPLOADER) + ' --plan="' + aufnahme + '"',
+    code: lauf.status, fehler: lauf.error ? lauf.error.message : null,
+    aus: lauf.stdout || '', err: lauf.stderr || '',
+  };
+}
+
+// Der scharfe Lauf. spawn (nicht spawnSync): er dauert Minuten, und die Seite
+// soll waehrenddessen den Fortschritt je Short sehen koennen.
+//
+// stdin ist 'ignore'. Der Uploader hat damit kein Terminal -- und genau das
+// ist der Fall, in dem er OHNE Ermaechtigung mit Rueckgabewert 4 abbricht.
+// Dass er hier laeuft, liegt allein an --bestaetigt-durch=.
+function starteUploaderLauf(sitzung, ermaechtigungPfad, beiZeile, beiEnde) {
+  const argumente = [UPLOADER, '--plan=' + sitzung.aufnahme, '--execute',
+    '--bestaetigt-durch=' + ermaechtigungPfad];
+  const kind = spawn(process.execPath, argumente, {
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  });
+  const rest = { aus: '', err: '' };
+  const strom = (name, kanal) => {
+    kanal.setEncoding('utf8');
+    kanal.on('data', (s) => {
+      rest[name] += s;
+      const teile = rest[name].split('\n');
+      rest[name] = teile.pop();
+      for (const z of teile) beiZeile(name, z);
+    });
+  };
+  strom('aus', kind.stdout);
+  strom('err', kind.stderr);
+  kind.on('error', (e) => {
+    beiZeile('err', 'Der Uploader liess sich nicht starten: ' + (e.code || e.message));
+    beiEnde(null, null);
+  });
+  kind.on('close', (code, signal) => {
+    if (rest.aus) beiZeile('aus', rest.aus);
+    if (rest.err) beiZeile('err', rest.err);
+    beiEnde(code, signal);
+  });
+  return {
+    kind,
+    befehl: 'node ' + path.relative(PROJEKTWURZEL, UPLOADER) + ' --plan="' + sitzung.aufnahme +
+      '" --execute --bestaetigt-durch=<ermaechtigung>',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Der Zustand der Kette -- serverseitig, und der Server ist der einzige Ort
+// ---------------------------------------------------------------------------
+//
+// N4 haengt an dieser Stelle: Schritt 3 ist nicht anklickbar, bevor Schritt 1
+// gelaufen ist -- und zwar HIER geprueft, nicht im Browser. Der Browser sperrt
+// den Knopf zusaetzlich, aber das ist Bequemlichkeit; eine Anfrage, die den
+// Browser umgeht, faellt an schritt3Bereit().
+function neueKette() {
+  return {
+    vorschau: null,       // { text, plan_sha256, anzahl, ... } -- Schritt 1 gelaufen
+    meldung: null,        // was Schritt 1 zu sagen hatte
+    planWarSchonDa: false,
+    archiviert: [],
+    lauf: null,
+  };
+}
+
+function schritt3Bereit(sitzung) {
+  const k = sitzung.kette;
+  if (k.lauf && k.lauf.laeuft) {
+    return { bereit: false, grund: 'Es laeuft gerade ein Upload. Zwei gleichzeitig gibt es nicht.' };
+  }
+  if (k.lauf && k.lauf.ende) {
+    return { bereit: false, grund: 'Dieser Lauf ist abgeschlossen. Fuer einen weiteren zuerst ' +
+      'wieder Schritt 1 -- dann sieht auch wieder ein Mensch, was hochginge.' };
+  }
+  if (!k.vorschau) {
+    return { bereit: false, grund: 'Schritt 1 ist noch nicht gelaufen. Es gibt keine Vorschau, ' +
+      'also hat niemand gesehen, was hochgehen wuerde.' };
+  }
+  if (k.vorschau.anzahl === 0) {
+    return { bereit: false, grund: 'Die Vorschau nennt 0 Shorts. Es gibt nichts hochzuladen.' };
+  }
+  if (!k.vorschau.kanal_bekannt) {
+    return { bereit: false, grund: 'Der Kanal ist nicht zu benennen: ' + k.vorschau.kanal_grund };
+  }
+  return { bereit: true, grund: null };
+}
+
+function kettenstand(sitzung) {
+  const k = sitzung.kette;
+  const b = schritt3Bereit(sitzung);
+  const planVorhanden = fs.existsSync(planPfadDerKette(sitzung.projektwurzel, sitzung.aufnahme));
+  return {
+    aufnahme: sitzung.aufnahme,
+    eigene_projektwurzel: sitzung.projektwurzel === PROJEKTWURZEL,
+    plan_vorhanden: planVorhanden,
+    plan_pfad: planPfadDerKette(sitzung.projektwurzel, sitzung.aufnahme),
+    plan_war_schon_da: k.planWarSchonDa,
+    archiviert: k.archiviert,
+    meldung: k.meldung,
+    // Der Kanal geht als NAME auf die Seite, nicht als Kennung. Die Kennung
+    // steht in der Ermaechtigung, wo sie hingehoert -- gebraucht wird sie vom
+    // Uploader und nicht vom Browser.
+    vorschau: k.vorschau === null ? null : {
+      text: k.vorschau.text,
+      befehl: k.vorschau.befehl,
+      anzahl: k.vorschau.anzahl,
+      kennungen: k.vorschau.kennungen,
+      termine_im_plan: k.vorschau.termine_im_plan,
+      schon_hochgeladen: k.vorschau.schon_hochgeladen,
+      plan_sha256: k.vorschau.plan_sha256,
+      erstellt_am: k.vorschau.erstellt_am,
+      kanal_name: k.vorschau.kanal_name,
+      kanal_bekannt: k.vorschau.kanal_bekannt,
+      kanal_grund: k.vorschau.kanal_grund,
+      kanal_erzeugt_am: k.vorschau.kanal_erzeugt_am,
+    },
+    lauf: k.lauf === null ? null : {
+      laeuft: k.lauf.laeuft,
+      gestartet_am: k.lauf.gestartet_am,
+      anzahl: k.lauf.anzahl,
+      befehl: k.lauf.befehl,
+      zeilen_gesamt: k.lauf.zeilen.length,
+      ende: k.lauf.ende,
+    },
+    schritt3: b,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Bereichsanfragen (RFC 7233) -- Pflicht fuer <video>
 // ---------------------------------------------------------------------------
 
@@ -735,8 +1091,8 @@ function leseBereich(kopf, dateiGroesse) {
 // Der Dienst
 // ---------------------------------------------------------------------------
 
-const ROUTEN_GET = new Set(['/', '/video', '/stand']);
-const ROUTEN_POST = new Set(['/urteil', '/beenden']);
+const ROUTEN_GET = new Set(['/', '/video', '/stand', '/kette', '/lauf']);
+const ROUTEN_POST = new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']);
 
 function gleichSicher(a, b) {
   const x = Buffer.from(String(a), 'utf8');
@@ -837,12 +1193,21 @@ function baueDienst(sitzung) {
           JSON.stringify(sitzungsstand(sitzung), null, 2) + '\n');
         return;
       }
+      if (pfad === '/kette') {
+        antwort(res, 200, 'application/json; charset=utf-8',
+          JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+        return;
+      }
+      if (pfad === '/lauf') { liefereLauf(res, abfrage); return; }
       liefereVideo(req, res, abfrage);
       return;
     }
     if (req.method === 'POST') {
       if (!ROUTEN_POST.has(pfad)) { fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.'); return; }
       if (pfad === '/beenden') { beende(res); return; }
+      if (pfad === '/planen') { nimmPlanen(res); return; }
+      if (pfad === '/archivieren') { nimmArchivieren(res); return; }
+      if (pfad === '/hochladen') { nimmHochladen(res); return; }
       nimmUrteil(req, res);
       return;
     }
@@ -1040,6 +1405,323 @@ function baueDienst(sitzung) {
   }
 
   // -------------------------------------------------------------------------
+  // DIE KETTE (DR): POST /planen, POST /archivieren, POST /hochladen, GET /lauf
+  // -------------------------------------------------------------------------
+
+  // Die Kette laeuft NUR auf einer Sitzung, deren Projektwurzel die dieses
+  // Moduls ist. Planer und Uploader rechnen sich ihre Wurzel selbst aus und
+  // liessen sich gar nicht auf eine andere lenken; ein Dienst, der auf Wurzel A
+  // zeigt, waehrend seine Kinder auf B schreiben, waere die gefaehrlichste Art
+  // von Missverstaendnis -- die Seite zeigte dann etwas anderes an, als
+  // geschieht. Die Tests bauen Sitzungen auf Wegwerfordner; die duerfen die
+  // Kette nicht anfassen, und das sagt ihnen diese Zeile.
+  function fremdeWurzel(res) {
+    if (sitzung.projektwurzel === PROJEKTWURZEL) return false;
+    fehler(res, 409, 'fremde_projektwurzel',
+      'Diese Sitzung laeuft auf der Projektwurzel ' + JSON.stringify(sitzung.projektwurzel) +
+      ', Planer und Uploader arbeiten aber immer auf ' + JSON.stringify(PROJEKTWURZEL) +
+      '. Die Kette wird nicht angeboten: sie wuerde auf einem anderen Ordner arbeiten als ' +
+      'dem, den diese Seite anzeigt.');
+    return true;
+  }
+
+  // Sucht in der stderr-Ausgabe des Trockenlaufs die eine Zeile, die
+  // --vorschau-json dort hinterlassen hat. Gesucht wird nach dem
+  // artifact_type und nicht nach der Position: stderr kann auch Warnungen von
+  // node tragen, und die stehen mal davor und mal dahinter.
+  function findeVorschauJson(text) {
+    for (const zeile of String(text).split(/\r?\n/)) {
+      const t = zeile.trim();
+      if (!t.startsWith('{')) continue;
+      let d;
+      try { d = JSON.parse(t); } catch (e) { continue; }
+      if (d && d.artifact_type === 'adw_shorts_vorschau') return d;
+    }
+    return null;
+  }
+
+  // SCHRITT 1. Der Dienst plant ein und laesst danach den Trockenlauf laufen.
+  //
+  // DER PLANER WIRD UEBERSPRUNGEN, WENN ES SCHON EINEN PLAN GIBT -- und zwar
+  // hier, an einem existsSync, und nicht dadurch, dass man seine Absage
+  // hinterher am Text erkennt. Seine Weigerung bleibt unangetastet: es gibt
+  // weiterhin kein --ersetzen, und ueberschrieben wird nichts. Die Seite sagt
+  // stattdessen, dass ein Plan da ist, und bietet den benannten Knopf zum
+  // Archivieren an. Der Trockenlauf laeuft trotzdem: eine Vorschau auf den
+  // BESTEHENDEN Plan ist genau das, was ein Mensch jetzt sehen will.
+  function nimmPlanen(res) {
+    if (fremdeWurzel(res)) return;
+    const k = sitzung.kette;
+    if (k.lauf && k.lauf.laeuft) {
+      fehler(res, 409, 'lauf_laeuft',
+        'Es laeuft gerade ein Upload. Solange er laeuft, wird nicht neu geplant.');
+      return;
+    }
+    // Ein neuer Schritt 1 setzt einen abgeschlossenen Lauf und die alte
+    // Vorschau zurueck. Eine Vorschau, die neben einem fertigen Lauf steht,
+    // beschreibt eine Lage, die es nicht mehr gibt.
+    k.vorschau = null;
+    k.meldung = null;
+    k.lauf = null;
+
+    const pp = planPfadDerKette(sitzung.projektwurzel, sitzung.aufnahme);
+    k.planWarSchonDa = fs.existsSync(pp);
+
+    let planer = null;
+    if (!k.planWarSchonDa) {
+      planer = ruftPlaner(sitzung.aufnahme);
+      if (planer.fehler) {
+        k.meldung = { art: 'fehler', ueberschrift: 'Der Planer liess sich nicht starten.',
+          text: planer.fehler, befehl: planer.befehl };
+        antwort(res, 200, 'application/json; charset=utf-8',
+          JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+        return;
+      }
+      if (planer.code === EXIT.GESPERRT) {
+        k.meldung = { art: 'gesperrt',
+          ueberschrift: 'Diese Aufnahme ist zum Planen GESPERRT.',
+          text: planer.err || planer.aus, befehl: planer.befehl };
+        antwort(res, 200, 'application/json; charset=utf-8',
+          JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+        return;
+      }
+      if (planer.code !== EXIT.OK) {
+        // Der Planer sagt "alles schon hochgeladen" mit Rueckgabewert 1 und
+        // einem JSON auf stdout. Das ist kein Fehler, sondern eine Lage.
+        let d = null;
+        try { d = JSON.parse(planer.aus); } catch (e) { d = null; }
+        if (d && d.ergebnis === 'alles_hochgeladen') {
+          k.meldung = { art: 'alles_hochgeladen',
+            ueberschrift: 'Alle freigegebenen Shorts dieser Aufnahme sind schon hochgeladen.',
+            text: 'Freigegeben: ' + d.freigegeben + ', davon schon hochgeladen: ' +
+              (d.uebersprungen_hochgeladen || []).length + '. Es wurde KEINE Planungsdatei ' +
+              'angelegt -- auch keine leere. Es gibt hier nichts zu tun.',
+            befehl: planer.befehl };
+        } else {
+          k.meldung = { art: 'fehler', ueberschrift: 'Der Planer hat keinen Plan erstellt.',
+            text: (planer.err || planer.aus || '').trim(), befehl: planer.befehl };
+        }
+        antwort(res, 200, 'application/json; charset=utf-8',
+          JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+        return;
+      }
+    }
+
+    // Der Trockenlauf. Er laeuft in beiden Faellen -- frisch geplant oder
+    // Plan war schon da.
+    const trocken = ruftUploaderTrocken(sitzung.aufnahme);
+    if (trocken.fehler) {
+      k.meldung = { art: 'fehler', ueberschrift: 'Der Trockenlauf liess sich nicht starten.',
+        text: trocken.fehler, befehl: trocken.befehl };
+      antwort(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+      return;
+    }
+    if (trocken.code === EXIT.GESPERRT) {
+      k.meldung = { art: 'gesperrt',
+        ueberschrift: 'Diese Aufnahme ist zum Hochladen GESPERRT.',
+        text: trocken.err || trocken.aus, befehl: trocken.befehl };
+      antwort(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+      return;
+    }
+    const zahlen = findeVorschauJson(trocken.err);
+    if (trocken.code !== EXIT.OK || zahlen === null) {
+      k.meldung = { art: 'fehler',
+        ueberschrift: 'Der Trockenlauf hat keine Vorschau ergeben (Rueckgabewert ' +
+          trocken.code + ').',
+        text: ((trocken.aus || '') + '\n' + (trocken.err || '')).trim(), befehl: trocken.befehl };
+      antwort(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+      return;
+    }
+    if (zahlen.anzahl === 0) {
+      k.meldung = { art: 'alles_hochgeladen',
+        ueberschrift: 'Es gibt nichts hochzuladen.',
+        text: 'Der Plan hat ' + zahlen.termine_im_plan + ' Termine, davon stehen ' +
+          zahlen.schon_hochgeladen + ' schon im Gedaechtnis. Fuer diesen Lauf bleiben 0 ' +
+          'Shorts. Es wird nichts angeboten.',
+        befehl: trocken.befehl };
+      // Die Vorschau wird trotzdem aufgehoben und gezeigt -- sie sagt, WAS
+      // schon hochgeladen ist. Schritt 3 bleibt gesperrt (anzahl === 0).
+    }
+
+    const kanal = leseKanal(sitzung.projektwurzel);
+    k.vorschau = {
+      text: trocken.aus,
+      plan_sha256: zahlen.plan_sha256,
+      plan_pfad: zahlen.plan_pfad,
+      anzahl: zahlen.anzahl,
+      kennungen: zahlen.kennungen || [],
+      termine_im_plan: zahlen.termine_im_plan,
+      schon_hochgeladen: zahlen.schon_hochgeladen,
+      erstellt_am: new Date().toISOString(),
+      befehl: trocken.befehl,
+      kanal_bekannt: kanal.ok,
+      kanal_id: kanal.ok ? kanal.id : null,
+      kanal_name: kanal.ok ? kanal.name : null,
+      kanal_erzeugt_am: kanal.ok ? kanal.erzeugt_am : null,
+      kanal_grund: kanal.ok ? null : kanal.grund,
+    };
+    if (k.meldung === null) {
+      k.meldung = { art: 'bereit',
+        ueberschrift: k.planWarSchonDa
+          ? 'Es gibt schon einen Plan fuer diese Aufnahme -- er wurde NICHT ueberschrieben.'
+          : 'Plan geschrieben.',
+        text: k.planWarSchonDa
+          ? 'Die Vorschau unten steht ueber dem BESTEHENDEN Plan (' + pp + '). Wer neu planen ' +
+            'will, archiviert ihn zuerst -- der Knopf dafuer sagt, was er tut.'
+          : 'Der Planer hat ' + zahlen.termine_im_plan + ' Termine nach ' + pp + ' geschrieben.',
+        befehl: planer ? planer.befehl : null };
+    }
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+  }
+
+  // "Alten Plan archivieren und neu planen" -- die Handlung eines Menschen,
+  // kein stiller Zwischenschritt. Sie verschiebt und loescht nicht.
+  function nimmArchivieren(res) {
+    if (fremdeWurzel(res)) return;
+    const k = sitzung.kette;
+    if (k.lauf && k.lauf.laeuft) {
+      fehler(res, 409, 'lauf_laeuft',
+        'Es laeuft gerade ein Upload. Der Plan, den er abarbeitet, wird nicht weggeraeumt.');
+      return;
+    }
+    const pp = planPfadDerKette(sitzung.projektwurzel, sitzung.aufnahme);
+    if (!fs.existsSync(pp)) {
+      fehler(res, 409, 'kein_plan',
+        'Es gibt keinen Plan zu archivieren: ' + pp);
+      return;
+    }
+    let bewegt;
+    try {
+      bewegt = archiviereAltenPlan(sitzung.projektwurzel, sitzung.aufnahme, Date.now());
+    } catch (e) {
+      fehler(res, 500, 'nicht_archiviert',
+        'Der Plan liess sich nicht archivieren (' + (e.code || e.message) + '). Er liegt ' +
+        'unveraendert an seiner Stelle: ' + pp);
+      return;
+    }
+    k.archiviert.push({ von: bewegt.quelle, nach: bewegt.ziel, am: new Date().toISOString() });
+    // Die Vorschau gehoerte zum alten Plan und gilt jetzt nicht mehr.
+    k.vorschau = null;
+    k.planWarSchonDa = false;
+    k.meldung = { art: 'archiviert',
+      ueberschrift: 'Der alte Plan ist archiviert -- verschoben, nicht geloescht.',
+      text: 'Von:  ' + bewegt.quelle + '\nNach: ' + bewegt.ziel +
+        '\n\nDie Vorschau von eben gehoerte zu diesem Plan und ist damit hinfaellig. ' +
+        'Jetzt noch einmal auf "Einplanen und Vorschau".',
+      befehl: null };
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
+  }
+
+  // SCHRITT 3. Hier faellt die getippte Bestaetigung weg -- und hier wird
+  // ersetzt, wofuer sie da war.
+  function nimmHochladen(res) {
+    if (fremdeWurzel(res)) return;
+    const k = sitzung.kette;
+
+    // N4: SERVERSEITIG. Der Browser sperrt den Knopf zusaetzlich, aber das ist
+    // Bequemlichkeit. Diese Zeile ist die Zusage.
+    const bereit = schritt3Bereit(sitzung);
+    if (!bereit.bereit) {
+      fehler(res, 409, 'schritt1_fehlt', bereit.grund +
+        ' Es wurde nichts geschrieben, nichts gestartet und keine Ermaechtigung ausgestellt.');
+      return;
+    }
+
+    const v = k.vorschau;
+    const zufall = UPLOADER_MODUL.neuerZufall();
+    const pfad = UPLOADER_MODUL.ermaechtigungPfad(sitzung.projektwurzel, zufall);
+    const inhalt = UPLOADER_MODUL.neueErmaechtigung({
+      aufnahme: sitzung.aufnahme,
+      planSha256: v.plan_sha256,
+      anzahl: v.anzahl,
+      kanalId: v.kanal_id,
+      kanalName: v.kanal_name,
+      zufall,
+      jetzt: Date.now(),
+    });
+    try {
+      schreibeErmaechtigung(pfad, inhalt);
+    } catch (e) {
+      fehler(res, 500, 'ermaechtigung_nicht_geschrieben',
+        'Die Ermaechtigung liess sich nicht schreiben (' + (e.code || e.message) + '): ' + pfad +
+        '. Es wurde nichts gestartet.');
+      return;
+    }
+
+    k.lauf = {
+      laeuft: true,
+      gestartet_am: new Date().toISOString(),
+      anzahl: v.anzahl,
+      kanal_name: v.kanal_name,
+      ermaechtigung: pfad,
+      zeilen: [],
+      ende: null,
+      befehl: null,
+    };
+    const merke = (art, zeile) => {
+      k.lauf.zeilen.push({ art, zeile });
+    };
+    merke('dienst', 'Ermaechtigung geschrieben: ' + pfad);
+    merke('dienst', 'Sie gilt ' + (UPLOADER_MODUL.ERMAECHTIGUNG_GUELTIG_MS / 1000) +
+      ' Sekunden, fuer ' + v.anzahl + ' Short(s), fuer den Plan mit sha256 ' + v.plan_sha256 +
+      ' und fuer den Kanal "' + v.kanal_name + '" -- und genau einmal.');
+
+    const gestartet = starteUploaderLauf(sitzung, pfad,
+      (art, zeile) => merke(art, zeile),
+      (code, signal) => {
+        k.lauf.laeuft = false;
+        k.lauf.ende = {
+          code, signal,
+          beendet_am: new Date().toISOString(),
+          // Ob die Ermaechtigung wirklich weg ist, wird NACHGESEHEN und nicht
+          // angenommen. Steht sie noch da, hat der Uploader sie nicht
+          // verbraucht -- dann ist er gar nicht bis dahin gekommen, und das
+          // gehoert auf die Seite.
+          ermaechtigung_noch_da: fs.existsSync(pfad),
+        };
+        merke('dienst', 'Der Uploader ist beendet (Rueckgabewert ' + code +
+          (signal ? ', Signal ' + signal : '') + ').');
+        merke('dienst', k.lauf.ende.ermaechtigung_noch_da
+          ? 'ACHTUNG: die Ermaechtigungsdatei liegt noch da: ' + pfad + '. Der Uploader hat ' +
+            'sie nicht verbraucht. Sie laeuft in hoechstens zwei Minuten ab; wer sicher ' +
+            'gehen will, loescht sie von Hand.'
+          : 'Die Ermaechtigung ist verbraucht und geloescht. Ein zweiter Lauf braucht einen ' +
+            'zweiten Klick -- und damit wieder eine Vorschau, die ein Mensch gesehen hat.');
+      });
+    k.lauf.befehl = gestartet.befehl;
+
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({ gestartet: true, anzahl: v.anzahl, kanal: v.kanal_name,
+        befehl: gestartet.befehl }, null, 2) + '\n');
+  }
+
+  // Der Fortschritt. Die Seite fragt ab Zeile <ab> nach und bekommt, was seit
+  // dem letzten Mal dazugekommen ist.
+  function liefereLauf(res, abfrage) {
+    const k = sitzung.kette;
+    const roh = abfrage.get('ab');
+    const ab = (typeof roh === 'string' && /^[0-9]{1,7}$/.test(roh)) ? Number(roh) : 0;
+    if (k.lauf === null) {
+      antwort(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify({ lauf: null, ab, zeilen: [], laeuft: false, ende: null }, null, 2) + '\n');
+      return;
+    }
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({
+        lauf: { gestartet_am: k.lauf.gestartet_am, anzahl: k.lauf.anzahl,
+          kanal: k.lauf.kanal_name, befehl: k.lauf.befehl },
+        ab, gesamt: k.lauf.zeilen.length,
+        zeilen: k.lauf.zeilen.slice(ab),
+        laeuft: k.lauf.laeuft, ende: k.lauf.ende,
+      }, null, 2) + '\n');
+  }
+
+  // -------------------------------------------------------------------------
   // POST /beenden -- erst hinaus, dann aus
   // -------------------------------------------------------------------------
   //
@@ -1118,10 +1800,16 @@ function baueSitzung({ bericht, eingabeText, aufnahme, projektwurzel, port }) {
     port,
     token: crypto.randomBytes(32).toString('hex'),
     eingabeSha256,
+    // DR: Die Kette braucht sie -- fuer den Plan, das Archiv und die
+    // Ermaechtigung. Sie steht hier und wird nicht in jedem Handler neu
+    // ausgerechnet; und die Kette prueft sie gegen PROJEKTWURZEL, bevor sie
+    // einen Kindprozess startet.
+    projektwurzel,
     freigabePfad: pfad,
     karten,
     sperre,
     videoPfad,
+    kette: neueKette(),
     stand: vorhanden.stand,
     uebernommen: Object.keys(vorhanden.stand).length,
     kopf: {
@@ -1477,4 +2165,8 @@ module.exports = {
   sperrPfad, prozessLebt, sperrePasstZumPort, leseSperre, sperrinhalt,
   schreibeSperrinhalt, nimmSperre, traegeSperrePortNach, gibSperreFrei,
   meldeFremdeSperre, oeffneImBrowser,
+  PROJEKTWURZEL, PLANER, UPLOADER, ARCHIV_ORDNER,
+  planPfadDerKette, archivPfad, archiviereAltenPlan, schreibeErmaechtigung, leseKanal,
+  ruftPlaner, ruftUploaderTrocken, starteUploaderLauf,
+  neueKette, schritt3Bereit, kettenstand,
 };

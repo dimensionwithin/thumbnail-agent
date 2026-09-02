@@ -188,13 +188,21 @@ test('der Dienst ruft den Leser auf, statt ihn nachzubauen', () => {
 // DJa: Diese Zusage ist ENGER GEWORDEN, nicht weggefallen. Bis DJ hiess sie
 // "jeder Schreibaufruf steht in schreibeFreigaben"; seit die Einzelinstanz-
 // Sperre eine zweite Datei anlegt, stimmte das nicht mehr. Statt die Zusage
-// aufzuweichen ("Schreiben ist halt erlaubt") wird jetzt aufgezaehlt, welche
-// vier Funktionen schreiben duerfen -- und jede andere Zeile faellt durch.
+// aufzuweichen ("Schreiben ist halt erlaubt") wird aufgezaehlt, welche
+// Funktionen schreiben duerfen -- und jede andere Zeile faellt durch.
+//
+// DR: Aus vier sind sechs geworden. Die Kette legt zwei weitere Dateien an,
+// und beide bekommen dieselbe Behandlung: eine Funktion je Ziel, hier
+// aufgezaehlt. Die Zahl im Testnamen steht deshalb nicht mehr drin -- sie war
+// schon zweimal falsch, und eine Zusage, die an einer Zahl haengt, wird bei
+// jeder Aenderung neu geschrieben statt geprueft.
 const SCHREIBFUNKTIONEN = [
   'schreibeFreigaben',     // data/freigaben/<aufnahme>.json
   'nimmSperre',            // legt die Sperrdatei an (wx) und raeumt Verwaiste weg
   'schreibeSperrinhalt',   // fuellt sie
   'gibSperreFrei',         // loescht die EIGENE wieder
+  'archiviereAltenPlan',   // DR: verschiebt data/plaene/<a>.json nach .../archiv/
+  'schreibeErmaechtigung', // DR: data/ermaechtigungen/ermaechtigung-<zufall>.json
 ];
 
 function rumpfBereiche(quelltext, namen) {
@@ -210,7 +218,7 @@ function rumpfBereiche(quelltext, namen) {
   return bereiche;
 }
 
-test('jeder Schreibaufruf steht in einer der vier Schreibfunktionen', () => {
+test('jeder Schreibaufruf steht in einer der benannten Schreibfunktionen', () => {
   const zeilen = QUELLTEXT.split('\n');
   const bereiche = rumpfBereiche(QUELLTEXT, SCHREIBFUNKTIONEN);
   const schreibend = /\b(writeFileSync|writeFile|appendFileSync|appendFile|renameSync|rename|mkdirSync|mkdir|unlinkSync|unlink|rmSync|rmdirSync|createWriteStream|writeSync|copyFileSync|truncateSync|ftruncateSync|chmodSync|utimesSync|openSync)\s*\(/;
@@ -224,12 +232,12 @@ test('jeder Schreibaufruf steht in einer der vier Schreibfunktionen', () => {
   for (const zeile of treffer) {
     const heim = bereiche.find((b) => zeile >= b.von && zeile <= b.bis);
     assert.ok(heim !== undefined,
-      'Schreibaufruf in Zeile ' + zeile + ' liegt in KEINER der vier Schreibfunktionen ' +
+      'Schreibaufruf in Zeile ' + zeile + ' liegt in KEINER der benannten Schreibfunktionen ' +
       '(' + bereiche.map((b) => b.name + ' ' + b.von + '-' + b.bis).join(', ') + '): ' +
       zeilen[zeile - 1].trim());
     zuordnung.set(heim.name, (zuordnung.get(heim.name) || 0) + 1);
   }
-  // Jede der vier Funktionen schreibt auch wirklich -- eine, die in der Liste
+  // Jede dieser Funktionen schreibt auch wirklich -- eine, die in der Liste
   // steht und nichts tut, waere ein Freibrief fuer den naechsten Aufrufer.
   for (const name of SCHREIBFUNKTIONEN) {
     assert.ok((zuordnung.get(name) || 0) > 0, name + ' schreibt gar nicht mehr -- ' +
@@ -976,7 +984,30 @@ test('die Sperre wird mit wx angelegt -- das Anlegen ist die Pruefung', () => {
   const vorher = NURCODE.slice(0, NURCODE.indexOf("fs.openSync(pfad, 'wx')"));
   const rumpf = vorher.slice(vorher.lastIndexOf('function nimmSperre('));
   assert.ok(!/existsSync/.test(rumpf), 'kein Blick vor dem Anlegen');
-  assert.ok(!/existsSync/.test(NURCODE), 'existsSync kommt im Dienst gar nicht vor');
+
+  // DR: Bis hierher stand hier "existsSync kommt im Dienst gar nicht vor".
+  // Das war eine bequeme Fassung derselben Zusage und ist mit der Kette falsch
+  // geworden -- die schaut nach, ob ein Plan da ist, und nach dem Klick, ob
+  // die Ermaechtigung verbraucht wurde. Beides sind Blicke auf Dateien, die
+  // dieser Dienst NICHT anlegt; die Zusage galt dem Anlegen der Sperre.
+  //
+  // Sie wird darum benannt statt gestrichen: existsSync darf nur an Stellen
+  // stehen, die ueber ein Anlegen NICHT entscheiden. Jede Fundstelle wird
+  // aufgezaehlt, und eine neue faellt durch.
+  const stellen = [...CODEZEILEN.entries()]
+    .filter(([, z]) => /existsSync/.test(z))
+    .map(([i, z]) => z.trim());
+  assert.deepEqual(stellen, [
+    // Kette, Schritt 1: gibt es schon einen Plan? Entscheidet, ob der Planer
+    // ueberhaupt gerufen wird -- angelegt wird hier nichts.
+    'const planVorhanden = fs.existsSync(planPfadDerKette(sitzung.projektwurzel, sitzung.aufnahme));',
+    'k.planWarSchonDa = fs.existsSync(pp);',
+    // Kette, Archivieren: es wird nur verschoben, was da ist.
+    'if (!fs.existsSync(pp)) {',
+    // Kette, nach dem Lauf: ist die Ermaechtigung wirklich weg? Nachgesehen
+    // und nicht angenommen.
+    'ermaechtigung_noch_da: fs.existsSync(pfad),',
+  ], 'neue existsSync-Stelle: gehoert sie zu einem Anlegen, ist sie ein Loch');
 });
 
 test('eine freie Sperre wird genommen und traegt PID, Port, Zeit und Aufnahme', () => {
@@ -1280,18 +1311,33 @@ test('DJb: ein gescheitertes Oeffnen ist kein Startfehler', () => {
 
 test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
   // Die Zusage haengt nicht an einer Zahl -- die war schon dreimal anders --,
-  // sondern am Zeitpunkt. Alle drei Kindprozesse gehoeren zum Start.
+  // sondern daran, WOFUER ein Prozess startet.
+  //
+  // DR: Bis hierher stand hier zusaetzlich "alle drei gehoeren zum Start".
+  // Das stimmt nicht mehr: die Kette startet den Planer, den Trockenlauf und
+  // den scharfen Uploader mitten im Betrieb. Der Kern der Zusage bleibt und
+  // wird unten unveraendert geprueft -- vom Urteil fuehrt kein Weg zu einem
+  // Kindprozess. Was dazukommt, ist die Forderung, dass JEDER spawn-Aufruf in
+  // einer benannten Funktion sitzt und diese Liste hier vollstaendig ist.
   const stellen = [...QUELLTEXT.split('\n').entries()]
     .filter(([, z]) => !z.trim().startsWith('//') && /\bspawn(Sync)?\(/.test(z))
     .map(([i, z]) => ({ zeile: i + 1, text: z.trim() }));
-  assert.equal(stellen.length, 3, stellen.map((x) => x.zeile + ': ' + x.text).join(' | '));
 
-  const heimat = ['ruftLeser', 'haelterDesPorts', 'oeffneImBrowser'];
+  const heimat = [
+    'ruftLeser',            // Start: die Eingabe des Dienstes
+    'haelterDesPorts',      // Start: netstat, nur bei belegtem Port
+    'oeffneImBrowser',      // Start: die Seite oeffnet sich
+    'ruftPlaner',           // DR, Schritt 1: der Planer
+    'ruftUploaderTrocken',  // DR, Schritt 1: der Trockenlauf
+    'starteUploaderLauf',   // DR, Schritt 3: der scharfe Uploader
+  ];
+  assert.equal(stellen.length, heimat.length,
+    stellen.map((x) => x.zeile + ': ' + x.text).join(' | '));
   const bereiche = rumpfBereiche(QUELLTEXT, heimat);
   for (const st of stellen) {
     const wo = bereiche.find((b) => st.zeile >= b.von && st.zeile <= b.bis);
     assert.ok(wo !== undefined,
-      'spawn in Zeile ' + st.zeile + ' gehoert zu keiner der drei Startfunktionen: ' + st.text);
+      'spawn in Zeile ' + st.zeile + ' gehoert zu keiner der benannten Funktionen: ' + st.text);
   }
 
   // Und der Weg vom Urteil zum Schreiben beruehrt keine davon.
@@ -1329,18 +1375,46 @@ test('DJb: die Seite holt weiterhin keinen neuen Stand', () => {
   assert.ok(!/setInterval/.test(ohneKommentar), 'kein setInterval');
   assert.ok(!/location\.reload/.test(ohneKommentar), 'kein Neuladen');
   assert.ok(!/EventSource|WebSocket/.test(ohneKommentar));
-  // Genau zwei fetch-Aufrufe, beide an den eigenen Dienst, beide durch eine
-  // Handlung des Menschen ausgeloest.
-  const fetches = [...ohneKommentar.matchAll(/fetch\('([^']+)'/g)].map((t) => t[1]);
-  assert.deepEqual(fetches.sort(), ['/beenden', '/urteil']);
+
+  // DR: Bis hierher hiess diese Zusage "genau zwei fetch-Aufrufe". Mit der
+  // Kette sind es sieben Ziele, und die Zusage waere unbemerkt falsch
+  // geworden: der alte Test suchte fetch('...') mit einem Literal, und die
+  // neuen Aufrufe gehen alle ueber eine Hilfsfunktion mit einer Variablen.
+  // Ein Test, der eine falsch gewordene Zusage weiter bestehen laesst, ist
+  // schlimmer als einer, der bricht.
+  //
+  // Was gleich bleibt: JEDES Ziel ist eine eigene Route dieses Dienstes, und
+  // KEINES wird im Hintergrund abgefragt. Genau eines wird wiederholt gerufen
+  // (/lauf), und nur waehrend eines Laufs, den diese Seite selbst angestossen
+  // hat.
+  const ziele = [...ohneKommentar.matchAll(/(?:fetch|hole)\('([^']+)'/g)].map((t) => t[1]);
+  const eindeutig = [...new Set(ziele.map((z) => z.split('?')[0]))].sort();
+  assert.deepEqual(eindeutig,
+    ['/archivieren', '/beenden', '/hochladen', '/kette', '/lauf', '/planen', '/urteil']);
+  for (const z of ziele) assert.ok(z.startsWith('/'), 'eigener Dienst: ' + z);
+
+  // Die Schleife haengt an der Antwort des Dienstes und nicht an einer Uhr:
+  // sie kehrt zurueck, sobald laeuft:false kommt.
+  assert.ok(/if \(!daten\.laeuft\)/.test(ohneKommentar),
+    'die Verfolgungsschleife endet an laeuft:false');
+  fs.rmSync(ordner, { recursive: true, force: true });
 });
 
-test('DJb: beide fetch-Aufrufe haben eine Zeitgrenze', () => {
+test('DJb: jeder fetch-Aufruf hat eine Zeitgrenze', () => {
   const ordner = wegwerfordner();
   const html = SEITE.baueSeite(baueSitzung(ordner));
-  const treffer = [...html.matchAll(/AbortSignal\.timeout\(ZEITGRENZE_MS\)/g)];
-  assert.equal(treffer.length, 2,
-    'ohne Zeitgrenze wartet fetch endlos -- ein abgestuerzter Dienst saehe dann aus wie ein langsamer');
+  // DR: gezaehlt wird nicht mehr auf zwei, sondern auf "so viele wie
+  // fetch-Aufrufe". Die Zahl hat sich schon einmal geaendert; die Eigenschaft
+  // nicht. Ohne Zeitgrenze wartet fetch endlos -- ein abgestuerzter Dienst
+  // saehe dann aus wie ein langsamer.
+  const rufe = [...html.matchAll(/\bfetch\(/g)].length;
+  const grenzen = [...html.matchAll(/AbortSignal\.timeout\(/g)].length;
+  assert.ok(rufe >= 3, 'die Kette hat eigene fetch-Aufrufe: ' + rufe);
+  assert.equal(grenzen, rufe,
+    rufe + ' fetch-Aufrufe, aber ' + grenzen + ' Zeitgrenzen');
+  // Die lange Grenze gehoert zu Schritt 1: dort laufen der Planer und ein
+  // Trockenlauf, der ueber jede Videodatei eine sha256 rechnet.
+  assert.ok(/ZEITGRENZE_KETTE_MS/.test(html));
   fs.rmSync(ordner, { recursive: true, force: true });
 });
 

@@ -55,7 +55,10 @@ const { pruefeArgumenteStrikt, TROCKENLAUF_FLAG } = require('../publish/cli-args
 // Netzaufruf (CY Teil B). pruefeKeineFreienArgumente kommt aus dem Leser und
 // ist NICHT nachgebaut; der Grund steht dort: --plan=2026-08-31 17-36-21 ohne
 // Anfuehrungszeichen zerfaellt in zwei Argumente.
-const ERLAUBTE_ARGUMENTE = ['--plan=', '--anzahl=', '--execute', TROCKENLAUF_FLAG];
+const ERLAUBTE_ARGUMENTE = [
+  '--plan=', '--anzahl=', '--execute', '--bestaetigt-durch=', '--vorschau-json',
+  TROCKENLAUF_FLAG,
+];
 
 const {
   pruefeKeineFreienArgumente, AUFNAHME_FORM, EXIT,
@@ -108,6 +111,49 @@ const PRIVACY_STATUS = 'private';
 //   Hashtags: hoechstens 15. Ab dem sechzehnten ignoriert YouTube ALLE, und
 //     zwar Titel und Beschreibung zusammengezaehlt.
 const TITEL_MAX_ZEICHEN = 100;
+
+// DR: WIE EIN TITEL GEZAEHLT WIRD -- UND WORAN DAS FESTGEMACHT IST.
+//
+// Bis DR zaehlte diese Datei mit `titel.length`, also UTF-16-Einheiten, und die
+// Freigabeseite mit Array.from(), also Codepunkte. Bei einem Titel mit einem
+// Emoji standen damit 57 gegen 102: die Seite haette ihn angenommen, der
+// Uploader ihn abgewiesen -- und zwar erst nach der Freigabe, also an der
+// spaetestmoeglichen Stelle. Heute traegt kein Titel ein Emoji; das ist ein
+// Zufall und keine Zusage.
+//
+// GEMESSEN, NICHT ANGENOMMEN. Die Dokumentation der YouTube Data API sagt zu
+// snippet.title nur "100 characters" und laesst offen, was ein character ist.
+// Die Antwort steht in data/inventory.json -- 998 Titel, die YouTube fuer
+// diesen Kanal tatsaechlich ANGENOMMEN hat:
+//
+//   groesster Titel in UTF-16-Einheiten:  148   (39 Titel liegen ueber 100)
+//   groesster Titel in Codepunkten:       100   (kein einziger darueber)
+//   groesster Titel in Graphemclustern:   100   (kein einziger darueber)
+//
+// Ein Titel mit 148 UTF-16-Einheiten steht auf dem Kanal. Waeren UTF-16-
+// Einheiten die gezaehlte Einheit, gaebe es ihn nicht. Damit ist diese
+// Moeglichkeit ausgeschlossen -- nicht fuer wahrscheinlich gehalten, sondern
+// durch ein Gegenbeispiel erledigt.
+//
+// Codepunkte und Graphemcluster sind an diesen Daten NICHT zu unterscheiden:
+// beide Zaehlweisen erreichen genau 100 und ueberschreiten es nie. Gezaehlt
+// werden deshalb CODEPUNKTE, denn von den beiden verbliebenen ist das die
+// strengere -- ein Text hat nie mehr Graphemcluster als Codepunkte. Ist in
+// Wahrheit der Grapheme-Cluster gemeint, lehnt diese Zaehlung hoechstens einen
+// Titel zu frueh ab; nie einen zu spaet.
+//
+// WOHIN DER IRRTUM FIELE, wenn die Messung doch trueg: ein zu langer Titel
+// laesst videos.insert mit einem Fehler der API scheitern. Es geht dann nichts
+// Falsches hoch -- es geht gar nichts hoch. Das ist der Ausgang, den man
+// riskieren darf.
+//
+// DIESE FUNKTION IST DIE EINZIGE ZAEHLSTELLE. freigabe-server.js ruft sie
+// hier ab, statt eine zweite zu haben; die Seite zaehlt mit demselben
+// Array.from() im Browser, damit die Anzeige unter dem Feld dasselbe sagt.
+function zaehleTitelZeichen(titel) {
+  return Array.from(String(titel)).length;
+}
+
 const BESCHREIBUNG_MAX_ZEICHEN = 5000;
 const BESCHREIBUNG_MAX_BYTES = 5000;
 const HASHTAGS_MAX = 15;
@@ -495,8 +541,11 @@ function zaehleHashtags(text) {
 function pruefeGrenzen({ kennung, titel, beschreibung }) {
   const fehler = [];
   const wo = kennung + ': ';
-  if (titel.length > TITEL_MAX_ZEICHEN) {
-    fehler.push(wo + 'der Titel hat ' + titel.length + ' Zeichen, erlaubt sind hoechstens ' +
+  // Codepunkte, nicht UTF-16-Einheiten -- die Begruendung steht an
+  // zaehleTitelZeichen, und sie ist an 998 echten Kanaltiteln gemessen.
+  const titelZeichen = zaehleTitelZeichen(titel);
+  if (titelZeichen > TITEL_MAX_ZEICHEN) {
+    fehler.push(wo + 'der Titel hat ' + titelZeichen + ' Zeichen, erlaubt sind hoechstens ' +
       TITEL_MAX_ZEICHEN + '.');
   }
   if (VERBOTENE_ZEICHEN.test(titel)) {
@@ -727,6 +776,417 @@ function schreibeGedaechtnisAtomar(pfad, gedaechtnis) {
     throw e;
   }
   return inhalt;
+}
+
+// ---------------------------------------------------------------------------
+// TEIL 2b -- DIE EINMAL-ERMAECHTIGUNG (DR)
+// ---------------------------------------------------------------------------
+//
+// WARUM ES SIE GIBT, UND WAS SIE ERSETZT.
+//
+// Bis DR endete die Kette an der Freigabeseite, und danach tippte ein Mensch
+// zwei Befehle ins Terminal -- den Planer und den Uploader --, den zweiten mit
+// --execute und einem getippten HOCHLADEN. Dieses getippte Wort faellt auf dem
+// neuen Weg weg. Es ist NICHT abgeschafft, es ist VERLEGT: an den Knopf
+// "Hochladen" auf der Freigabeseite.
+//
+// WOFUER DAS GETIPPTE WORT DA WAR -- das ist der Massstab, an dem sich dieser
+// Weg messen lassen muss, und es sind zwei Dinge:
+//
+//   (1) Ein MENSCH hat unmittelbar vorher gesehen, was gleich veroeffentlicht
+//       wird. Beim Terminalweg ist das der Trockenlauf ueber der Frage. Beim
+//       neuen Weg ist es die Vorschau auf der Seite -- dieselbe Ausgabe,
+//       woertlich, erzeugt vom selben Trockenlauf.
+//   (2) NIEMAND SONST kann diesen Weg ausloesen. Beim Terminalweg ist das die
+//       Tastatur an einem Terminal. Beim neuen Weg ist es der Dienst, der nur
+//       auf 127.0.0.1 lauscht, ein Sitzungstoken je Start verlangt und Host
+//       und Origin prueft.
+//
+// DIE ERMAECHTIGUNG IST DIE BRUECKE ZWISCHEN BEIDEM. Der Dienst schreibt beim
+// Klick eine Datei; der Uploader nimmt sie ueber --bestaetigt-durch=<pfad>
+// entgegen und prueft JEDES ihrer Felder gegen das, was er selbst vorfindet:
+//
+//   aufnahme      gegen --plan=            -- eine Ermaechtigung fuer eine
+//                                             andere Aufnahme gilt hier nicht.
+//   plan_sha256   gegen die Planungsdatei  -- ist der Plan seit der Vorschau
+//                                             ein anderer geworden, hat der
+//                                             Mensch etwas anderes gesehen als
+//                                             das, was hochginge.
+//   anzahl        gegen die Auswahl        -- die Zahl stand auf dem Knopf.
+//   erstellt_am   gegen die Uhr            -- hoechstens zwei Minuten alt.
+//   zufall        gegen die Verbrauchsliste -- genau einmal.
+//   kanal_id      gegen channels.list      -- der Kanal, den der Knopf nannte,
+//                                             ist der Kanal, der es bekommt.
+//
+// Damit haengt die Ermaechtigung an einem MENSCHEN (nur der Dienst schreibt
+// sie, und an den kommt nur ein Browser auf diesem Rechner mit dem Token
+// dieses Starts), an einem AUGENBLICK (zwei Minuten) und an einem BESTIMMTEN
+// PLAN (die Pruefsumme). Eine von Hand geschriebene Datei ist kein
+// Schlupfloch: sie muesste die Pruefsumme des AKTUELLEN Plans treffen und
+// frisch sein -- wer das hinbekommt, hat den Plan gelesen und weiss, was
+// hochgeht. Genau das war der Zweck der getippten Bestaetigung.
+//
+// OHNE --bestaetigt-durch AENDERT SICH NICHTS. --execute verlangt weiterhin
+// das getippte Wort, und nicht-interaktiv bleibt Rueckgabewert 4. Der
+// Terminalweg ist der Rueckfallweg, wenn der Dienst nicht laeuft.
+
+const ERMAECHTIGUNG_ARTIFACT_TYPE = 'adw_shorts_ermaechtigung';
+const ERMAECHTIGUNG_SCHEMA_VERSION = '1.0';
+
+// ZWEI MINUTEN. Nicht laenger: die Ermaechtigung soll den Augenblick des
+// Klicks bezeugen und nicht den Nachmittag. Nicht kuerzer: zwischen Klick und
+// dem Punkt, an dem der Uploader sie prueft, liegen die Anmeldung und ein
+// channels.list, und ein langsames Netz darf den Menschen nicht zwingen,
+// zweimal zu klicken.
+const ERMAECHTIGUNG_GUELTIG_MS = 2 * 60 * 1000;
+
+// Eine Ermaechtigung, die in der ZUKUNFT beginnt, ist keine. Dienst und
+// Uploader laufen auf demselben Rechner an derselben Uhr; eine Sekunde
+// Spielraum deckt die Ungenauigkeit ab, mehr nicht.
+const ERMAECHTIGUNG_ZUKUNFT_MS = 1000;
+
+const ERMAECHTIGUNG_ZUFALL_BYTES = 32;
+const ZUFALL_FORM = /^[0-9a-f]{64}$/;
+
+// Wie viele verbrauchte Zufallswerte aufgehoben werden. Die Liste dient
+// ausschliesslich der Frage "war der schon einmal da"; eine Ermaechtigung ist
+// nach zwei Minuten ohnehin abgelaufen, die Liste muss also nur weit genug
+// zurueckreichen, um den Wiederverwendungsfall zu treffen, und nicht ewig.
+const VERBRAUCHT_MAX = 500;
+
+function ermaechtigungOrdner(projektwurzel) {
+  return path.join(projektwurzel, 'data', 'ermaechtigungen');
+}
+
+// Der Dateiname kommt AUS dem Zufallswert und aus nichts sonst. Damit gibt es
+// keinen Weg von einer Eingabe zu einem frei gewaehlten Dateinamen.
+function ermaechtigungPfad(projektwurzel, zufall) {
+  if (typeof zufall !== 'string' || !ZUFALL_FORM.test(zufall)) {
+    throw new Error('Der Zufallswert hat nicht die Form von 64 Hexziffern. Es wird kein ' +
+      'Dateiname daraus gebaut.');
+  }
+  return path.join(ermaechtigungOrdner(projektwurzel), 'ermaechtigung-' + zufall + '.json');
+}
+
+function verbrauchtPfad(projektwurzel) {
+  return path.join(ermaechtigungOrdner(projektwurzel), 'verbraucht.json');
+}
+
+function neuerZufall() {
+  return crypto.randomBytes(ERMAECHTIGUNG_ZUFALL_BYTES).toString('hex');
+}
+
+// Die FORM der Ermaechtigung steht hier -- bei dem, der sie prueft, und nicht
+// bei dem, der sie schreibt. freigabe-server.js ruft diese Funktion auf,
+// statt die Felder ein zweites Mal hinzuschreiben: zwei Fassungen einer Form
+// sind auf Dauer eineinhalb, und die zweite waere ausgerechnet die, die den
+// scharfen Lauf ausloest.
+function neueErmaechtigung({ aufnahme, planSha256, anzahl, kanalId, kanalName, zufall, jetzt }) {
+  return {
+    artifact_type: ERMAECHTIGUNG_ARTIFACT_TYPE,
+    schema_version: ERMAECHTIGUNG_SCHEMA_VERSION,
+    aufnahme,
+    plan_sha256: planSha256,
+    anzahl,
+    kanal_id: kanalId,
+    kanal_name: kanalName,
+    erstellt_am: new Date(jetzt).toISOString(),
+    zufall,
+    // Steht in der Datei, damit wer sie findet weiss, was er vor sich hat.
+    warum:
+      'Diese Datei ersetzt das getippte HOCHLADEN fuer GENAU EINEN Lauf. Sie wurde ' +
+      'beim Klick auf "Hochladen" in der Freigabeoberflaeche geschrieben, nachdem ein ' +
+      'Mensch die Vorschau gesehen hat. Sie gilt zwei Minuten, nur fuer diese Aufnahme, ' +
+      'nur fuer den Plan mit dieser Pruefsumme, nur fuer diese Anzahl und nur einmal. ' +
+      'Der Uploader prueft jedes dieser Felder, verbraucht die Datei und loescht sie.',
+  };
+}
+
+// Die Liste der schon verbrauchten Zufallswerte. Fehlt sie, ist das kein
+// Mangel -- dann wurde noch nie eine Ermaechtigung verbraucht.
+//
+// IST SIE DA UND UNLESBAR, WIRD ABGELEHNT. Eine kaputte Liste sieht sonst
+// genauso aus wie "noch nie verbraucht", und dann waere die
+// Wiederverwendungssperre genau in dem Augenblick weg, in dem etwas nicht
+// stimmt.
+function leseVerbrauchte(projektwurzel) {
+  const p = verbrauchtPfad(projektwurzel);
+  if (!fs.existsSync(p)) return { fehler: null, liste: [], pfad: p };
+  let text;
+  try { text = fs.readFileSync(p, 'utf8'); } catch (e) {
+    return { fehler: 'Die Liste der verbrauchten Ermaechtigungen ist nicht lesbar (' +
+      (e.code || e.message) + '): ' + p, liste: null, pfad: p };
+  }
+  let d;
+  try { d = JSON.parse(text); } catch (e) {
+    return { fehler: 'Die Liste der verbrauchten Ermaechtigungen ist kein JSON (' + e.message +
+      '): ' + p + '. Sie wird nicht repariert und nicht ueberschrieben.', liste: null, pfad: p };
+  }
+  if (d === null || typeof d !== 'object' || !Array.isArray(d.verbraucht)) {
+    return { fehler: 'Die Liste der verbrauchten Ermaechtigungen hat eine unerwartete Form ' +
+      '(verbraucht ist keine Liste): ' + p, liste: null, pfad: p };
+  }
+  return { fehler: null, liste: d.verbraucht, pfad: p };
+}
+
+// ALLE LOKALEN PRUEFUNGEN, JEDE MIT EIGENEM CODE UND EIGENER MELDUNG. Der
+// Kanal fehlt hier absichtlich: den kennt erst channels.list, und der Rest
+// soll ohne einen einzigen Netzaufruf entscheidbar sein.
+//
+// Gibt { ok: true, daten } oder { ok: false, code, meldung }.
+function pruefeErmaechtigung({ projektwurzel, pfad, aufnahme, planSha256, anzahl, jetzt }) {
+  const nein = (code, meldung) => ({ ok: false, code, meldung });
+
+  // 0. WO SIE LIEGEN DARF. Diese Datei wird gleich GELOESCHT; ein Pfad, den
+  //    jemand frei waehlen kann, waere damit ein Loeschbefehl mit
+  //    Argumentangabe. Sie muss unterhalb von data/ermaechtigungen/ liegen.
+  const ordner = ermaechtigungOrdner(projektwurzel);
+  if (typeof pfad !== 'string' || !pfad.trim()) {
+    return nein('ermaechtigung_pfad_leer',
+      '--bestaetigt-durch= ist leer. Ohne Pfad gibt es keine Ermaechtigung.');
+  }
+  if (!pfadLiegtUnter(ordner, pfad)) {
+    return nein('ermaechtigung_pfad_fremd',
+      'Die Ermaechtigung liegt nicht unter ' + ordner + ', sondern bei ' + pfad + '. ' +
+      'Der Uploader loescht diese Datei nach der Pruefung -- ein frei gewaehlter Pfad ' +
+      'waere damit ein Loeschbefehl. Es wird nichts gelesen und nichts geloescht.');
+  }
+
+  // 1. DA?
+  let text;
+  try {
+    text = fs.readFileSync(pfad, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      return nein('ermaechtigung_fehlt',
+        'Es gibt keine Ermaechtigung unter ' + pfad + '. Ohne sie wird nichts hochgeladen. ' +
+        'Wurde sie schon verbraucht, ist sie geloescht -- dann in der Oberflaeche erneut ' +
+        'auf "Einplanen und Vorschau" und danach auf "Hochladen" klicken.');
+    }
+    return nein('ermaechtigung_nicht_lesbar',
+      'Die Ermaechtigung ist nicht lesbar (' + (e.code || e.message) + '): ' + pfad);
+  }
+
+  let d;
+  try { d = JSON.parse(text); } catch (e) {
+    return nein('ermaechtigung_kein_json',
+      'Die Ermaechtigung ist kein JSON (' + e.message + '): ' + pfad);
+  }
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) {
+    return nein('ermaechtigung_kein_objekt',
+      'Die Ermaechtigung enthaelt kein Objekt: ' + pfad);
+  }
+  if (d.artifact_type !== ERMAECHTIGUNG_ARTIFACT_TYPE) {
+    return nein('ermaechtigung_fremder_typ',
+      'artifact_type ist ' + JSON.stringify(d.artifact_type) + ', erwartet ist ' +
+      JSON.stringify(ERMAECHTIGUNG_ARTIFACT_TYPE) + '. Das ist keine Ermaechtigung.');
+  }
+  if (d.schema_version !== ERMAECHTIGUNG_SCHEMA_VERSION) {
+    return nein('ermaechtigung_fremde_version',
+      'schema_version ist ' + JSON.stringify(d.schema_version) + ', dieser Uploader kennt ' +
+      JSON.stringify(ERMAECHTIGUNG_SCHEMA_VERSION) + '. Eine fremde Fassung wird nicht nach ' +
+      'den Regeln der bekannten gelesen.');
+  }
+
+  // 2. DER ZUFALLSWERT -- erst die Form, dann die Verbrauchsliste.
+  if (typeof d.zufall !== 'string' || !ZUFALL_FORM.test(d.zufall)) {
+    return nein('ermaechtigung_zufall_form',
+      'Der Zufallswert ist ' + JSON.stringify(d.zufall) + ' und keine 64 Hexziffern. ' +
+      'Ohne ihn laesst sich nicht sagen, ob diese Ermaechtigung schon einmal verbraucht wurde.');
+  }
+  const verbraucht = leseVerbrauchte(projektwurzel);
+  if (verbraucht.fehler) {
+    return nein('verbrauchsliste_unlesbar', verbraucht.fehler +
+      ' Solange nicht feststeht, welche Ermaechtigungen schon verbraucht sind, wird keine ' +
+      'angenommen.');
+  }
+  const schon = verbraucht.liste.find((v) => v && v.zufall === d.zufall);
+  if (schon) {
+    return nein('ermaechtigung_verbraucht',
+      'Diese Ermaechtigung wurde schon verbraucht' +
+      (schon.verbraucht_am ? ' (am ' + schon.verbraucht_am + ')' : '') +
+      '. Sie gilt fuer GENAU EINEN Lauf. Wer noch einmal hochladen will, klickt in der ' +
+      'Oberflaeche erneut auf "Einplanen und Vorschau" und danach auf "Hochladen" -- dann ' +
+      'sieht auch wieder ein Mensch, was hochgeht.');
+  }
+
+  // 3. DER AUGENBLICK.
+  if (typeof d.erstellt_am !== 'string' || !ISO_UTC.test(d.erstellt_am) ||
+      !Number.isFinite(Date.parse(d.erstellt_am))) {
+    return nein('ermaechtigung_zeit_form',
+      'erstellt_am ist ' + JSON.stringify(d.erstellt_am) + ' und kein Zeitstempel in UTC ' +
+      '(RFC 3339 mit Z).');
+  }
+  const alter = jetzt - Date.parse(d.erstellt_am);
+  if (alter < -ERMAECHTIGUNG_ZUKUNFT_MS) {
+    return nein('ermaechtigung_zukunft',
+      'Die Ermaechtigung ist auf ' + d.erstellt_am + ' datiert und liegt damit ' +
+      Math.round(-alter / 1000) + ' Sekunden in der ZUKUNFT (jetzt ist ' +
+      new Date(jetzt).toISOString() + '). Dienst und Uploader laufen an derselben Uhr; ' +
+      'eine Ermaechtigung, die noch nicht begonnen hat, bezeugt keinen Augenblick.');
+  }
+  if (alter > ERMAECHTIGUNG_GUELTIG_MS) {
+    return nein('ermaechtigung_abgelaufen',
+      'Die Ermaechtigung ist ' + Math.round(alter / 1000) + ' Sekunden alt, gueltig sind ' +
+      (ERMAECHTIGUNG_GUELTIG_MS / 1000) + '. Erstellt am ' + d.erstellt_am + ', jetzt ist ' +
+      new Date(jetzt).toISOString() + '. Sie soll den Augenblick des Klicks bezeugen und ' +
+      'nicht den Nachmittag -- in der Oberflaeche neu klicken.');
+  }
+
+  // 4. DIE AUFNAHME.
+  if (d.aufnahme !== aufnahme) {
+    return nein('ermaechtigung_fremde_aufnahme',
+      'Die Ermaechtigung gilt fuer die Aufnahme ' + JSON.stringify(d.aufnahme) +
+      ', hochgeladen werden soll ' + JSON.stringify(aufnahme) + '. Eine Ermaechtigung fuer ' +
+      'eine andere Aufnahme gilt hier nicht.');
+  }
+
+  // 5. DER PLAN. Das ist die Pruefung, die den Menschen an das bindet, was er
+  //    gesehen hat: die Pruefsumme ist die des Planes, ueber dem die Vorschau
+  //    stand.
+  if (typeof d.plan_sha256 !== 'string' || !SHA256_FORM.test(d.plan_sha256)) {
+    return nein('ermaechtigung_plan_sha_form',
+      'plan_sha256 ist ' + JSON.stringify(d.plan_sha256) + ' und keine sha256-Summe.');
+  }
+  if (d.plan_sha256 !== planSha256) {
+    return nein('ermaechtigung_plan_geaendert',
+      'Die Ermaechtigung gehoert zu einem Plan mit der Pruefsumme ' + d.plan_sha256 +
+      ', die Planungsdatei hat jetzt ' + planSha256 + '. Der Plan ist seit der Vorschau ein ' +
+      'ANDERER geworden. Was ein Mensch gesehen hat, ist nicht das, was hochginge -- es ' +
+      'wird nichts hochgeladen. In der Oberflaeche neu planen und die neue Vorschau lesen.');
+  }
+
+  // 6. DIE ANZAHL. Sie stand auf dem Knopf.
+  if (!Number.isInteger(d.anzahl) || d.anzahl < 0) {
+    return nein('ermaechtigung_anzahl_form',
+      'anzahl ist ' + JSON.stringify(d.anzahl) + ' und keine Ganzzahl ab 0.');
+  }
+  if (d.anzahl !== anzahl) {
+    return nein('ermaechtigung_anzahl',
+      'Die Ermaechtigung nennt ' + d.anzahl + ' Short(s), dieser Lauf haette ' + anzahl +
+      '. Auf dem Knopf stand eine andere Zahl als die, die jetzt hochginge -- es wird ' +
+      'nichts hochgeladen.');
+  }
+
+  // 7. DER KANAL -- die FORM jetzt, der Vergleich spaeter (pruefeKanal).
+  if (typeof d.kanal_id !== 'string' || !d.kanal_id.trim()) {
+    return nein('ermaechtigung_kanal_form',
+      'kanal_id fehlt in der Ermaechtigung. Der Knopf hat einen Kanal genannt; ohne diese ' +
+      'Angabe laesst sich nicht pruefen, ob es derselbe ist, der das Video bekommt.');
+  }
+
+  return { ok: true, daten: d };
+}
+
+// Der Vergleich, der erst nach channels.list moeglich ist. Getrennt, damit
+// jeder lokale Fehler ohne einen einzigen Netzaufruf auffaellt.
+function pruefeKanal(daten, kanalId, kanalName) {
+  if (daten.kanal_id === kanalId) return { ok: true };
+  return {
+    ok: false,
+    code: 'ermaechtigung_kanal',
+    meldung:
+      'Der Knopf nannte den Kanal ' + JSON.stringify(daten.kanal_name) + ', angemeldet ist ' +
+      'aber ' + JSON.stringify(kanalName) + '. Die Kanalkennungen stimmen nicht ueberein. ' +
+      'Es wird nichts hochgeladen: die Zusage des Knopfes war, auf WELCHEN Kanal das geht.',
+  };
+}
+
+// VERBRAUCHEN HEISST: erst merken, dann loeschen -- in dieser Reihenfolge.
+//
+// Umgekehrt waere ein Absturz zwischen den beiden Schritten ein Freibrief: die
+// Datei waere weg, der Zufallswert nicht vermerkt, und eine Kopie der Datei
+// (die jemand vor dem Loeschen gezogen hat) taugte noch einmal. So herum
+// kostet ein Absturz zwischen den Schritten hoechstens eine liegengebliebene
+// Datei, die niemand mehr einloesen kann.
+//
+// GEPRUEFT WIRD NOCH EINMAL, WESSEN DATEI DA LIEGT: zwischen pruefeErmaechtigung
+// und hier liegen die Anmeldung und ein channels.list. Traegt die Datei jetzt
+// einen anderen Zufallswert, ist sie in der Zwischenzeit ersetzt worden -- dann
+// wird sie nicht verbraucht und nicht geloescht.
+//
+// DIES IST DER ZWEITE UND LETZTE SCHREIBWEG DIESES MODULS. Der erste ist
+// schreibeGedaechtnisAtomar; tests/uploader.test.cjs rechnet nach, dass jeder
+// Schreibaufruf in genau einer dieser beiden Funktionen liegt.
+let tmpZaehlerErmaechtigung = 0;
+
+function verbraucheErmaechtigung({ projektwurzel, pfad, daten, jetzt }) {
+  let jetztText;
+  try { jetztText = fs.readFileSync(pfad, 'utf8'); } catch (e) {
+    return { ok: false, code: 'ermaechtigung_weg',
+      meldung: 'Die Ermaechtigung ist zwischen Pruefung und Verbrauch verschwunden (' +
+        (e.code || e.message) + '): ' + pfad + '. Es wird nichts hochgeladen.' };
+  }
+  let jetztDaten;
+  try { jetztDaten = JSON.parse(jetztText); } catch (e) {
+    return { ok: false, code: 'ermaechtigung_ersetzt',
+      meldung: 'Die Ermaechtigung ist seit der Pruefung kein JSON mehr: ' + pfad };
+  }
+  if (!jetztDaten || jetztDaten.zufall !== daten.zufall) {
+    return { ok: false, code: 'ermaechtigung_ersetzt',
+      meldung: 'Die Ermaechtigung traegt jetzt einen anderen Zufallswert als bei der ' +
+        'Pruefung. Sie wurde in der Zwischenzeit ersetzt -- sie wird weder verbraucht ' +
+        'noch geloescht, und es wird nichts hochgeladen.' };
+  }
+
+  const vp = verbrauchtPfad(projektwurzel);
+  const gelesen = leseVerbrauchte(projektwurzel);
+  if (gelesen.fehler) {
+    return { ok: false, code: 'verbrauchsliste_unlesbar', meldung: gelesen.fehler };
+  }
+  const eintrag = {
+    zufall: daten.zufall,
+    aufnahme: daten.aufnahme,
+    plan_sha256: daten.plan_sha256,
+    anzahl: daten.anzahl,
+    erstellt_am: daten.erstellt_am,
+    verbraucht_am: new Date(jetzt).toISOString(),
+    verbraucht_von_pid: process.pid,
+  };
+  const liste = gelesen.liste.concat([eintrag]).slice(-VERBRAUCHT_MAX);
+  const inhalt = JSON.stringify({
+    artifact_type: 'adw_shorts_ermaechtigungen_verbraucht',
+    schema_version: '1.0',
+    erklaerung:
+      'Zufallswerte bereits verbrauchter Einmal-Ermaechtigungen. Der Uploader lehnt eine ' +
+      'Ermaechtigung ab, deren Zufallswert hier steht -- auch dann, wenn ihre Datei wieder ' +
+      'auftaucht. Es werden hoechstens ' + VERBRAUCHT_MAX + ' Eintraege aufgehoben; eine ' +
+      'Ermaechtigung ist nach zwei Minuten ohnehin abgelaufen.',
+    zuletzt_geschrieben_am: eintrag.verbraucht_am,
+    verbraucht: liste,
+  }, null, 2) + '\n';
+
+  const verzeichnis = path.dirname(vp);
+  fs.mkdirSync(verzeichnis, { recursive: true });
+  const tmp = path.join(verzeichnis,
+    '.' + path.basename(vp) + '.tmp.' + process.pid + '.' + (++tmpZaehlerErmaechtigung));
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'wx');
+    fs.writeFileSync(fd, inhalt, 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, vp);
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (x) { /* egal */ } }
+    try { fs.unlinkSync(tmp); } catch (x) { /* war nie da */ }
+    return { ok: false, code: 'verbrauchsliste_nicht_schreibbar',
+      meldung: 'Die Verbrauchsliste liess sich nicht schreiben (' + (e.code || e.message) +
+        '): ' + vp + '. Ohne sie kann eine Ermaechtigung ein zweites Mal gelten -- es wird ' +
+        'nichts hochgeladen.' };
+  }
+
+  // Erst jetzt. Ist der Vermerk drin, darf die Datei weg.
+  let geloescht = true;
+  let loeschgrund = null;
+  try {
+    fs.unlinkSync(pfad);
+  } catch (e) {
+    geloescht = false;
+    loeschgrund = e.code || e.message;
+  }
+  return { ok: true, verbrauchtPfad: vp, geloescht, loeschgrund, eintrag };
 }
 
 // ---------------------------------------------------------------------------
@@ -1132,7 +1592,7 @@ function formatiereVorschau(v, { mitPruefsumme = true } = {}) {
   v.auswahl.forEach((s, i) => {
     z.push('=' .repeat(78));
     z.push('[' + (i + 1) + '/' + v.auswahl.length + ']  ' + s.kennung);
-    z.push('  Titel (' + s.titel.length + ' Zeichen):   ' + s.titel);
+    z.push('  Titel (' + zaehleTitelZeichen(s.titel) + ' Zeichen):   ' + s.titel);
     z.push('  publishAt UTC:         ' + s.publish_at);
     z.push('  publishAt Ortszeit:    ' + s.publish_at_ortszeit);
     z.push('  Datei:                 ' + (s.pfad || '(kein Pfad -- Kennung nicht in der Uebergabedatei)'));
@@ -1192,9 +1652,23 @@ async function main() {
   const projektwurzel = path.join(__dirname, '..', '..');
   const execute = argv.includes('--execute');
   const nurPruefen = argv.includes(TROCKENLAUF_FLAG);
+  const vorschauJson = argv.includes('--vorschau-json');
+  const bestaetigtDurch = wertVon(argv, '--bestaetigt-durch=');
 
   if (execute && nurPruefen) {
     console.error('\nAbbruch: ' + TROCKENLAUF_FLAG + ' und --execute schliessen einander aus.\n');
+    process.exit(EXIT_AUFRUFFEHLER);
+  }
+  // Eine Ermaechtigung ohne --execute ist ein Missverstaendnis und kein
+  // Trockenlauf mit Zusatz: sie wuerde verbraucht und nichts damit getan.
+  if (bestaetigtDurch !== null && !execute) {
+    console.error('\nAbbruch: --bestaetigt-durch= ohne --execute. Die Ermaechtigung ersetzt die');
+    console.error('getippte Bestaetigung eines SCHARFEN Laufs; ohne --execute gibt es nichts zu');
+    console.error('bestaetigen, und sie wuerde verbraucht, ohne dass etwas geschieht.\n');
+    process.exit(EXIT_AUFRUFFEHLER);
+  }
+  if (bestaetigtDurch !== null && nurPruefen) {
+    console.error('\nAbbruch: --bestaetigt-durch= und ' + TROCKENLAUF_FLAG + ' schliessen einander aus.\n');
     process.exit(EXIT_AUFRUFFEHLER);
   }
 
@@ -1245,7 +1719,16 @@ async function main() {
   // geladen wird. Wer --execute sagt und nicht gefragt werden kann, bekommt
   // einen eigenen Rueckgabewert und keinen Trockenlauf, der so aussieht, als
   // haette er beinahe hochgeladen.
-  if (execute && !process.stdin.isTTY) {
+  //
+  // DR: Diese Pruefung gilt weiterhin fuer JEDEN Aufruf OHNE Ermaechtigung --
+  // sie ist der Terminalweg und der bleibt unveraendert. Mit
+  // --bestaetigt-durch= wird sie uebersprungen, und zwar genau deshalb, weil
+  // dort ein anderer Beleg an ihre Stelle tritt: die Ermaechtigungsdatei, die
+  // nur der Freigabedienst schreibt, nachdem ein Mensch die Vorschau gesehen
+  // und geklickt hat. Es faellt hier also nicht die Bestaetigung weg, sondern
+  // nur die Frage, ob ein Terminal daran haengt -- und der Uploader eines
+  // Klicks hat keines.
+  if (execute && bestaetigtDurch === null && !process.stdin.isTTY) {
     console.error('');
     console.error(textNichtInteraktiv());
     console.error('');
@@ -1269,6 +1752,31 @@ async function main() {
 
   console.log(formatiereVorschau(v));
 
+  // DR: --vorschau-json. Eine Zeile JSON ueber die LAGE dieses Laufs, damit
+  // der Freigabedienst nicht die Vorschau nach Zahlen absuchen muss.
+  //
+  // SIE GEHT AUF stderr, UND ZWAR ABSICHTLICH. stdout ist die Vorschau fuer
+  // Menschen -- woertlich dieselbe, die im Terminal steht, und der Nachweis
+  // dafuer ist ein Byte-Vergleich (DQ-N4, DR-N8). Eine Zeile mehr auf stdout
+  // haette diesen Vergleich zerstoert. Der Dienst zeigt die Vorschau aus
+  // stdout und nimmt die Zahlen aus stderr; damit gibt es keine zweite Stelle,
+  // die Plan-Pruefsumme oder Anzahl selbst ausrechnet.
+  if (vorschauJson) {
+    console.error(JSON.stringify({
+      artifact_type: 'adw_shorts_vorschau',
+      schema_version: '1.0',
+      aufnahme: v.aufnahme,
+      plan_pfad: v.planPfad,
+      plan_sha256: v.planSha256,
+      termine_im_plan: v.plan.termine.length,
+      anzahl: v.auswahl.length,
+      schon_hochgeladen: v.schonDa.length,
+      nicht_in_diesem_lauf: v.nichtGewaehlt.length,
+      kennungen: v.auswahl.map((s) => s.kennung),
+      jetzt: new Date(v.jetzt).toISOString(),
+    }));
+  }
+
   if (v.auswahl.length === 0) {
     console.log('NICHTS ZU TUN: alle ' + v.plan.termine.length + ' Termine des Plans stehen schon im Gedaechtnis.');
     console.log('');
@@ -1284,8 +1792,38 @@ async function main() {
     process.exit(EXIT_OK);
   }
 
-  // Ab hier: Netz. Erst der Nachweis, dass gefragt werden kann.
-  meldeInteraktivitaet();
+  // DR: DIE ERMAECHTIGUNG WIRD GEPRUEFT, BEVOR IRGENDEIN NETZAUFRUF GESCHIEHT.
+  //
+  // Alles ausser dem Kanalvergleich ist ohne Netz entscheidbar -- fehlende,
+  // abgelaufene, fremde, schon verbrauchte oder auf einen anderen Plan
+  // ausgestellte Ermaechtigungen fallen hier, und dann wurde nicht einmal
+  // googleapis geladen.
+  let ermaechtigung = null;
+  if (bestaetigtDurch !== null) {
+    const geprueft = pruefeErmaechtigung({
+      projektwurzel, pfad: bestaetigtDurch, aufnahme,
+      planSha256: v.planSha256, anzahl: v.auswahl.length, jetzt: Date.now(),
+    });
+    if (!geprueft.ok) {
+      druckeFehler('die Ermaechtigung traegt nicht (' + geprueft.code + ').', [geprueft.meldung]);
+      process.exit(EXIT_BEFUND);
+    }
+    ermaechtigung = geprueft.daten;
+    console.log('');
+    console.log('ERMAECHTIGT DURCH:      ' + bestaetigtDurch);
+    console.log('  ausgestellt am:       ' + ermaechtigung.erstellt_am +
+      '   (' + Math.round((Date.now() - Date.parse(ermaechtigung.erstellt_am)) / 1000) +
+      ' Sekunden alt, hoechstens ' + (ERMAECHTIGUNG_GUELTIG_MS / 1000) + ')');
+    console.log('  fuer Aufnahme:        ' + ermaechtigung.aufnahme);
+    console.log('  fuer Plan sha256:     ' + ermaechtigung.plan_sha256);
+    console.log('  fuer Anzahl:          ' + ermaechtigung.anzahl);
+    console.log('  fuer Kanal:           ' + ermaechtigung.kanal_name);
+    console.log('Sie ersetzt das getippte "' + BESTAETIGUNGSWORT + '" fuer GENAU DIESEN Lauf ' +
+      'und wird gleich verbraucht.');
+  } else {
+    // Ab hier: Netz. Erst der Nachweis, dass gefragt werden kann.
+    meldeInteraktivitaet();
+  }
 
   // googleapis und die Anmeldung werden erst jetzt geladen -- kein Trockenlauf
   // kommt bis hierher.
@@ -1300,12 +1838,41 @@ async function main() {
   if (!kanal) throw new Error('channels.list(mine=true) liefert keinen Kanal. Es wurde nichts hochgeladen.');
   const kanalName = kanal.snippet.title;
 
-  const frage = '\nWirklich ' + v.auswahl.length + ' Short(s) als PRIVAT mit publishAt aus dem Plan auf den Kanal "' +
-    kanalName + '" hochladen? Tippe "' + BESTAETIGUNGSWORT + '" zum Bestaetigen: ';
-  const abgelehnt = await bestaetigungEinholen(frage, BESTAETIGUNGSWORT);
-  if (abgelehnt) {
-    console.log(abgelehnt.text);
-    process.exit(abgelehnt.code);
+  if (ermaechtigung === null) {
+    const frage = '\nWirklich ' + v.auswahl.length + ' Short(s) als PRIVAT mit publishAt aus dem Plan auf den Kanal "' +
+      kanalName + '" hochladen? Tippe "' + BESTAETIGUNGSWORT + '" zum Bestaetigen: ';
+    const abgelehnt = await bestaetigungEinholen(frage, BESTAETIGUNGSWORT);
+    if (abgelehnt) {
+      console.log(abgelehnt.text);
+      process.exit(abgelehnt.code);
+    }
+  } else {
+    // Der Kanal, den der Knopf genannt hat, muss der Kanal sein, der es
+    // bekommt. Das ist die einzige Pruefung, die vorher nicht moeglich war.
+    const k = pruefeKanal(ermaechtigung, kanal.id, kanalName);
+    if (!k.ok) {
+      druckeFehler('die Ermaechtigung traegt nicht (' + k.code + ').', [k.meldung]);
+      process.exit(EXIT_BEFUND);
+    }
+    // VERBRAUCHT, BEVOR DER ERSTE UPLOAD BEGINNT. Bricht der Lauf danach ab,
+    // ist die Ermaechtigung trotzdem weg -- ein zweiter Lauf braucht einen
+    // zweiten Klick, und dann sieht wieder ein Mensch die Vorschau.
+    const verbraucht = verbraucheErmaechtigung({
+      projektwurzel, pfad: bestaetigtDurch, daten: ermaechtigung, jetzt: Date.now(),
+    });
+    if (!verbraucht.ok) {
+      druckeFehler('die Ermaechtigung liess sich nicht verbrauchen (' + verbraucht.code + ').',
+        [verbraucht.meldung]);
+      process.exit(EXIT_BEFUND);
+    }
+    console.log('');
+    console.log('ERMAECHTIGUNG VERBRAUCHT: vermerkt in ' + verbraucht.verbrauchtPfad);
+    console.log('  Datei ' + (verbraucht.geloescht
+      ? 'geloescht: ' + bestaetigtDurch
+      : 'NICHT geloescht (' + verbraucht.loeschgrund + ') -- sie ist aber vermerkt und ' +
+        'gilt nicht mehr: ' + bestaetigtDurch));
+    console.log('  Kanal geprueft: die Kennung aus der Ermaechtigung ist die des ' +
+      'angemeldeten Kanals "' + kanalName + '".');
   }
 
   console.log('');
@@ -1347,7 +1914,11 @@ module.exports = {
   GESPERRTE_AUFNAHMEN, pruefeSperrliste, sperreFuer,
   leseBeschreibungsvorlage, fuelleBeschreibung, leseHashtagKonfiguration, woerter, stichwortTrifft,
   zuordneHashtags, leseVeroeffentlichung, ladeKonfiguration,
-  zaehleHashtags, pruefeGrenzen, baueMetadaten,
+  zaehleHashtags, pruefeGrenzen, baueMetadaten, zaehleTitelZeichen,
+  ERMAECHTIGUNG_ARTIFACT_TYPE, ERMAECHTIGUNG_SCHEMA_VERSION, ERMAECHTIGUNG_GUELTIG_MS,
+  ERMAECHTIGUNG_ZUKUNFT_MS, ZUFALL_FORM, VERBRAUCHT_MAX,
+  ermaechtigungOrdner, ermaechtigungPfad, verbrauchtPfad, neuerZufall, neueErmaechtigung,
+  leseVerbrauchte, pruefeErmaechtigung, pruefeKanal, verbraucheErmaechtigung,
   planPfad, lesePlan, sha256Text,
   gedaechtnisPfad, neuesGedaechtnis, leseGedaechtnis, schonHochgeladen, schreibeGedaechtnisAtomar,
   leseUebergabePfade, sha256Datei, pruefsummenstand,

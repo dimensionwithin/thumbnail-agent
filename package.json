@@ -25,7 +25,8 @@
     "shorts:lesen": "node src/upload/uebergabe-leser.js",
     "shorts:freigabe": "node src/upload/freigabe-server.js",
     "shorts:planen": "node src/upload/planer.js",
-    "shorts:hochladen": "node src/upload/uploader.js"
+    "shorts:hochladen": "node src/upload/uploader.js",
+    "shorts:uebersicht": "node src/upload/uebersicht.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

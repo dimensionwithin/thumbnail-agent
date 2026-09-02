@@ -42,6 +42,8 @@ const { execSync } = require('child_process');
 // deren Vertreter aus dem Muster stammen, beweist nur, dass das Muster findet,
 // was sein Autor im Sinn hatte.
 const { VERTRETER, NEGATIVKONTROLLEN, BEKANNTE_ID_PROBE, BINAER_PROBEN } = require('./freigabe-vertreter.cjs');
+// DPa: fuer wertgenaue Ausnahmen (nurSha256) -- siehe AUSNAHMEN.
+const crypto = require('crypto');
 
 const ENV_SCHLUESSEL = [
   'SHORTS_TEST_VIDEO_ID', 'NORMAL_TEST_VIDEO_ID', 'AUDIT_PRIVATE_VIDEO_ID',
@@ -187,6 +189,48 @@ const AUSNAHMEN = [
       'diese Datei unveraendert weiter.',
   },
   {
+    // DPa (2026-09-02), Auftrag Punkt 2. Der Mitgliedschafts-Link in Joshuas
+    // Videobeschreibung.
+    //
+    // WAS HIER AUSGENOMMEN WIRD UND WAS NICHT. Ausgenommen ist die Pruefart
+    // "Kanal-ID" -- und auch die nur fuer GENAU EINEN Wert, naemlich den, dessen
+    // sha256 unten steht. Jede andere Kanal-ID in derselben Datei wird
+    // weiterhin gemeldet; der Abgleich gegen die bekannten IDs laeuft ueber
+    // diese Datei unveraendert weiter und ist ohnehin nicht ausnehmbar
+    // (pruefAusnahmen erzwingt das seit DF).
+    //
+    // WARUM UEBERHAUPT. Die Datei ist die Videobeschreibung, die unter JEDEM
+    // Short steht. Darin ist ein Link zur Kanalmitgliedschaft, und der hat bei
+    // YouTube die Form youtube.com/channel/<ID>/join -- die Kanal-ID ist Teil
+    // der Adresse. Sie steht damit absichtlich unter jedem Video und ist aus
+    // jeder Kanal-URL ablesbar; sie ist keine Kennung, die irgendetwas
+    // aufschliesst. Der Check kann einer Kanal-ID nicht ansehen, ob sie
+    // versehentlich im Quelltext gelandet ist oder absichtlich veroeffentlicht
+    // wird -- deshalb entscheidet das hier ein Mensch, einmal, benannt.
+    //
+    // WARUM DIE PRUEFSUMME UND NICHT DER WERT. Stuende die ID hier im Wortlaut,
+    // meldete der Check beim naechsten Lauf sich selbst -- fuer
+    // scripts/freigabe-check.cjs gibt es keine Kanal-ID-Ausnahme, und in den
+    // Vertreterkatalog gehoert sie nicht: katalogHygiene() prueft dort auf
+    // echte IDs. Die Pruefsumme bindet die Ausnahme genauso genau an einen
+    // Wert, ohne ihn zu nennen.
+    //
+    // WENN JOSHUA DEN LINK AENDERT, greift die Ausnahme nicht mehr und der
+    // Check meldet. Das ist Absicht: eine neue ID ist eine neue Entscheidung.
+    datei: 'config/shorts-beschreibung.txt',
+    muster: ['Kanal-ID'],
+    nurSha256: ['0072c49e0bd6c0d316273e8c65a0e0ad845920a89afccf02791e86b457c2af16'],
+    grund:
+      'Der Mitgliedschafts-Link der Videobeschreibung. YouTube adressiert die ' +
+      'Kanalmitgliedschaft als youtube.com/channel/<Kanal-ID>/join; die Kanal-ID ' +
+      'ist Teil dieser Adresse und steht damit absichtlich unter jedem Short. Sie ' +
+      'ist aus jeder Kanal-URL ablesbar und schliesst nichts auf. Die Ausnahme gilt ' +
+      'AUSSCHLIESSLICH fuer die Pruefart "Kanal-ID" und darin nur fuer den einen ' +
+      'Wert mit der oben genannten Pruefsumme: jede andere Kanal-ID in dieser Datei ' +
+      'wird gemeldet, und der Abgleich gegen die bekannten IDs laeuft unveraendert ' +
+      'weiter.',
+  },
+  {
     datei: 'scripts/freigabe-vertreter.cjs',
     muster: [
       'absoluter Laufwerkspfad', 'UNC-Pfad', 'absoluter Unix-Heimpfad',
@@ -204,11 +248,28 @@ const AUSNAHMEN = [
 
 function ausnahmenFuer(datei) {
   const norm = datei.split('\\').join('/');
-  const namen = new Set();
-  for (const a of AUSNAHMEN) if (norm === a.datei || norm.endsWith('/' + a.datei)) {
-    for (const m of a.muster) namen.add(m);
-  }
-  return namen;
+  return AUSNAHMEN.filter((a) => norm === a.datei || norm.endsWith('/' + a.datei));
+}
+
+// DPa: Greift eine der Ausnahmen dieser Datei auf diesen Fund?
+//
+// OHNE nurSha256 gilt wie bisher: der Pruefartname genuegt, der ganze Fund ist
+// unterdrueckt. MIT nurSha256 muss JEDER gefundene Wert in der erlaubten Liste
+// stehen -- ein einziger fremder Wert laesst den ganzen Fund stehen. Das ist
+// die Richtung, in der man sich nicht irren darf: lieber ein Fund zu viel als
+// eine Ausnahme, die einen unbekannten Wert mit durchtraegt.
+function istAusgenommen(fund, eintraege) {
+  const passend = eintraege.filter((a) => a.muster.includes(fund.muster));
+  if (!passend.length) return false;
+  // Ein Eintrag ohne Wertbindung nimmt die Pruefart ganz aus (Bauart aus DF).
+  if (passend.some((a) => !a.nurSha256)) return true;
+  const erlaubt = new Set(passend.flatMap((a) => a.nurSha256));
+  // Ein Fund ohne Werte laesst sich nicht wertgenau pruefen -- dann wird NICHT
+  // unterdrueckt. Sonst waere eine Wertbindung auf einer Pruefart ohne Werte
+  // eine Ausnahme, die alles durchlaesst, ohne dass man es sieht.
+  if (!Array.isArray(fund.werte) || !fund.werte.length) return false;
+  return fund.werte.every((w) =>
+    erlaubt.has(crypto.createHash('sha256').update(String(w), 'utf8').digest('hex')));
 }
 
 // DFa (2026-08-31), Auftrag Punkt 1: Binaerdateien von der MUSTERPRUEFUNG
@@ -261,6 +322,11 @@ function pruefeInhalt(inhalt, ids) {
       const rest = eindeutig.length - gezeigt.length;
       funde.push({
         muster: m.name,
+        // DPa: die gefundenen Werte gehen MIT. Ohne sie kann eine Ausnahme nur
+        // pauschal nach Pruefartnamen unterdruecken -- also alles, was dieses
+        // Muster in dieser Datei je findet. Mit ihnen laesst sich eine Ausnahme
+        // an genau einen Wert binden (nurSha256).
+        werte: eindeutig,
         text: `${m.name}: ${gezeigt.join(", ")}${rest > 0 ? ` und ${rest} weitere` : ''}`,
       });
     }
@@ -427,6 +493,26 @@ function pruefAusnahmen() {
       if (m === 'bekannte ID') fehler.push(`Ausnahme fuer "${a.datei}" nimmt den Abgleich gegen bekannte IDs aus -- das ist nicht zulaessig`);
       else if (!ALLE_PRUEFARTEN.includes(m)) fehler.push(`Ausnahme fuer "${a.datei}" nennt die unbekannte Pruefart "${m}"`);
     }
+    // DPa: die Wertbindung prueft sich mit.
+    if (a.nurSha256 !== undefined) {
+      if (!Array.isArray(a.nurSha256) || !a.nurSha256.length) {
+        fehler.push(`Ausnahme fuer "${a.datei}": nurSha256 ist keine nicht-leere Liste`);
+      } else {
+        for (const h of a.nurSha256) {
+          if (typeof h !== 'string' || !/^[0-9a-f]{64}$/.test(h)) {
+            fehler.push(`Ausnahme fuer "${a.datei}": nurSha256 enthaelt keine sha256-Summe`);
+          }
+        }
+      }
+      // Eine Wertbindung auf einer Pruefart, die keine Werte liefert, waere
+      // eine Ausnahme, die nie greift -- eine tote Ausnahme, also ein Loch,
+      // von dem niemand weiss (dieselbe Haltung wie bei der toten Datei).
+      for (const m of a.muster) {
+        if (!MUSTER.some((x) => x.name === m)) {
+          fehler.push(`Ausnahme fuer "${a.datei}": nurSha256 auf der Pruefart "${m}", die keine Werte liefert`);
+        }
+      }
+    }
   }
   return fehler;
 }
@@ -452,6 +538,27 @@ function selbstpruefung() {
       for (const v of liste) {
         const f = pruefeInhalt(v, [BEKANNTE_ID_PROBE]);
         if (f.length) fehler.push(`Fehlalarm auf Negativkontrolle (${name}) "${v}": ${f.map((x) => x.muster).join(", ")}`);
+      }
+    }
+    // DPa: eine wertgebundene Ausnahme muss ein FENSTER sein, kein Tor. Fuer
+    // jede pruefen wir hier, dass ein FREMDER Wert derselben Pruefart NICHT
+    // unterdrueckt wird. Ohne diese Probe koennte ein Tippfehler in
+    // istAusgenommen die Bindung stillschweigend ausser Kraft setzen, und die
+    // Ausnahme naehme dann alles mit.
+    for (const a of AUSNAHMEN.filter((x) => x.nurSha256)) {
+      for (const m of a.muster) {
+        const fremd = { muster: m, werte: ['fremder-wert-den-es-nicht-gibt'], text: 'Probe' };
+        if (istAusgenommen(fremd, [a])) {
+          fehler.push(`Ausnahme fuer "${a.datei}" unterdrueckt bei "${m}" auch fremde Werte -- sie ist ein Tor, kein Fenster`);
+        }
+        const gemischt = { muster: m, werte: ['fremder-wert-den-es-nicht-gibt', 'noch-einer'], text: 'Probe' };
+        if (istAusgenommen(gemischt, [a])) {
+          fehler.push(`Ausnahme fuer "${a.datei}" unterdrueckt bei "${m}" auch gemischte Funde`);
+        }
+        const ohneWerte = { muster: m, text: 'Probe' };
+        if (istAusgenommen(ohneWerte, [a])) {
+          fehler.push(`Ausnahme fuer "${a.datei}" unterdrueckt bei "${m}" einen Fund ohne Werte`);
+        }
       }
     }
     // DFa, Punkt 1b: die Binaerheuristik in BEIDE Richtungen. Beide Proben
@@ -590,8 +697,9 @@ function main() {
     ];
     // Ausnahmen greifen NUR gegen Muster und .env-Vorgabewert, nie gegen den
     // ID-Abgleich (pruefAusnahmen() haelt das offen).
-    const funde = alle.filter((x) => !aus.has(x.muster)).map((x) => x.text);
-    ausgenommen += alle.length - funde.length;
+    const unterdrueckt = alle.filter((x) => istAusgenommen(x, aus));
+    const funde = alle.filter((x) => !istAusgenommen(x, aus)).map((x) => x.text);
+    ausgenommen += unterdrueckt.length;
 
     if (funde.length) {
       treffer += funde.length;
@@ -599,6 +707,12 @@ function main() {
       for (const x of funde) console.log(`        ${x}`);
     } else {
       console.log(`ok    ${f}${marke}`);
+    }
+    // DPa: unterdrueckte Treffer werden AN DER DATEI genannt, nicht nur unten
+    // gezaehlt. Eine Ausnahme, die man erst in der Summenzeile bemerkt, ist
+    // eine, die niemand nachliest.
+    for (const x of unterdrueckt) {
+      console.log(`        (Ausnahme: ${x.muster} -- benannt und begruendet in ${EIGENE_DATEI})`);
     }
   }
 

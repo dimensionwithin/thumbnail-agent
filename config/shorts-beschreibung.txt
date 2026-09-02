@@ -1,22 +1,48 @@
->>> VORLAGE -- DIESEN TEXT ERSETZEN <<<
-Solange die erste Zeile dieser Datei so lautet, lädt der Uploader nichts hoch.
-Er bricht mit einer Meldung ab. Das ist Absicht: eine Vorlage zu
-veröffentlichen ist ein Fehler, den man genau einmal macht.
-
-So wird diese Datei benutzt:
-- Alles in dieser Datei steht wörtlich unter jedem Short. Auch diese Zeilen,
-  solange sie hier stehen. Also: den ganzen Inhalt durch den echten Text
-  ersetzen, einschließlich der ersten Zeile.
-- {titel} wird durch den Titel des jeweiligen Shorts ersetzt.
-- {hashtags} wird durch die Hashtags ersetzt, die der Uploader aus dem Titel
-  ableitet (Zuordnung in config/shorts-hashtags.json). Fehlt {hashtags},
-  kommen die Hashtags ans Ende des Textes.
-- Beide Platzhalter sind freiwillig. Andere Wörter in geschweiften Klammern
-  sind ein Fehler, kein Text.
-- Höchstens 5000 Zeichen, keine < und > Zeichen. Der Uploader prüft das,
-  bevor irgendetwas hochgeht.
-- Eine Änderung wirkt beim nächsten Lauf. Kein Neustart, keine Codeänderung.
-
 {titel}
+
+🧠 Zyklen statt News. Marktpsychologie · Narrative · Hidden Structure.
+
+━━━━━━━━━━━━━━━━━━━━
+🔗 LINKS
+━━━━━━━━━━━━━━━━━━━━
+▸ Alle Links & Playlists: https://dimensionwithin.cloud/links
+▸ Kostenloser Discord: https://discord.gg/hzkYqj4Wkn
+▸ Kanalmitgliedschaft (Community-Calls, exklusive Streams & Member-Videos): https://www.youtube.com/channel/UCFbqAiGC4MKHVe5zhI7IJug/join
+▸ Trade on Hyperliquid – Code: DIMENSIONWITHIN
+  (Affiliate-/Referral-Link. Es gelten die Standard-Handelsgebühren der Börse. Keine Rendite- oder Performance-Zusagen.)
+
+━━━━━━━━━━━━━━━━━━━━
+📡 ÜBER DEN KANAL
+━━━━━━━━━━━━━━━━━━━━
+Auf diesem Kanal dokumentiere ich, was ich lerne, teste und baue, um Märkte nicht "preisgetrieben", sondern strukturell zu verstehen:
+
+▸ Matrix Markets Theory – Cycle- & Fractal-Model-Thesis
+▸ Sentiment-Theory & Narrative-Analysis
+▸ Numerology-Frameworks als Muster-Overlay (kein Dogma)
+▸ Prediction Markets (Polymarket): Positioning & Signal vs. Noise
+▸ Makro-Events, Liquidität, Timing & Erwartungsmanagement
+
+Mein Background:
+Joshua (DimensionWithin)
+▸ Gründer der Truth-Pill Community (Start: April 2024)
+▸ Top 1% Polymarket Trader (2025)
+▸ Blockchain Professional (2023)
+▸ Entwickler der Matrix Markets Theory
+
+Abonniere für neue Uploads, Livestreams & Musik.
+Zugang zu Calls & Community läuft über die Kanalmitgliedschaft.
+
+━━━━━━━━━━━━━━━━━━━━
+⚖️ DISCLAIMER / HAFTUNGSAUSSCHLUSS
+━━━━━━━━━━━━━━━━━━━━
+Keine Anlage- oder Finanzberatung. Die Inhalte dienen ausschließlich der Bildung und Inspiration. Jede Entscheidung triffst du eigenverantwortlich.
+
+Die im Video gezeigten Medien (Bilder, Videos, Musik etc.) stammen aus öffentlich zugänglichen Quellen. Ihre Nutzung erfolgt gemäß § 51 UrhG (Zitatrecht) bzw. US Fair Use (für internationale Inhalte), ausschließlich zu kommentierenden, dokumentarischen oder kritischen Zwecken.
+
+Das Video richtet sich nicht gegen Einzelpersonen. Es werden weder Aufrufe zur Belästigung noch zur Nachahmung gegeben. Alle genannten Personen erfüllen die Definition einer öffentlichen Figur im Sinne der Rechtsprechung.
+
+Persönliche Informationen wurden, soweit möglich, geschwärzt oder ausgelassen, um die Privatsphäre zu wahren.
+
+Dieses Video entspricht den YouTube-Richtlinien und verletzt nach bestem Wissen und Gewissen keine Urheber- oder Persönlichkeitsrechte.
 
 {hashtags}

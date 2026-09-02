@@ -5,10 +5,23 @@
     "Hashtags OHNE #-Zeichen eintragen, das # setzt der Uploader. Keine Leerzeichen im Hashtag.",
     "Neue Gruppe: einen Block in 'gruppen' kopieren, 'name', 'stichwoerter' und 'hashtags' eintragen. Die Reihenfolge der Gruppen ist die Reihenfolge der Hashtags unter dem Short.",
     "'immer' kommt bei JEDEM Short dazu, auch wenn kein Stichwort trifft. Trifft kein Stichwort, bleiben nur diese.",
+    "REIHENFOLGE unter dem Short: erst die thematisch abgeleiteten (Gruppen, in der Reihenfolge dieser Datei), dann 'immer' in der Reihenfolge dieser Liste. Sie ist fest -- derselbe Titel ergibt zweimal dieselbe Zeile.",
+    "DOPPELTE fallen heraus, Gross- und Kleinschreibung egal, und die ZUERST genannte Schreibweise gewinnt. Wer eine Schreibweise aendern will, aendert die ERSTE -- eine spaetere zu aendern bewirkt nichts.",
+    "DPa: Joshuas sechs stehen deshalb VORN und klein geschrieben. Bis DPa standen 'Krypto', 'Crypto', 'Shorts' davor, und 'Krypto' gewann gegen sein 'krypto'; unter dem Short erschien '#Krypto'. Die Regel ist dieselbe geblieben, nur die Reihenfolge hat sich gedreht. 'Krypto' weiter unten ist seitdem WIRKUNGSLOS -- es steht nur noch da, weil es von Anfang an dastand. Wer es entfernt, aendert nichts an der Ausgabe.",
     "Hoechstens 15 Hashtags je Short, denn ab dem sechzehnten ignoriert YouTube ALLE. Der Uploader zaehlt Titel und Beschreibung zusammen und bricht vorher ab.",
     "Diese Erklaerung wird vom Uploader nicht gelesen. Alles andere in dieser Datei schon."
   ],
-  "immer": ["Krypto", "Crypto", "Shorts"],
+  "immer": [
+    "krypto",
+    "bitcoin",
+    "xrp",
+    "polymarket",
+    "okkulteskrypto",
+    "finanzen",
+    "Krypto",
+    "Crypto",
+    "Shorts"
+  ],
   "gruppen": [
     {
       "name": "Bitcoin",

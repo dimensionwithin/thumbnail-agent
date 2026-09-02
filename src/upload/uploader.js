@@ -137,6 +137,32 @@ const VEROEFFENTLICHUNG_DATEI = path.join('config', 'shorts-veroeffentlichung.js
 // Solange dieser Marker in der Beschreibungsdatei steht, wird nichts
 // hochgeladen. Er steht in der ersten Zeile der ausgelieferten Datei.
 const VORLAGEN_MARKER = '>>> VORLAGE -- DIESEN TEXT ERSETZEN <<<';
+// DP PUNKT 3: DER PLATZHALTER IN ECKIGEN KLAMMERN.
+//
+// Joshuas Vorlage trug [DISCORD-LINK] und [MEMBERSHIP-LINK] -- Stellen, an die
+// ein Mensch etwas eintragen sollte. Wird eine davon vergessen, steht sie
+// hinterher unter jedem Video. Das ist derselbe Fehler wie der Vorlagenmarker,
+// nur kleiner und darum leichter zu uebersehen: der Marker steht in der ersten
+// Zeile, [MEMBERSHIP-LINK] in der Mitte eines Linkblocks.
+//
+// GEPRUEFT WIRD DIE FERTIGE BESCHREIBUNG, nicht die Vorlage. Zwei Gruende: der
+// Titel aus dem Plan koennte selbst so eine Zeichenfolge tragen, und die
+// Vorlage koennte eine Stelle haben, die erst durch das Einsetzen entsteht.
+//
+// DIE FORM: eckige Klammer, darin nur GROSSBUCHSTABEN, Ziffern, Unterstrich und
+// Bindestrich, mindestens ein Buchstabe, mindestens zwei Zeichen. Das trifft
+// [PLATZHALTER], [DISCORD-LINK] und [MEMBERSHIP-LINK].
+//
+// WAS SIE ABSICHTLICH NICHT TRIFFT: Fliesstext in eckigen Klammern wie
+// "[1-2 Saetze zum Video]" -- der enthaelt Kleinbuchstaben. Eine Regel, die
+// jede eckige Klammer verbietet, waere eine Regel gegen normale Zeichensetzung;
+// sie wuerde bei einer Quellenangabe "[2]" anschlagen und dann abgeschaltet.
+// Eine Regel, die nur abgeschaltet wird, schuetzt nichts. Diese hier trifft die
+// Form, in der Platzhalter tatsaechlich geschrieben werden.
+//
+// \p{Lu} statt A-Z, damit auch [GRUSS-ÜBERSCHRIFT] auffaellt.
+const ECKIGER_PLATZHALTER = /\[(?=[^\]\n]*\p{Lu})[\p{Lu}\p{N}_-]{2,}\]/gu;
+
 const BEKANNTE_PLATZHALTER = ['titel', 'hashtags'];
 const PLATZHALTER_FORM = /\{([^{}\n]*)\}/g;
 
@@ -485,6 +511,22 @@ function pruefeGrenzen({ kennung, titel, beschreibung }) {
   }
   if (VERBOTENE_ZEICHEN.test(beschreibung)) {
     fehler.push(wo + 'die fertige Beschreibung enthaelt < oder >. Beides laesst die YouTube-API nicht zu.');
+  }
+  // DP PUNKT 3. Die Fundstelle wird im Klartext genannt: "es steht noch ein
+  // Platzhalter drin" schickt einen Menschen in eine 2500 Zeichen lange Datei
+  // auf die Suche. Der Name sagt ihm sofort, welche Zeile gemeint ist.
+  const eckige = [];
+  for (const m of beschreibung.matchAll(ECKIGER_PLATZHALTER)) {
+    if (!eckige.includes(m[0])) eckige.push(m[0]);
+  }
+  if (eckige.length) {
+    fehler.push(wo + 'in der fertigen Beschreibung steht noch ' +
+      (eckige.length === 1 ? 'ein Platzhalter' : eckige.length + ' Platzhalter') +
+      ' in eckigen Klammern: ' + eckige.join(', ') + '. Das ist eine Stelle, an die ein ' +
+      'Mensch etwas eintragen sollte -- sie geht nicht hoch. Eine Vorlage zu ' +
+      'veroeffentlichen ist ein Fehler, den man genau einmal macht. Zu aendern in ' +
+      BESCHREIBUNG_DATEI + '. (Die geschweiften Platzhalter {titel} und {hashtags} sind ' +
+      'davon nicht betroffen: sie sind zu diesem Zeitpunkt bereits ersetzt.)');
   }
   const tags = zaehleHashtags(titel) + zaehleHashtags(beschreibung);
   if (tags > HASHTAGS_MAX) {
@@ -1300,6 +1342,7 @@ module.exports = {
   PRIVACY_STATUS, TITEL_MAX_ZEICHEN, BESCHREIBUNG_MAX_ZEICHEN, BESCHREIBUNG_MAX_BYTES, HASHTAGS_MAX,
   MINDESTVORLAUF_MS, PAUSE_MS, BESTAETIGUNGSWORT, MAX_NACHFRAGEN,
   BESCHREIBUNG_DATEI, HASHTAGS_DATEI, VEROEFFENTLICHUNG_DATEI, VORLAGEN_MARKER, BEKANNTE_PLATZHALTER,
+  ECKIGER_PLATZHALTER,
   GEDAECHTNIS_ARTIFACT_TYPE, GEDAECHTNIS_SCHEMA_VERSION,
   GESPERRTE_AUFNAHMEN, pruefeSperrliste, sperreFuer,
   leseBeschreibungsvorlage, fuelleBeschreibung, leseHashtagKonfiguration, woerter, stichwortTrifft,

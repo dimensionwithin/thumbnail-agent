@@ -242,20 +242,56 @@ test('N7: die Sperre greift auch, wenn ein Plan fuer die Aufnahme von Hand geleg
 // TEIL 1 -- DIE KONFIGURATION
 // ---------------------------------------------------------------------------
 
-test('N2: die ausgelieferte Beschreibungsdatei ist die Vorlage, und die Vorlage wird verweigert', () => {
-  const roh = fs.readFileSync(path.join(WURZEL, U.BESCHREIBUNG_DATEI), 'utf8');
-  assert.ok(roh.includes(U.VORLAGEN_MARKER), 'die ausgelieferte Datei traegt den Marker nicht mehr');
-  assert.ok(roh.replace(/\r\n/g, '\n').startsWith(U.VORLAGEN_MARKER + '\n'), 'der Marker steht nicht in der ersten Zeile');
-  const g = U.leseBeschreibungsvorlage(roh);
+test('DP1/DP2a: die ausgelieferte Beschreibungsdatei traegt {titel} oben und die Hashtags an EINER Stelle', () => {
+  const datei = fs.readFileSync(path.join(WURZEL, U.BESCHREIBUNG_DATEI), 'utf8').replace(/\r\n?/g, '\n');
+
+  // DP PUNKT 1. Die ersten rund 150 Zeichen der Beschreibung erscheinen in der
+  // Suche. Stuende dort bei allen zwoelf Shorts derselbe Satz, saehen alle
+  // zwoelf in der Suche gleich aus. Oben steht deshalb der Titel -- der
+  // einzige Text dieser Kette, den ein Mensch angesehen und freigegeben hat.
+  assert.ok(datei.startsWith('{titel}\n'),
+    'die erste Zeile ist nicht {titel}, sondern: ' + JSON.stringify(datei.split('\n')[0]));
+
+  // DP PUNKT 2a. In der Beschreibung steht nur der Platzhalter. Eine feste
+  // Hashtag-Zeile hier UND abgeleitete Hashtags dazu hiessen: #krypto steht
+  // doppelt unter dem Video, und gepflegt wird spaeter an der falschen Stelle.
+  assert.ok(datei.includes('{hashtags}'), '{hashtags} fehlt');
+  const istHashtagZeile = (z) => z.trim().length > 0 &&
+    z.trim().split(/\s+/).every((w) => /^#[\p{L}\p{N}_]+$/u.test(w));
+  const feste = datei.split('\n').filter(istHashtagZeile);
+  assert.deepEqual(feste, [],
+    'in der Beschreibung steht wieder eine feste Hashtag-Zeile: ' + JSON.stringify(feste));
+
+  // Und der Marker ist weg -- sonst laedt der Uploader ueberhaupt nichts hoch.
+  assert.ok(!datei.includes(U.VORLAGEN_MARKER), 'der Vorlagenmarker steht wieder drin');
+  assert.deepEqual(U.ladeKonfiguration(WURZEL).fehler, [],
+    'die ausgelieferte Konfiguration des Repos ist nicht lauffaehig');
+});
+
+test('N2: der Vorlagenmarker wird weiterhin verweigert -- an einer eigenen Datei geprueft', () => {
+  // DP: bis hierher hing dieser Test daran, dass die AUSGELIEFERTE Datei die
+  // Vorlage IST. Das war richtig, solange sie niemand gefuellt hatte, und fiel
+  // in dem Augenblick um, in dem Joshuas Text eintraf -- ohne dass an der
+  // Verweigerung selbst irgendetwas kaputt gewesen waere. Derselbe Fehler wie
+  // beim Planer-Test in DOa: der Test haengte an einem Zustand, den er nicht
+  // besitzt. Die Verweigerung wird deshalb an einer Datei geprueft, die dieser
+  // Test selbst schreibt.
+  const mitMarker = U.VORLAGEN_MARKER + '\nirgendein Text darunter.\n';
+  const g = U.leseBeschreibungsvorlage(mitMarker);
   assert.equal(g.fehler.length, 1);
   assert.match(g.fehler[0], /noch die VORLAGE/);
-  // Die ganze Konfiguration des Repos faellt damit durch -- und zwar nur daran.
-  const k = U.ladeKonfiguration(WURZEL);
-  assert.equal(k.fehler.length, 1);
-  assert.match(k.fehler[0], /VORLAGE/);
-  // Ohne den Marker laeuft sie.
-  const ohne = roh.replace(U.VORLAGEN_MARKER, 'Eine echte Beschreibung.').replace(/[<>]/g, '');
-  assert.deepEqual(U.leseBeschreibungsvorlage(ohne).fehler, []);
+
+  const w = wegwerfWurzel(mitMarker);
+  try {
+    const k = U.ladeKonfiguration(w);
+    assert.equal(k.fehler.length, 1);
+    assert.match(k.fehler[0], /VORLAGE/);
+  } finally {
+    fs.rmSync(w, { recursive: true, force: true });
+  }
+
+  // Dieselbe Datei ohne den Marker laeuft durch.
+  assert.deepEqual(U.leseBeschreibungsvorlage('Eine echte Beschreibung.\n').fehler, []);
 });
 
 test('Platzhalter: {titel} und {hashtags} werden ersetzt, unbekannte sind ein Fehler, ohne beide kommen die Hashtags ans Ende', () => {
@@ -282,25 +318,55 @@ test('Platzhalter: {titel} und {hashtags} werden ersetzt, unbekannte sind ein Fe
 test('N4: die Hashtag-Zuordnung an den echten Titeln -- ganze Woerter, keine Teiltreffer, kein Raten', () => {
   const k = U.leseHashtagKonfiguration(fs.readFileSync(path.join(WURZEL, U.HASHTAGS_DATEI), 'utf8'));
   assert.deepEqual(k.fehler, []);
-  assert.deepEqual(k.immer, ['Krypto', 'Crypto', 'Shorts']);
+  // DP: die immer-Liste wird hier NICHT mehr Eintrag fuer Eintrag
+  // festgeschrieben. Sie waechst, sobald Joshua eine feste Hashtag-Zeile
+  // dazugibt (DP Punkt 2a) -- und dieser Test handelt vom Treffen ganzer
+  // Woerter, nicht vom Inhalt der Liste. Wer sie hier festschreibt, laesst
+  // diesen Test bei jeder Pflege der Konfiguration umfallen, ohne dass am
+  // Treffen etwas kaputt waere. Der Inhalt der Liste steht in DP2a, die
+  // Schreibweise in DPa.
+  //
+  // DPa: auch der WERT der ersten Schreibweise stand hier noch fest ('Krypto')
+  // und fiel um, als in DPa die Reihenfolge gedreht wurde. Eine Tatsache
+  // gehoert an EINE Stelle. Geprueft wird deshalb nur noch die Eigenschaft,
+  // von der dieser Test lebt: dass jede Schreibweise in der immer-Liste beim
+  // ERSTEN Vorkommen entschieden wird -- welche das ist, sagt DPa.
+  assert.ok(k.immer.length >= 3, 'die immer-Liste ist geschrumpft');
+  const ersteVorkommen = k.immer.filter((h, i) =>
+    k.immer.findIndex((x) => x.toLocaleLowerCase('de') === h.toLocaleLowerCase('de')) === i);
+  assert.deepEqual(U.zuordneHashtags('Ein Titel ohne jedes Stichwort', k).hashtags, ersteVorkommen,
+    'nicht jede Schreibweise wird beim ersten Vorkommen entschieden');
   const namen = k.gruppen.map((g) => g.name);
   for (const n of ['Bitcoin', 'XRP', 'Hyperliquid']) assert.ok(namen.includes(n), n + ' fehlt');
-  const z = (titel) => U.zuordneHashtags(titel, k).hashtags;
+  // DP: geprueft wird der ABGELEITETE Teil -- das ist das Thema dieses Tests.
+  // Vorher stand hier jedes Mal die volle Liste einschliesslich der
+  // immer-dazu; damit fiel der Test um, sobald Joshuas feste Hashtag-Zeile in
+  // die immer-Liste einzog (DP Punkt 2a), obwohl am Treffen ganzer Woerter
+  // nichts kaputt war. Dass die immer-dazu HINTEN stehen, haelt DP2c fest,
+  // und die volle Liste steht unten am Beispiel einer eigenen Konfiguration.
+  const abgeleitet = (titel) => U.zuordneHashtags(titel, k).herleitung
+    .filter((h) => h.quelle !== 'immer').map((h) => h.hashtag);
   const freigabe = JSON.parse(fs.readFileSync(path.join(WURZEL, 'data', 'freigaben', ECHTE_AUFNAHME + '.json'), 'utf8'));
   const titelVon = (n) => freigabe.freigaben.find((e) => e.kennung.endsWith('/' + n)).titel;
-  assert.deepEqual(z(titelVon(26)), ['Hyperliquid', 'HYPE', 'Krypto', 'Crypto', 'Shorts']);            // "Hype: Korrektur ..."
-  assert.deepEqual(z(titelVon(28)), ['XRP', 'Ripple', 'Hyperliquid', 'HYPE', 'Krypto', 'Crypto', 'Shorts']); // "XRP ... bei Hype ..."
-  assert.deepEqual(z(titelVon(9)), ['Wyckoff', 'Krypto', 'Crypto', 'Shorts']);
+  assert.deepEqual(abgeleitet(titelVon(26)), ['Hyperliquid', 'HYPE']);            // "Hype: Korrektur ..."
+  assert.deepEqual(abgeleitet(titelVon(28)), ['XRP', 'Ripple', 'Hyperliquid', 'HYPE']); // "XRP ... bei Hype ..."
+  assert.deepEqual(abgeleitet(titelVon(9)), ['Wyckoff']);
   for (const n of [4, 10, 14, 15, 19, 21, 25, 31, 33]) {
-    assert.deepEqual(z(titelVon(n)), ['Krypto', 'Crypto', 'Shorts'], 'Kennung /' + n);
+    assert.deepEqual(abgeleitet(titelVon(n)), [], 'Kennung /' + n);
   }
-  // Ohne Treffer bleiben nur die immer-dazu.
-  assert.deepEqual(z('Ein Titel, in dem kein Stichwort vorkommt'), ['Krypto', 'Crypto', 'Shorts']);
+  // Ohne Treffer wird nichts abgeleitet -- es bleiben nur die immer-dazu.
+  assert.deepEqual(abgeleitet('Ein Titel, in dem kein Stichwort vorkommt'), []);
+  assert.deepEqual(U.zuordneHashtags('Ein Titel, in dem kein Stichwort vorkommt', k).hashtags,
+    k.immer.filter((h, i) => k.immer.findIndex((x) => x.toLocaleLowerCase('de') === h.toLocaleLowerCase('de')) === i));
   // Teiltreffer mitten im Wort zaehlen nicht.
-  assert.deepEqual(z('BTCUSD Hypertrophie Ripples Bitcoins'), ['Krypto', 'Crypto', 'Shorts']);
+  assert.deepEqual(abgeleitet('BTCUSD Hypertrophie Ripples Bitcoins'), []);
   // Ganze Woerter schon, egal wie geschrieben und mit Satzzeichen daneben.
-  assert.deepEqual(z('btc!'), ['Bitcoin', 'BTC', 'Krypto', 'Crypto', 'Shorts']);
-  assert.deepEqual(z('Bitcoin und XRP'), ['Bitcoin', 'BTC', 'XRP', 'Ripple', 'Krypto', 'Crypto', 'Shorts']);
+  assert.deepEqual(abgeleitet('btc!'), ['Bitcoin', 'BTC']);
+  assert.deepEqual(abgeleitet('Bitcoin und XRP'), ['Bitcoin', 'BTC', 'XRP', 'Ripple']);
+  // Die volle Liste, an einer eigenen Konfiguration: abgeleitet zuerst, immer danach.
+  const eigene = { immer: ['Krypto', 'Shorts'], gruppen: k.gruppen };
+  assert.deepEqual(U.zuordneHashtags('Bitcoin und XRP', eigene).hashtags,
+    ['Bitcoin', 'BTC', 'XRP', 'Ripple', 'Krypto', 'Shorts']);
   // Die Herleitung nennt Gruppe und Stichwort.
   const her = U.zuordneHashtags('Was macht BTC?', k).herleitung;
   assert.equal(her[0].quelle, 'Gruppe "Bitcoin", Stichwort "BTC" im Titel');
@@ -628,7 +694,16 @@ test('der Auftrag an den Upload traegt Titel, fertige Beschreibung, publishAt un
   const a = protokoll[1];
   assert.deepEqual(Object.keys(a), ['kennung', 'pfad', 'titel', 'beschreibung', 'publishAt', 'veroeffentlichung']);
   assert.equal(a.titel, 'Probe 2 mit Bitcoin');
-  assert.equal(a.beschreibung, 'Probe 2 mit Bitcoin\n\nProbetext fuer den Test.\n\n#Bitcoin #BTC #Krypto #Crypto #Shorts');
+  // DP: nicht mehr die GANZE Hashtag-Zeile, sondern ihr Anfang. Dieser Test
+  // handelt vom Auftrag an den Upload -- Titel oben, fertiger Text, Hashtags
+  // unten --, nicht vom Inhalt der immer-Liste. Der Anfang haelt trotzdem das
+  // fest, worauf es hier ankommt: der Titel steht als erste Zeile, und die
+  // abgeleiteten Hashtags stehen VOR den immer-dazu (DP Punkt 2c).
+  // DPa: der erste immer-Hashtag ist hier nicht mehr dabei. Er stand hier nur
+  // als Anker fuer "abgeleitete zuerst" -- und dafuer genuegen die beiden
+  // abgeleiteten. Seine Schreibweise gehoert nach DPa, nicht hierher.
+  assert.ok(a.beschreibung.startsWith('Probe 2 mit Bitcoin\n\nProbetext fuer den Test.\n\n#Bitcoin #BTC #'),
+    'die fertige Beschreibung faengt anders an:\n' + a.beschreibung);
   assert.match(a.publishAt, /Z$/);
   assert.deepEqual(a.veroeffentlichung, { categoryId: '27', defaultLanguage: 'de', defaultAudioLanguage: 'de-DE', selfDeclaredMadeForKids: false });
   assert.ok(!('privacyStatus' in a));
@@ -686,7 +761,10 @@ test('die Vorschau zeigt je Short Titel mit Zeichenzahl, fertige Beschreibung, H
   assert.match(t, /#Bitcoin\s+Gruppe "Bitcoin", Stichwort "Bitcoin" im Titel/);
   assert.match(t, /#Shorts\s+immer/);
   assert.match(t, /Beschreibung \(\d+ Zeichen, \d+ Bytes UTF-8\)/);
-  assert.match(t, /\| #Bitcoin #BTC #Krypto #Crypto #Shorts/);
+  // DPa: aus demselben Grund wie oben nur noch die abgeleiteten. Dass die
+  // immer-dazu dahinter kommen, haelt DP2c fest; wie sie geschrieben werden,
+  // haelt DPa fest.
+  assert.match(t, /\| #Bitcoin #BTC #/);
   assert.match(t, /privacyStatus:         private \(fest verdrahtet/);
 });
 
@@ -778,14 +856,250 @@ test('ein fehlender Plan ist ein Befund (Code 1), kein Aufruffehler', () => {
   assert.match(r.stderr, /NICHTS hochgeladen und kein Netzaufruf/);
 });
 
-test('N1/N2: der Trockenlauf gegen den echten Plan verweigert die Vorlage -- Code 1, kein Upload', (t) => {
-  if (!fs.existsSync(U.planPfad(WURZEL, ECHTE_AUFNAHME))) {
-    t.skip('data/plaene/' + ECHTE_AUFNAHME + '.json liegt nicht vor (gitignored, wird vom Planer angelegt) -- ' +
-      'der Lauf gegen den echten Plan lief NICHT.');
+test('DP N1: die AUSGELIEFERTE Beschreibung ergibt vollstaendige Vorschauen -- an eigener Datenlage', () => {
+  // DPb: DIESER TEST HAT KEINE UHR MEHR DARIN.
+  //
+  // Bis hierher lief er gegen den echten Plan in data/plaene und erwartete
+  // Code 0. Das war wahr, als er geschrieben wurde, und wurde am naechsten
+  // Vormittag falsch -- nicht weil etwas kaputtging, sondern weil die Termine
+  // des Plans verstrichen. Der Uploader lehnte einen abgelaufenen Plan ab, ganz
+  // richtig, und der Test meldete das als Fehlschlag.
+  //
+  // Es ist dasselbe Muster wie beim Planer-Test in DOa und beim
+  // Vorlagen-Test in DP: ein Test haengt an einem Zustand, den er nicht
+  // besitzt. Neu ist nur, dass der Zustand hier eine UHR enthaelt -- er
+  // veraltet von allein, ohne dass jemand etwas anfasst.
+  //
+  // Geprueft wird deshalb hier die MECHANIK an eigener Datenlage: die echte
+  // Beschreibungsdatei und die echte Hashtag-Zuordnung des Repos, aber ein
+  // Plan, den dieser Test selbst schreibt, mit festem Zeitpunkt. Der Lauf
+  // gegen den echten Plan steht im Test darunter.
+  const echteBeschreibung = fs.readFileSync(path.join(WURZEL, U.BESCHREIBUNG_DATEI), 'utf8');
+  const w = wegwerfWurzel(echteBeschreibung);
+  const l = wegwerfLieferung(3);
+  try {
+    schreibePlan(w, termineAus(l.shorts));
+    const v = U.bereiteVor({ projektwurzel: w, wurzel: l.wurzel, aufnahme: PROBE, jetzt: JETZT });
+    assert.deepEqual(v.fehler, [], 'die ausgelieferte Beschreibung kommt nicht durch die Grenzen');
+    assert.equal(v.auswahl.length, 3);
+
+    const text = U.formatiereVorschau(v);
+    for (const s of v.auswahl) {
+      // Der Titel steht als Hook-Zeile oben ...
+      assert.ok(s.beschreibung.startsWith(s.titel + '\n'),
+        s.kennung + ': die Beschreibung faengt nicht mit dem Titel an');
+      // ... und jede Zeile der fertigen Beschreibung steht in der Vorschau.
+      for (const zeile of s.beschreibung.split('\n')) {
+        if (!zeile.trim()) continue;
+        assert.ok(text.includes(zeile), s.kennung + ': diese Zeile fehlt in der Vorschau: ' + zeile);
+      }
+    }
+    // Drei verschiedene Titel, drei verschiedene erste Zeilen -- der Punkt der
+    // Hook-Zeile: in der Suche sehen die Shorts nicht gleich aus.
+    const ersteZeilen = new Set(v.auswahl.map((s) => s.beschreibung.split('\n')[0]));
+    assert.equal(ersteZeilen.size, 3);
+  } finally {
+    fs.rmSync(w, { recursive: true, force: true });
+    fs.rmSync(l.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('DP N1: der Trockenlauf gegen den ECHTEN Plan -- oder ein lautes Ueberspringen', (t) => {
+  // DPb: Der Lauf gegen die echte Datenlage bleibt erhalten, aber er darf nicht
+  // mehr rot werden, nur weil die Uhr weitergegangen ist. Ist der Plan
+  // abgelaufen, wird laut uebersprungen und gesagt, was zu tun ist -- ein
+  // stilles Ueberspringen waere hier das Schlimmste: es saehe aus wie ein
+  // Lauf, der geglueckt ist.
+  const pfad = U.planPfad(WURZEL, ECHTE_AUFNAHME);
+  if (!fs.existsSync(pfad)) {
+    t.skip('data/plaene/' + ECHTE_AUFNAHME + '.json liegt nicht vor (gitignored, wird vom Planer ' +
+      'angelegt) -- der Lauf gegen den echten Plan lief NICHT.');
+    return;
+  }
+  const plan = JSON.parse(fs.readFileSync(pfad, 'utf8'));
+  const frueheste = Math.min(...plan.termine.map((x) => Date.parse(x.publish_at)));
+  if (frueheste <= Date.now() + U.MINDESTVORLAUF_MS) {
+    t.skip('Der Plan ist ABGELAUFEN: der fruehste Termin ist ' + new Date(frueheste).toISOString() +
+      ', jetzt ist ' + new Date().toISOString() + '. Der Uploader lehnt ihn zu Recht ab -- ' +
+      'ein abgelaufener Plan wird neu geplant, nicht gebogen. Der Lauf gegen den echten Plan ' +
+      'lief NICHT; die Mechanik prueft der Test darueber an eigener Datenlage.');
     return;
   }
   const r = spawnSync(process.execPath, [SKRIPT, '--plan=' + ECHTE_AUFNAHME], { encoding: 'utf8' });
-  assert.equal(r.status, U.EXIT_BEFUND, r.stderr);
-  assert.match(r.stderr, /noch die\s+VORLAGE/);
-  assert.equal(r.stdout, '');
+  assert.equal(r.status, U.EXIT_OK, r.stderr);
+  assert.match(r.stdout, /TROCKENLAUF/);
+
+  const konfig = U.ladeKonfiguration(WURZEL);
+  assert.deepEqual(konfig.fehler, []);
+  for (const termin of plan.termine) {
+    assert.ok(r.stdout.includes(termin.titel), termin.kennung + ': der Titel fehlt in der Ausgabe');
+    const m = U.baueMetadaten(termin, konfig);
+    assert.deepEqual(m.verstoesse, [], termin.kennung);
+    for (const zeile of m.beschreibung.split('\n')) {
+      if (!zeile.trim()) continue;
+      assert.ok(r.stdout.includes(zeile), termin.kennung + ': diese Zeile fehlt in der Ausgabe: ' + zeile);
+    }
+  }
+  assert.ok(!fs.existsSync(U.gedaechtnisPfad(WURZEL, ECHTE_AUFNAHME)),
+    'der Trockenlauf hat ein Gedaechtnis angelegt');
+});
+
+// ---------------------------------------------------------------------------
+// DP -- DIE HOOK-ZEILE UND DIE HASHTAGS
+// ---------------------------------------------------------------------------
+
+test('DP2a: die sechs festen Hashtags aus Joshuas Zeile stehen jetzt in der immer-Liste', () => {
+  const k = U.ladeKonfiguration(WURZEL);
+  assert.deepEqual(k.fehler, []);
+  const immerKlein = k.hashtags.immer.map((h) => h.toLocaleLowerCase('de'));
+  for (const h of ['krypto', 'bitcoin', 'xrp', 'polymarket', 'okkulteskrypto', 'finanzen']) {
+    assert.ok(immerKlein.includes(h), h + ' fehlt in der immer-Liste');
+  }
+});
+
+test('DP2b: doppelte Hashtags fallen heraus, Gross- und Kleinschreibung egal, die erste Schreibweise gewinnt', () => {
+  const konfig = {
+    immer: ['krypto', 'KRYPTO', 'Shorts'],
+    gruppen: [{ name: 'G', stichwoerter: ['Wyckoff'], hashtags: ['Krypto', 'Wyckoff', 'wyckoff'] }],
+  };
+  const z = U.zuordneHashtags('Eine Wyckoff Analyse', konfig);
+  // 'Krypto' kommt aus der Gruppe ZUERST und gewinnt; 'krypto' und 'KRYPTO'
+  // aus immer fallen weg. 'wyckoff' faellt gegen 'Wyckoff' weg.
+  assert.deepEqual(z.hashtags, ['Krypto', 'Wyckoff', 'Shorts']);
+  assert.deepEqual(z.herleitung.map((h) => h.hashtag), ['Krypto', 'Wyckoff', 'Shorts']);
+});
+
+test('DP2c: die Reihenfolge ist fest -- erst die abgeleiteten, dann die immer-dazu', () => {
+  const k = U.ladeKonfiguration(WURZEL);
+  const titel = 'XRP ausgesteuert, bei Hype weiss ich es nicht';
+  const z = U.zuordneHashtags(titel, k.hashtags);
+  const quellen = z.herleitung.map((h) => h.quelle === 'immer');
+  assert.ok(quellen.includes(false), 'dieser Titel sollte Gruppen treffen');
+  assert.ok(quellen.includes(true), 'die immer-Liste sollte etwas beitragen');
+  // Kein abgeleiteter steht hinter einem immer: die Folge ist erst false, dann true.
+  assert.equal(quellen.lastIndexOf(false) < quellen.indexOf(true), true,
+    'ein immer-Hashtag steht vor einem abgeleiteten: ' + JSON.stringify(z.herleitung));
+  // Zweimal derselbe Aufruf, zweimal dieselbe Zeile.
+  assert.deepEqual(U.zuordneHashtags(titel, k.hashtags).hashtags, z.hashtags);
+});
+
+test('DP2d: bei den zwoelf echten Titeln bleibt es unter fuenfzehn Hashtags -- je Titel gezaehlt', (t) => {
+  if (!fs.existsSync(U.planPfad(WURZEL, ECHTE_AUFNAHME))) {
+    t.skip('data/plaene/' + ECHTE_AUFNAHME + '.json liegt nicht vor -- es wurde nicht gezaehlt.');
+    return;
+  }
+  const plan = JSON.parse(fs.readFileSync(U.planPfad(WURZEL, ECHTE_AUFNAHME), 'utf8'));
+  const k = U.ladeKonfiguration(WURZEL);
+  assert.deepEqual(k.fehler, []);
+  for (const termin of plan.termine) {
+    const m = U.baueMetadaten(termin, k);
+    const gezaehlt = U.zaehleHashtags(termin.titel) + U.zaehleHashtags(m.beschreibung);
+    assert.ok(gezaehlt <= U.HASHTAGS_MAX,
+      termin.kennung + ': ' + gezaehlt + ' Hashtags, erlaubt ' + U.HASHTAGS_MAX);
+    assert.deepEqual(m.verstoesse, [], termin.kennung);
+  }
+});
+
+test('DP3: die Form trifft Platzhalter und laesst Fliesstext und geschweifte Klammern in Ruhe', () => {
+  const trifft = (t) => { U.ECKIGER_PLATZHALTER.lastIndex = 0; return U.ECKIGER_PLATZHALTER.test(t); };
+  for (const p of ['[DISCORD-LINK]', '[MEMBERSHIP-LINK]', '[PLATZHALTER]', '[BTC_2]', '[GRUSS-UEBERSCHRIFT]']) {
+    assert.ok(trifft(p), p + ' wird nicht getroffen');
+  }
+  // GESCHWEIFTE Klammern sind etwas anderes als eckige: {titel} und {hashtags}
+  // kollidieren mit dieser Regel nicht. Sie koennten es auch gar nicht -- zum
+  // Zeitpunkt der Pruefung sind sie laengst ersetzt.
+  for (const p of ['{titel}', '{hashtags}', '[2]', '[a]', 'ganz normaler Text',
+    '[1-2 Saetze zum Video: Thema, Kernaussage oder Frage]']) {
+    assert.ok(!trifft(p), p + ' wird faelschlich getroffen');
+  }
+});
+
+test('DP3/N4: eine Beschreibung mit [PLATZHALTER] bricht ab, eine mit {titel} nicht', () => {
+  const hashtags = ['Krypto'];
+
+  // Mit {titel}: der Platzhalter wird ersetzt, kein Verstoss.
+  const gut = U.fuelleBeschreibung('{titel}\n\nEin Text.\n\n{hashtags}', 'Ein Titel', hashtags);
+  assert.ok(gut.startsWith('Ein Titel'));
+  assert.deepEqual(U.pruefeGrenzen({ kennung: 'k', titel: 'Ein Titel', beschreibung: gut }), []);
+
+  // Mit [PLATZHALTER]: ein Verstoss, und die Fundstelle steht im Klartext drin.
+  const boese = U.fuelleBeschreibung(
+    '{titel}\n\nDiscord: [DISCORD-LINK]\nMitglied: [MEMBERSHIP-LINK]\n\n{hashtags}', 'Ein Titel', hashtags);
+  const f = U.pruefeGrenzen({ kennung: 'k', titel: 'Ein Titel', beschreibung: boese });
+  assert.equal(f.length, 1, f.join(' | '));
+  assert.ok(f[0].includes('[DISCORD-LINK]'), f[0]);
+  assert.ok(f[0].includes('[MEMBERSHIP-LINK]'), f[0]);
+  assert.match(f[0], /eckigen Klammern/);
+  assert.ok(f[0].includes(U.BESCHREIBUNG_DATEI), f[0]);
+
+  // Auch ein Platzhalter, der erst ueber den TITEL hereinkommt, faellt auf.
+  const ausTitel = U.fuelleBeschreibung('{titel}\n\nText', '[UNBEKANNT-XY]', hashtags);
+  assert.equal(U.pruefeGrenzen({ kennung: 'k', titel: '[UNBEKANNT-XY]', beschreibung: ausTitel }).length, 1);
+});
+
+test('DP3: ein Platzhalter in eckigen Klammern bricht den Lauf ab, bevor irgendein Video hochgeht', () => {
+  const w = wegwerfWurzel('{titel}\n\nKostenloser Discord: [DISCORD-LINK]\n\n{hashtags}\n');
+  const l = wegwerfLieferung(3);
+  try {
+    schreibePlan(w, termineAus(l.shorts));
+    const v = U.bereiteVor({ projektwurzel: w, wurzel: l.wurzel, aufnahme: PROBE, jetzt: JETZT });
+    // ALLE DREI fallen auf, nicht nur der erste: geprueft wird der ganze Plan,
+    // bevor irgendetwas hochgeht.
+    assert.equal(v.fehler.length, 3, v.fehler.join(' | '));
+    for (const f of v.fehler) assert.ok(f.includes('[DISCORD-LINK]'), f);
+    assert.ok(!('auswahl' in v), 'trotz Verstoss wurde eine Auswahl gebaut');
+    assert.ok(!fs.existsSync(U.gedaechtnisPfad(w, PROBE)), 'es wurde ein Gedaechtnis angelegt');
+  } finally {
+    fs.rmSync(w, { recursive: true, force: true });
+    fs.rmSync(l.wurzel, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DPa -- SCHREIBWEISE
+// ---------------------------------------------------------------------------
+
+test('DPa: Joshuas Schreibweise gewinnt -- seine sechs stehen vorn in der immer-Liste', () => {
+  const k = U.ladeKonfiguration(WURZEL);
+  assert.deepEqual(k.fehler, []);
+  // Die Regel ist unveraendert (die erste Schreibweise gewinnt, DP Punkt 2b);
+  // geaendert hat sich nur die Reihenfolge. Deshalb steht hier die Reihenfolge
+  // und nicht die Regel: sie ist das, was in DPa entschieden wurde.
+  assert.deepEqual(k.hashtags.immer.slice(0, 6),
+    ['krypto', 'bitcoin', 'xrp', 'polymarket', 'okkulteskrypto', 'finanzen'],
+    'Joshuas sechs stehen nicht mehr vorn oder nicht mehr in seiner Schreibweise');
+});
+
+test('DPa: an den zwoelf echten Titeln erscheint #krypto klein und #Krypto nirgends', (t) => {
+  if (!fs.existsSync(U.planPfad(WURZEL, ECHTE_AUFNAHME))) {
+    t.skip('data/plaene/' + ECHTE_AUFNAHME + '.json liegt nicht vor -- nicht gemessen.');
+    return;
+  }
+  const plan = JSON.parse(fs.readFileSync(U.planPfad(WURZEL, ECHTE_AUFNAHME), 'utf8'));
+  const k = U.ladeKonfiguration(WURZEL);
+  assert.deepEqual(k.fehler, []);
+  let mitKlein = 0;
+  for (const termin of plan.termine) {
+    const m = U.baueMetadaten(termin, k);
+    assert.ok(m.hashtags.includes('krypto'), termin.kennung + ': #krypto fehlt');
+    assert.ok(!m.hashtags.includes('Krypto'),
+      termin.kennung + ': #Krypto steht wieder gross da');
+    // Und zwar auch im fertigen Text, nicht nur in der Liste.
+    assert.ok(m.beschreibung.includes('#krypto'), termin.kennung);
+    assert.ok(!/#Krypto\b/.test(m.beschreibung), termin.kennung + ': #Krypto im Text');
+    mitKlein++;
+  }
+  assert.equal(mitKlein, 12);
+});
+
+test('DPa: das wirkungslose "Krypto" aendert nichts -- die Ausgabe haengt an der ersten Schreibweise', () => {
+  // In der immer-Liste steht hinter Joshuas sechs noch das alte "Krypto". Es
+  // ist seit DPa wirkungslos, und dieser Test haelt fest, dass es das ist:
+  // nimmt man es heraus, kommt genau dieselbe Zeile heraus. Wer es eines Tages
+  // entfernt, soll nicht raten muessen, ob sich dadurch etwas aendert.
+  const k = U.ladeKonfiguration(WURZEL);
+  const ohne = { immer: k.hashtags.immer.filter((h) => h !== 'Krypto'), gruppen: k.hashtags.gruppen };
+  const titel = 'Ein Titel ganz ohne Stichwort';
+  assert.deepEqual(U.zuordneHashtags(titel, ohne).hashtags,
+    U.zuordneHashtags(titel, k.hashtags).hashtags);
 });

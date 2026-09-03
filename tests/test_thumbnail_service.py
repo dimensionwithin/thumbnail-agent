@@ -21,11 +21,21 @@ from urllib.parse import quote, unquote
 
 from thumbnail_service import (
     SERIES_NAMES,
+    AUFNAHME_DIRECTORY_ENV,
+    AUFNAHME_HERKUNFT_BESTAETIGT,
+    AUFNAHME_HERKUNFT_LEER,
+    AUFNAHME_HERKUNFT_UNBESTAETIGT,
+    AUFNAHME_HERKUNFT_WERTE,
     BEIPACKZETTEL_SCHEMA_VERSION,
     VIDEOTITEL_MAX_ZEICHEN,
     beipackzettel_name,
     build_beipackzettel,
+    AUFNAHME_PATTERN,
+    pruefe_aufnahme,
+    pruefe_aufnahme_herkunft,
     pruefe_videotitel,
+    resolve_optional_directory,
+    sammle_aufnahmen,
     write_beipackzettel,
     zaehle_titel_zeichen,
     BrowserOpenChannel,
@@ -85,6 +95,98 @@ def write_file(directory: Path, name: str, data: bytes, mtime_ns: int) -> Path:
     path.write_bytes(data)
     os.utime(path, ns=(mtime_ns, mtime_ns))
     return path
+
+
+# EC: DIE WACHE UEBER data/series-registry.json.
+#
+# In DZ ist der HTTP-Pfad einmal in die ECHTE Registry dieses Repos gelaufen --
+# ein Test schickte "EP. 144", und der laufende Zaehler des Kanals sprang auf
+# 144. Behoben wurde das in HttpEndpointTests.setUp(), indem die Modul-Globalen
+# auf einen temporaeren Ordner zeigen. Diese Wache prueft, dass die Behebung
+# HAELT: sie haengt nicht an einer Klasse, sondern am Modul, und faellt auf,
+# sobald IRGENDEIN Test dieses Laufs die echte Datei anfasst -- auch ein Test
+# in einer Klasse, die es heute noch nicht gibt und die den Patch vergisst.
+_ECHTE_REGISTRY = Path(__file__).resolve().parents[1] / "data" / "series-registry.json"
+_REGISTRY_VORHER: "tuple[bool, str | None] | None" = None
+_REGISTRY_SCHUTZ: "tempfile.TemporaryDirectory | None" = None
+_REGISTRY_PATCHER: list = []
+
+
+def _registry_zustand() -> "tuple[bool, str | None]":
+    try:
+        rohdaten = _ECHTE_REGISTRY.read_bytes()
+    except FileNotFoundError:
+        return (False, None)
+    return (True, hashlib.sha256(rohdaten).hexdigest())
+
+
+def setUpModule() -> None:
+    """Erst der Riegel, dann die Wache.
+
+    DER RIEGEL: die Modul-Globalen zeigen fuer den GANZEN Lauf auf einen
+    temporaeren Ordner. HttpEndpointTests.setUp() biegt sie zusaetzlich pro
+    Test um -- das bleibt, weil jeder Test seinen eigenen leeren Zaehler
+    braucht. Der Riegel hier faengt die Klassen ab, die das VERGESSEN. Eine
+    Wache allein reichte nicht: sie meldet den Schaden, nachdem er entstanden
+    ist, und die echte Datei ist gitignored -- ein "git checkout" holt sie
+    nicht zurueck.
+
+    DIE WACHE: der sha256 der echten Datei vor und nach dem Lauf. Sie faellt
+    auf, wenn ein Test die Datei auf einem Weg erreicht, an den der Riegel
+    nicht denkt -- etwa mit einem woertlichen Pfad statt ueber die Globale.
+    """
+    global _REGISTRY_VORHER, _REGISTRY_SCHUTZ
+    _REGISTRY_VORHER = _registry_zustand()
+    _REGISTRY_SCHUTZ = tempfile.TemporaryDirectory()
+    schutz = Path(_REGISTRY_SCHUTZ.name)
+    for ziel, wert in (
+        ("thumbnail_service.SERIES_REGISTRY_FILE", schutz / "series-registry.json"),
+        ("thumbnail_service.SERIES_REGISTRY_BACKUP_DIRECTORY", schutz / "backups"),
+    ):
+        patcher = patch(ziel, wert)
+        patcher.start()
+        _REGISTRY_PATCHER.append(patcher)
+
+
+def tearDownModule() -> None:
+    while _REGISTRY_PATCHER:
+        _REGISTRY_PATCHER.pop().stop()
+    if _REGISTRY_SCHUTZ is not None:
+        _REGISTRY_SCHUTZ.cleanup()
+    nachher = _registry_zustand()
+    if nachher != _REGISTRY_VORHER:
+        raise AssertionError(
+            "Ein Test dieses Laufs hat die ECHTE data/series-registry.json "
+            f"veraendert (vorher {_REGISTRY_VORHER}, nachher {nachher}). "
+            "Der HTTP-Pfad schreibt die Registry ueber die Modul-Globalen. "
+            "Sie sind fuer den ganzen Lauf auf einen temporaeren Ordner "
+            "gebogen (setUpModule) -- wer sie trotzdem erreicht, tut es an "
+            "den Globalen vorbei. Die Datei ist gitignored; sie laesst sich "
+            "nur aus backups/ zurueckholen."
+        )
+
+
+class RegistrySchutzTests(unittest.TestCase):
+    """EC: Der Riegel selbst -- er soll nicht unbemerkt verschwinden.
+
+    In DZ ist der HTTP-Pfad einmal in die ECHTE Registry gelaufen: ein Test
+    schickte "EP. 144", und der laufende Zaehler des Kanals sprang auf 144.
+    Diese Pruefung haelt fest, dass die Umleitung waehrend eines Laufs
+    tatsaechlich steht -- und zwar fuer JEDE Klasse, nicht nur fuer die, die
+    sich selbst darum kuemmert.
+    """
+
+    def test_no_test_can_reach_the_real_registry_through_the_globals(self) -> None:
+        import thumbnail_service as dienst
+
+        self.assertNotEqual(dienst.SERIES_REGISTRY_FILE, _ECHTE_REGISTRY)
+        self.assertNotEqual(
+            dienst.SERIES_REGISTRY_BACKUP_DIRECTORY,
+            _ECHTE_REGISTRY.parents[1] / "backups",
+        )
+
+    def test_the_watch_knows_the_state_it_has_to_restore(self) -> None:
+        self.assertEqual(_registry_zustand(), _REGISTRY_VORHER)
 
 
 class LatestPngSelectionTests(unittest.TestCase):
@@ -1190,6 +1292,193 @@ class BeipackzettelTests(HttpEndpointTests):
         self.assertNotIn("unbekannt", zettel)
 
 
+class AufnahmeImZettelTests(HttpEndpointTests):
+    """EC: Was ueber HTTP mit dem Feld `aufnahme` passiert -- und was nicht."""
+
+    def zettel(self, name: str) -> dict:
+        return json.loads((self.export / name).read_text(encoding="utf-8"))
+
+    def test_a_confirmed_recording_lands_in_the_note(self) -> None:
+        status, _, result = self.export_request(
+            "adw-standard-ep-18.png",
+            "image/png",
+            png_bytes(b"mit-aufnahme"),
+            preset="standard",
+            episode="EP. 18",
+            beipackzettel={
+                "videotitel": "Was der Markt heute sagt",
+                "datum": "2026-09-02",
+                "aufnahme": "2026-09-02 12-10-37",
+                "aufnahme_herkunft": AUFNAHME_HERKUNFT_BESTAETIGT,
+            },
+        )
+        self.assertEqual(status, 200, result)
+        zettel = self.zettel("adw-standard-ep-18.json")
+        self.assertEqual(zettel["aufnahme"], "2026-09-02 12-10-37")
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        # Das Feld ist additiv: die Version bleibt 1, alles andere steht weiter da.
+        self.assertEqual(zettel["schema_version"], BEIPACKZETTEL_SCHEMA_VERSION)
+        self.assertEqual(zettel["episode"], "EP. 18")
+
+    def test_no_recording_is_written_as_empty_and_not_as_missing(self) -> None:
+        """"Leer lassen" heisst: es steht im Zettel, dass nichts da ist.
+
+        Ein FEHLENDES Feld waere ein Zettel von vor diesem Nachtrag -- und der
+        Longform-Weg behandelt den anders (Rueckfall statt Regel). Die beiden
+        Faelle muessen unterscheidbar bleiben.
+        """
+        status, _, result = self.export_request(
+            "adw-ohne-aufnahme.png",
+            "image/png",
+            png_bytes(b"ohne-aufnahme"),
+            preset="standard",
+            beipackzettel={"videotitel": "Ohne Aufnahme"},
+        )
+        self.assertEqual(status, 200, result)
+        zettel = self.zettel("adw-ohne-aufnahme.json")
+        self.assertIn("aufnahme", zettel)
+        self.assertIsNone(zettel["aufnahme"])
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_LEER)
+
+    def test_a_malformed_recording_is_refused_before_anything_is_written(self) -> None:
+        """Wie beim Videotitel: der Mangel darf nicht erst auffallen, wenn das
+        Bild schon liegt."""
+        status, _, result = self.export_request(
+            "adw-krumm.png",
+            "image/png",
+            png_bytes(b"krumm"),
+            preset="standard",
+            beipackzettel={"aufnahme": "2026-09-02T12:10:37"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["code"], "invalid_aufnahme")
+        self.assertIn("JJJJ-MM-TT HH-MM-SS", result["message"])
+        self.assertEqual(sorted(q.name for q in self.export.iterdir()), [])
+
+    def test_a_note_that_contradicts_itself_is_refused(self) -> None:
+        """Ein Name mit der Herkunft "leer" saegt an dem Feld, das ihn
+        beglaubigen soll. Er wird abgewiesen, nicht zurechtgebogen."""
+        status, _, result = self.export_request(
+            "adw-widerspruch.png",
+            "image/png",
+            png_bytes(b"widerspruch"),
+            preset="standard",
+            beipackzettel={
+                "aufnahme": "2026-09-02 12-10-37",
+                "aufnahme_herkunft": AUFNAHME_HERKUNFT_LEER,
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["code"], "invalid_aufnahme")
+        self.assertEqual(sorted(q.name for q in self.export.iterdir()), [])
+
+    def test_an_invented_provenance_is_refused(self) -> None:
+        status, _, result = self.export_request(
+            "adw-erfunden.png",
+            "image/png",
+            png_bytes(b"erfunden"),
+            preset="standard",
+            beipackzettel={
+                "aufnahme": "2026-09-02 12-10-37",
+                "aufnahme_herkunft": "aus der zeitnaehe geschlossen",
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["code"], "invalid_aufnahme")
+        self.assertEqual(sorted(q.name for q in self.export.iterdir()), [])
+
+    def test_a_name_the_service_cannot_vouch_for_is_never_confirmed(self) -> None:
+        """Der Kopf nennt einen Namen, aber keine Herkunft. Der Zettel darf
+        daraus KEIN "bestaetigt" machen -- dahinter stuende kein Mensch."""
+        status, _, result = self.export_request(
+            "adw-stumm.png",
+            "image/png",
+            png_bytes(b"stumm"),
+            preset="standard",
+            beipackzettel={"aufnahme": "2026-09-02 12-10-37"},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(
+            self.zettel("adw-stumm.json")["aufnahme_herkunft"],
+            AUFNAHME_HERKUNFT_UNBESTAETIGT,
+        )
+
+
+class AufnahmenRouteTests(HttpEndpointTests):
+    """EC: /api/aufnahmen -- Namen und Zeitstempel, nur lesend."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.aufnahmen = Path(self.temporary.name) / "aufnahmen"
+        self.aufnahmen.mkdir()
+        self.server.aufnahme_directory = self.aufnahmen
+
+    def hole(self) -> tuple[int, dict]:
+        status, _, data = self.request(path="/api/aufnahmen")
+        return status, json.loads(data)
+
+    def test_the_route_names_the_recordings_it_finds(self) -> None:
+        (self.aufnahmen / "2026-09-02 12-10-37.mp4").write_bytes(b"x")
+        (self.aufnahmen / "2026-09-02 11-58-53.mp4").write_bytes(b"x")
+        (self.aufnahmen / "2026-09-02 12-10-37.matrix-cut.mp4").write_bytes(b"x")
+        status, daten = self.hole()
+        self.assertEqual(status, 200)
+        self.assertTrue(daten["ok"])
+        self.assertTrue(daten["wurzel_gesetzt"])
+        self.assertTrue(daten["wurzel_lesbar"])
+        self.assertEqual(
+            [a["name"] for a in daten["aufnahmen"]],
+            ["2026-09-02 12-10-37", "2026-09-02 11-58-53"],
+        )
+
+    def test_an_unset_folder_is_an_answer_and_not_an_error(self) -> None:
+        """Das Feld ist eine Zugabe, kein Tor. Ein 500 saehe aus wie ein
+        kaputter Dienst und wuerde einen taeglichen Arbeitsweg beschaedigen."""
+        self.server.aufnahme_directory = None
+        status, daten = self.hole()
+        self.assertEqual(status, 200)
+        self.assertFalse(daten["wurzel_gesetzt"])
+        self.assertEqual(daten["aufnahmen"], [])
+        self.assertIn(AUFNAHME_DIRECTORY_ENV, daten["grund"])
+
+    def test_a_missing_folder_is_told_apart_from_an_empty_one(self) -> None:
+        self.server.aufnahme_directory = self.aufnahmen / "gibt-es-nicht"
+        _, fehlt = self.hole()
+        self.assertTrue(fehlt["wurzel_gesetzt"])
+        self.assertFalse(fehlt["wurzel_lesbar"])
+        self.assertIn("nicht vorhanden", fehlt["grund"])
+
+        self.server.aufnahme_directory = self.aufnahmen
+        _, leer = self.hole()
+        self.assertTrue(leer["wurzel_lesbar"])
+        self.assertEqual(leer["aufnahmen"], [])
+        self.assertIn("JJJJ-MM-TT HH-MM-SS.mp4", leer["grund"])
+
+    def test_the_route_needs_the_session_token(self) -> None:
+        status, _, _ = self.request(path="/api/aufnahmen", headers={"X-Session-Token": "falsch"})
+        self.assertEqual(status, 401)
+
+    def test_the_route_takes_no_parameters(self) -> None:
+        status, _, data = self.request(path="/api/aufnahmen?ordner=F:/")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(data)["code"], "unexpected_parameters")
+
+    def test_the_route_is_read_only(self) -> None:
+        status, _, data = self.request(method="POST", path="/api/aufnahmen", body=b"x")
+        self.assertEqual(status, 405)
+        self.assertEqual(json.loads(data)["code"], "method_not_allowed")
+
+    def test_the_protocol_version_rose_with_the_route(self) -> None:
+        """Ein Dienst, der die Route nicht kennt, muss sich von einem
+        passenden unterscheiden lassen -- mit /api/emblem ist genau das
+        einmal schiefgegangen."""
+        self.assertGreaterEqual(SERVICE_PROTOCOL_VERSION, 4)
+        _, _, gesundheit = self.request(path="/api/health")
+        self.assertEqual(
+            json.loads(gesundheit)["protocol_version"], SERVICE_PROTOCOL_VERSION
+        )
+
+
 class BeipackzettelUnitTests(unittest.TestCase):
     """Die reinen Funktionen -- ohne HTTP."""
 
@@ -1228,10 +1517,15 @@ class BeipackzettelUnitTests(unittest.TestCase):
         self.assertEqual(
             sorted(zettel),
             [
-                "bild", "chart_quelle", "datum", "episode", "exportiert_am",
-                "format", "schema_version", "videotitel",
+                "aufnahme", "aufnahme_herkunft", "bild", "chart_quelle",
+                "datum", "episode", "exportiert_am", "format",
+                "schema_version", "videotitel",
             ],
         )
+        # EC: Ohne Angabe im Kopf steht die Aufnahme als LEER da -- nicht als
+        # fehlendes Feld und nicht geraten.
+        self.assertIsNone(zettel["aufnahme"])
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_LEER)
 
     def test_write_beipackzettel_leaves_no_temporary_file_behind(self) -> None:
         with tempfile.TemporaryDirectory() as ordner:
@@ -1250,6 +1544,216 @@ class BeipackzettelUnitTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((verzeichnis / "adw-x.json").read_text(encoding="utf-8")),
                 {"schema_version": 1},
+            )
+
+
+class AufnahmeFeldUnitTests(unittest.TestCase):
+    """EC: Die reinen Funktionen des Feldes `aufnahme` -- ohne HTTP."""
+
+    def test_no_recording_is_allowed_and_stays_empty(self) -> None:
+        """Leer ist erlaubt und wird als leer aufgeschrieben.
+
+        Gemessen an den sieben vorhandenen Bildern entsteht das Thumbnail
+        zweimal VOR der Aufnahme, die es bewirbt -- dann gibt es zur
+        Exportzeit gar keinen Namen, den jemand bestaetigen koennte.
+        """
+        self.assertIsNone(pruefe_aufnahme(None))
+        self.assertIsNone(pruefe_aufnahme(""))
+        self.assertIsNone(pruefe_aufnahme("   "))
+
+    def test_the_form_is_the_name_of_the_recording_folder(self) -> None:
+        self.assertIsNone(pruefe_aufnahme("2026-09-02 12-10-37"))
+        self.assertIsNone(pruefe_aufnahme("  2026-09-02 12-10-37  "))
+
+    def test_a_name_that_is_not_the_form_is_named_not_swallowed(self) -> None:
+        for falsch in (
+            "2026-9-2 12-10-37",          # einstellig
+            "2026-09-02T12:10:37",        # ISO statt Ordnername
+            "2026-09-02 12:10:37",        # Doppelpunkte
+            "2026-09-02",                 # nur der Tag
+            "2026-09-02 12-10-37.mp4",    # mit Endung
+        ):
+            with self.subTest(wert=falsch):
+                grund = pruefe_aufnahme(falsch)
+                self.assertIsNotNone(grund)
+                self.assertIn("JJJJ-MM-TT HH-MM-SS", grund or "")
+
+    def test_a_name_with_the_right_shape_but_no_such_moment_is_refused(self) -> None:
+        for unmoeglich in ("2026-02-30 12-10-37", "2026-09-02 25-10-37", "2026-13-01 00-00-00"):
+            with self.subTest(wert=unmoeglich):
+                self.assertIn("moeglichen Zeitpunkt", pruefe_aufnahme(unmoeglich) or "")
+
+    def test_a_recording_must_be_text(self) -> None:
+        self.assertIn("Text", pruefe_aufnahme(20260902121037) or "")
+
+    def test_the_two_fields_must_agree(self) -> None:
+        """Der ganze Grund fuer das zweite Feld: es darf nicht etwas anderes
+        sagen als das erste."""
+        self.assertIn(
+            "es steht aber ein Name da",
+            pruefe_aufnahme_herkunft(AUFNAHME_HERKUNFT_LEER, "2026-09-02 12-10-37") or "",
+        )
+        for mit_namen in (AUFNAHME_HERKUNFT_BESTAETIGT, AUFNAHME_HERKUNFT_UNBESTAETIGT):
+            with self.subTest(herkunft=mit_namen):
+                self.assertIn(
+                    "es steht aber kein Name da",
+                    pruefe_aufnahme_herkunft(mit_namen, None) or "",
+                )
+        self.assertIsNone(
+            pruefe_aufnahme_herkunft(AUFNAHME_HERKUNFT_BESTAETIGT, "2026-09-02 12-10-37")
+        )
+        self.assertIsNone(pruefe_aufnahme_herkunft(AUFNAHME_HERKUNFT_LEER, None))
+
+    def test_an_unknown_provenance_is_refused(self) -> None:
+        grund = pruefe_aufnahme_herkunft("geraten", "2026-09-02 12-10-37")
+        self.assertIn("geraten", grund or "")
+        for wert in AUFNAHME_HERKUNFT_WERTE:
+            self.assertIn(wert, grund or "")
+
+    def test_a_name_without_a_stated_provenance_is_never_confirmed(self) -> None:
+        """Die vorsichtige Seite: was der Dienst nicht weiss, darf er nicht
+        als bestaetigt aufschreiben."""
+        zettel = build_beipackzettel(
+            dateiname="adw-x.jpg", sha256="ab" * 32, bytes_geschrieben=7,
+            format_="standard", episode=None,
+            metadaten={"aufnahme": "2026-09-02 12-10-37"},
+            exportiert_am="2026-09-03T12:00:00+02:00",
+        )
+        self.assertEqual(zettel["aufnahme"], "2026-09-02 12-10-37")
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+
+    def test_a_provenance_without_a_name_collapses_to_empty(self) -> None:
+        zettel = build_beipackzettel(
+            dateiname="adw-x.jpg", sha256="ab" * 32, bytes_geschrieben=7,
+            format_="standard", episode=None,
+            metadaten={"aufnahme": "  ", "aufnahme_herkunft": AUFNAHME_HERKUNFT_BESTAETIGT},
+            exportiert_am="2026-09-03T12:00:00+02:00",
+        )
+        self.assertIsNone(zettel["aufnahme"])
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_LEER)
+
+    def test_a_confirmed_name_is_written_as_confirmed(self) -> None:
+        zettel = build_beipackzettel(
+            dateiname="adw-x.jpg", sha256="ab" * 32, bytes_geschrieben=7,
+            format_="standard", episode=None,
+            metadaten={
+                "aufnahme": "2026-09-02 12-10-37",
+                "aufnahme_herkunft": AUFNAHME_HERKUNFT_BESTAETIGT,
+            },
+            exportiert_am="2026-09-03T12:00:00+02:00",
+        )
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+
+
+class AufnahmenSammelnTests(unittest.TestCase):
+    """EC: Was im Aufnahmeordner als Aufnahme zaehlt -- und was nicht."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.ordner = Path(self.temporary.name)
+
+    def lege(self, name: str, mtime: float | None = None) -> Path:
+        pfad = self.ordner / name
+        pfad.write_bytes(b"x")
+        if mtime is not None:
+            os.utime(pfad, (mtime, mtime))
+        return pfad
+
+    def test_only_files_named_exactly_like_a_recording_count(self) -> None:
+        """Neben den Aufnahmen liegt anderes -- Renderversuche, Handarbeit,
+        Beipackdateien. Nichts davon ist eine Aufnahme, und nichts davon wird
+        genannt (Vertrag 3.2 zaehlt dieselben Muster auf)."""
+        self.lege("2026-09-02 12-10-37.mp4")
+        for daneben in (
+            "2026-09-02 12-10-37.matrix-cut.mp4",
+            "2026-09-02 12-10-37.upload.mp4",
+            "2026-09-02 12-10-37.obs-events.json",
+            "2026-09-02 12-10-37.matrix-cut.render-attempt-ab.h264_nvenc.partial.mp4",
+            "irgendwas.mp4",
+            "2026-09-02.mp4",
+            "desktop.ini",
+        ):
+            self.lege(daneben)
+        aufnahmen, abgeschnitten = sammle_aufnahmen(self.ordner)
+        self.assertEqual([a["name"] for a in aufnahmen], ["2026-09-02 12-10-37"])
+        self.assertFalse(abgeschnitten)
+
+    def test_subfolders_are_not_searched(self) -> None:
+        """Ein Absuchen von Unterordnern waere ein Erraten von Ordnernamen."""
+        (self.ordner / "Rendered").mkdir()
+        (self.ordner / "Rendered" / "2026-09-02 12-10-37.mp4").write_bytes(b"x")
+        aufnahmen, _ = sammle_aufnahmen(self.ordner)
+        self.assertEqual(aufnahmen, [])
+
+    def test_beginning_comes_from_the_name_and_the_end_from_the_file(self) -> None:
+        """Beide Zeiten zusammen ergeben die Dauer -- und die Dauer ist das,
+        was zwei Aufnahmen desselben Tages unterscheidet."""
+        beginn = datetime.datetime(2026, 9, 2, 12, 10, 37)
+        ende = beginn + datetime.timedelta(minutes=11, seconds=11)
+        self.lege("2026-09-02 12-10-37.mp4", ende.timestamp())
+        (aufnahme,), _ = sammle_aufnahmen(self.ordner)
+        self.assertEqual(aufnahme["name"], "2026-09-02 12-10-37")
+        self.assertEqual(
+            datetime.datetime.fromisoformat(aufnahme["beginn"]).replace(tzinfo=None),
+            beginn,
+        )
+        self.assertEqual(aufnahme["dauer_sekunden"], 11 * 60 + 11)
+        self.assertIsNotNone(datetime.datetime.fromisoformat(aufnahme["ende"]).tzinfo)
+
+    def test_a_wrong_looking_moment_in_the_name_is_skipped(self) -> None:
+        self.lege("2026-02-30 12-10-37.mp4")
+        self.assertEqual(sammle_aufnahmen(self.ordner)[0], [])
+
+    def test_the_newest_come_first_and_the_list_is_bounded(self) -> None:
+        for minute in range(5):
+            self.lege(f"2026-09-02 12-0{minute}-00.mp4")
+        aufnahmen, abgeschnitten = sammle_aufnahmen(self.ordner, grenze=3)
+        self.assertEqual(
+            [a["name"] for a in aufnahmen],
+            ["2026-09-02 12-04-00", "2026-09-02 12-03-00", "2026-09-02 12-02-00"],
+        )
+        self.assertTrue(abgeschnitten)
+
+
+class AufnahmeOrdnerEinstellungTests(unittest.TestCase):
+    """EC: Nicht eingestellt heisst None -- und niemals ein Rueckfallordner.
+
+    Der Unterschied zwischen "kein Ordner eingestellt" und "der Ordner ist
+    leer" muss erhalten bleiben. Sonst sieht eine fehlende Einstellung aus wie
+    die Auskunft "es gibt keine Aufnahme", und genau die fuehrt zu einem leeren
+    Feld, das niemand so gemeint hat.
+    """
+
+    def test_unset_is_none_and_not_a_fallback_directory(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(AUFNAHME_DIRECTORY_ENV, None)
+            self.assertIsNone(resolve_optional_directory(AUFNAHME_DIRECTORY_ENV, None, {}))
+            self.assertIsNone(
+                resolve_optional_directory(AUFNAHME_DIRECTORY_ENV, None, {AUFNAHME_DIRECTORY_ENV: "  "})
+            )
+
+    def test_argument_beats_environment_beats_file(self) -> None:
+        with patch.dict(os.environ, {AUFNAHME_DIRECTORY_ENV: "aus-der-umgebung"}):
+            self.assertEqual(
+                resolve_optional_directory(
+                    AUFNAHME_DIRECTORY_ENV, Path("aus-dem-argument"), {AUFNAHME_DIRECTORY_ENV: "aus-der-datei"}
+                ),
+                Path("aus-dem-argument"),
+            )
+            self.assertEqual(
+                resolve_optional_directory(
+                    AUFNAHME_DIRECTORY_ENV, None, {AUFNAHME_DIRECTORY_ENV: "aus-der-datei"}
+                ),
+                Path("aus-der-umgebung"),
+            )
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(AUFNAHME_DIRECTORY_ENV, None)
+            self.assertEqual(
+                resolve_optional_directory(
+                    AUFNAHME_DIRECTORY_ENV, None, {AUFNAHME_DIRECTORY_ENV: "aus-der-datei"}
+                ),
+                Path("aus-der-datei"),
             )
 
 
@@ -1364,6 +1868,111 @@ class BeipackzettelClientTests(unittest.TestCase):
 
     def test_a_service_without_the_note_is_named_not_ignored(self) -> None:
         self.assertIn("Der Dienst hat keinen Beipackzettel bestaetigt", self.html)
+
+    def test_the_recording_never_reaches_the_canvas(self) -> None:
+        """EC: Die Aufnahme gehoert nicht ins Bild -- wie der Videotitel."""
+        gezeichnet = self.html[
+            self.html.index("function drawHeadline()") : self.html.index("// ---------- wiring")
+        ]
+        self.assertNotIn("state.aufnahme", gezeichnet)
+
+    def test_a_config_can_never_claim_a_recording(self) -> None:
+        """EC: applyConfig() faehrt die Render-Harness. Hinter einer Config
+        steht kein Mensch, der eine Zuordnung bestaetigt haette -- also darf
+        sie state.aufnahme nicht anfassen."""
+        config = self.html[
+            self.html.index("function applyConfig(cfg){") : self.html.index("let engineStartRestored")
+        ]
+        self.assertNotIn("aufnahme", config)
+
+    def test_only_a_human_action_sets_the_recording(self) -> None:
+        """EC: Es gibt genau EINEN Weg in state.aufnahme hinein, und beide
+        Ereignisse, die ihn nehmen, sind Handlungen eines Menschen."""
+        self.assertEqual(1, self.html.count("state.aufnahme = String("))
+        self.assertIn(
+            "aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value); });",
+            self.html,
+        )
+        self.assertIn(
+            "aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme(''); });",
+            self.html,
+        )
+        # Die Kandidatenliste SETZT nicht -- sie bietet an.
+        laden = self.html[
+            self.html.index("async function ladeAufnahmen()") : self.html.index("// ---------- Lebenszeichen")
+        ]
+        self.assertNotIn("setzeAufnahme", laden)
+
+    def test_the_form_check_is_the_same_on_both_sides(self) -> None:
+        """EC: Zwei Pruefweisen fuer dieselbe Form waeren der Fehler, den
+        dieses Projekt beim Videotitel schon einmal hatte."""
+        self.assertIn(
+            r"const AUFNAHME_MUSTER = /^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$/;",
+            self.html,
+        )
+        self.assertEqual(
+            AUFNAHME_PATTERN.pattern,
+            r"^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$",
+        )
+
+    def test_the_client_sends_both_fields_together(self) -> None:
+        daten = self.html[
+            self.html.index("function beipackzettelDaten()") : self.html.index(
+                "async function beipackzettelInhalt("
+            )
+        ]
+        self.assertIn("aufnahme: state.aufnahme,", daten)
+        self.assertIn("aufnahme_herkunft: aufnahmeHerkunft(),", daten)
+
+    def test_a_changed_chart_takes_the_confirmation_away(self) -> None:
+        """EC: Der Name bleibt stehen -- die Bestaetigung nicht. Genau dafuer
+        gibt es das zweite Feld."""
+        herkunft = self.html[
+            self.html.index("function aufnahmeHerkunft()") : self.html.index("function todayISO()")
+        ]
+        self.assertIn("state.aufnahmeChart === chartSchluessel()", herkunft)
+        self.assertIn("AUFNAHME_HERKUNFT_UNBESTAETIGT", herkunft)
+        # Ein neues Chart loescht den Namen NICHT -- die Arbeit soll bleiben.
+        laden = self.html[
+            self.html.index("function loadFile(f, options)") : self.html.index("function sourceFailurePhase(")
+        ]
+        self.assertIn("ladeAufnahmen();", laden)
+        self.assertNotIn("state.aufnahme =", laden)
+
+    def test_a_refused_recording_never_falls_back_to_a_download(self) -> None:
+        self.assertIn("error.exportCode === 'invalid_aufnahme'", self.html)
+
+    def test_the_page_says_what_the_note_will_carry(self) -> None:
+        """Wer exportiert, soll ohne die Datei zu oeffnen sehen, ob gerade ein
+        Zettel ohne Aufnahme entstanden ist."""
+        self.assertIn("' (ohne Aufnahme)'", self.html)
+        self.assertIn("' (Aufnahme '+state.aufnahme+', '+aufnahmeHerkunft()+')'", self.html)
+
+    def test_the_connected_folder_writes_the_same_note(self) -> None:
+        inhalt = self.html[
+            self.html.index("async function beipackzettelInhalt(") : self.html.index(
+                "function beipackzettelName("
+            )
+        ]
+        self.assertIn("aufnahme: d.aufnahme.trim() || null,", inhalt)
+        self.assertIn("AUFNAHME_HERKUNFT_LEER", inhalt)
+
+    def test_an_older_service_without_the_route_is_not_a_failure(self) -> None:
+        """Der Compositor ist auf /api/aufnahmen nicht ANGEWIESEN: ohne sie
+        bleibt das Feld Handeingabe. Deshalb steigt REQUIRED_PROTOCOL_VERSION
+        hierfuer nicht -- sonst saehe ein aelterer Dienst kaputt aus."""
+        self.assertIn("const REQUIRED_PROTOCOL_VERSION = 2;", self.html)
+        laden = self.html[
+            self.html.index("async function ladeAufnahmen()") : self.html.index("// ---------- Lebenszeichen")
+        ]
+        self.assertIn("if (antwort.status === 404){", laden)
+        self.assertIn("aeltere Fassung", laden)
+
+    def test_the_field_works_without_the_service(self) -> None:
+        """Ueber file:// gibt es keinen Dienst und keine Kandidatenliste --
+        aber das Feld gibt es, und es sagt warum."""
+        self.assertIn("phase: localService.available ? 'laedt' : 'aus',", self.html)
+        self.assertIn("Ohne den lokalen Dienst gibt es keine Kandidatenliste", self.html)
 
     def test_the_date_field_map_matches_the_watermark_tail(self) -> None:
         """PRESET_DATE_FIELD spiegelt tail() -- das Datum im Zettel muss das

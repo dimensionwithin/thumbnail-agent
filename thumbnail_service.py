@@ -44,7 +44,20 @@ EXPORT_DIRECTORY = Path("thumbnail-export")
 # die beiden Ordnerschluessel, alles andere in der Datei (u.a. das OAuth-Secret)
 # bleibt unberuehrt.
 ENV_FILE = Path(__file__).with_name(".env")
-DIRECTORY_ENV_KEYS = (SOURCE_DIRECTORY_ENV, EXPORT_DIRECTORY_ENV)
+# EC: Der Ordner, in dem die Aufnahmen liegen -- Dateien der Form
+# "JJJJ-MM-TT HH-MM-SS.mp4", von OBS geschrieben. Er wird ausschliesslich
+# gelesen, und ausschliesslich nach Namen und Zeitstempel; keine Datei wird
+# geoeffnet. Fehlt der Schluessel, gibt es KEINEN Rueckfall und keinen Fehler:
+# das Feld "aufnahme" im Beipackzettel bleibt dann ein Textfeld ohne
+# Kandidatenliste. Ein Rueckfall auf einen Unterordner des Projekts (wie bei
+# Quell- und Exportordner) waere hier falsch -- dort liegen keine Aufnahmen,
+# und eine leere Liste saehe aus wie "es gibt keine Aufnahme".
+AUFNAHME_DIRECTORY_ENV = "AUFNAHME_WURZEL"
+DIRECTORY_ENV_KEYS = (
+    SOURCE_DIRECTORY_ENV,
+    EXPORT_DIRECTORY_ENV,
+    AUFNAHME_DIRECTORY_ENV,
+)
 MAX_ENV_FILE_BYTES = 1 * 1024 * 1024
 HTML_FILE = Path(__file__).with_name("thumbnail-compositor.html")
 # T1: Persistente Folgennummerierung je Serie (innercircle|livestream|standard).
@@ -76,6 +89,43 @@ MAX_CANDIDATE_ATTEMPTS = 8
 # und das ist eine Vermutung.
 BEIPACKZETTEL_SCHEMA_VERSION = 1
 BEIPACKZETTEL_SUFFIX = ".json"
+# EC: DAS FELD "aufnahme" -- der Name des Aufnahmeordners, zu dem das Bild
+# gehoert. Form "JJJJ-MM-TT HH-MM-SS", wie die Aufnahmedateien heissen. Das
+# Feld steht NICHT im Bild und wird nicht gerendert; es schliesst die zweite
+# Haelfte der Zuordnung, die der Zettel seit DZ nur halb aufschreibt (Bild zu
+# Titel und Datum, aber nicht zu der Datei, die hochgeht).
+#
+# WARUM ES ZWEI FELDER SIND. Ein Zettel mit einer Aufnahme, die niemand
+# bestaetigt hat, ist schlimmer als einer ohne: der Longform-Weg nimmt einen
+# Zettel mit passender "aufnahme" ohne Rueckfrage (Vertrag 2.7, Rang 1). Ein
+# Vorschlag, der still zur Regel wird, waere damit ein Upload, den niemand
+# geprueft hat. Deshalb traegt jeder Zettel daneben "aufnahme_herkunft":
+#
+#   "bestaetigt"    ein Mensch hat den Namen im Compositor gesetzt, und das
+#                   Chart, gegen das er ihn gesetzt hat, ist noch geladen.
+#   "unbestaetigt"  ein Name steht da, aber das Chart hat sich seit dem Setzen
+#                   geaendert. Der Name ist nicht falsch, er ist nur nicht
+#                   mehr gegen das gepruefte, was jetzt im Bild ist.
+#   "leer"          "aufnahme" ist null, und zwar absichtlich.
+#
+# Ein Zettel OHNE "aufnahme_herkunft" ist ein Zettel von vor diesem Nachtrag.
+# Er ist nicht kaputt -- er sagt nur nichts ueber die Aufnahme, und "nichts
+# gesagt" ist etwas anderes als "als leer aufgeschrieben".
+AUFNAHME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$")
+AUFNAHME_FORMAT = "%Y-%m-%d %H-%M-%S"
+AUFNAHME_HERKUNFT_BESTAETIGT = "bestaetigt"
+AUFNAHME_HERKUNFT_UNBESTAETIGT = "unbestaetigt"
+AUFNAHME_HERKUNFT_LEER = "leer"
+AUFNAHME_HERKUNFT_WERTE = (
+    AUFNAHME_HERKUNFT_BESTAETIGT,
+    AUFNAHME_HERKUNFT_UNBESTAETIGT,
+    AUFNAHME_HERKUNFT_LEER,
+)
+# Wie viele Aufnahmen /api/aufnahmen hoechstens nennt -- die neuesten. Der
+# Ordner waechst mit jeder Aufnahme; eine unbegrenzte Liste waere eine Antwort,
+# deren Groesse niemand kennt. 90 deckt drei Monate taeglicher Aufnahme ab.
+MAX_AUFNAHMEN = 90
+
 # DZ: WIE EIN VIDEOTITEL GEZAEHLT WIRD.
 # Die Grenze und die Zaehlweise stammen aus src/upload/uploader.js
 # (zaehleTitelZeichen) -- gezaehlt werden CODEPUNKTE, gemessen an 998 Titeln,
@@ -99,7 +149,12 @@ SERVICE_ID = "dimensionwithin-thumbnail-compositor"
 # von der Platte gelesen), kannte /api/emblem aber nicht -- alle Varianten kamen
 # als 404 zurueck und der Compositor zeichnete stumm seinen Rueckfall.
 # 3 (2026-08-29): /api/session/ping kam dazu.
-SERVICE_PROTOCOL_VERSION = 3
+# 4 (2026-09-03): /api/aufnahmen kam dazu (EC). Ohne den Anstieg koennte der
+# Compositor einen Dienst der Fassung 3 nicht von einem passenden
+# unterscheiden -- die HTML mit dem neuen Feld waere da, die Route nicht, und
+# die Kandidatenliste blieb still leer. Genau dieser Ausgang ist mit
+# /api/emblem schon einmal eingetreten.
+SERVICE_PROTOCOL_VERSION = 4
 STARTUP_SIGNAL_TIMEOUT_SECONDS = 5.0
 BROWSER_OPEN_DELAY_SECONDS = 0.35
 WINDOWS_ERROR_ALREADY_EXISTS = 183
@@ -1422,6 +1477,151 @@ def pruefe_videotitel(titel: object) -> str | None:
     return None
 
 
+def pruefe_aufnahme(wert: object) -> str | None:
+    """Gibt den Grund zurueck, warum diese Aufnahme abgewiesen wird -- oder None.
+
+    KEINE Aufnahme ist erlaubt (``None`` oder leer): der Compositor wird
+    taeglich benutzt, und beim Bau des Thumbnails ist die Aufnahme nicht immer
+    schon da -- gemessen an den vorhandenen Bildern entsteht das Thumbnail
+    zweimal von sieben Malen VOR der Aufnahme, die es bewirbt. Der Zettel
+    traegt dann ``aufnahme: null`` mit ``aufnahme_herkunft: "leer"``. Das ist
+    eine aufgeschriebene Luecke und keine geratene Zuordnung.
+
+    Geprueft wird die FORM, nicht die Existenz. Ob es die Aufnahme gibt, weiss
+    der Dienst nur, wenn ein Aufnahmeordner eingestellt ist -- und ein Name,
+    der noch nicht auf der Platte liegt, ist kein falscher Name. Was hier
+    abgewiesen wird, ist ein Name, der die Form nicht hat: an dem kann der
+    Longform-Weg nichts festmachen.
+    """
+
+    if wert is None:
+        return None
+    if not isinstance(wert, str):
+        return "Die Aufnahme muss Text sein."
+    gestrafft = wert.strip()
+    if not gestrafft:
+        return None
+    if AUFNAHME_PATTERN.match(gestrafft) is None:
+        return (
+            f"Die Aufnahme {gestrafft!r} hat nicht die Form "
+            "JJJJ-MM-TT HH-MM-SS."
+        )
+    try:
+        datetime.datetime.strptime(gestrafft, AUFNAHME_FORMAT)
+    except ValueError:
+        return (
+            f"Die Aufnahme {gestrafft!r} hat die Form, nennt aber keinen "
+            "moeglichen Zeitpunkt."
+        )
+    return None
+
+
+def pruefe_aufnahme_herkunft(herkunft: object, aufnahme: object) -> str | None:
+    """Prueft die Herkunft UND ihre Uebereinstimmung mit dem Namen.
+
+    Die beiden Felder sind aneinander gebunden, und die Bindung ist der Grund,
+    warum es das zweite Feld gibt: ein Zettel, der einen Namen traegt und ihn
+    als ``leer`` ausgibt, oder einer, der ohne Namen ``bestaetigt`` behauptet,
+    wuerde dem Longform-Weg etwas anderes sagen als er meint. Beides wird hier
+    abgewiesen, bevor irgendetwas geschrieben ist -- nicht stillschweigend
+    zurechtgebogen.
+    """
+
+    if herkunft is None:
+        return None
+    if not isinstance(herkunft, str):
+        return "Die Herkunft der Aufnahme muss Text sein."
+    gestrafft = herkunft.strip()
+    if not gestrafft:
+        return None
+    if gestrafft not in AUFNAHME_HERKUNFT_WERTE:
+        erlaubt = ", ".join(AUFNAHME_HERKUNFT_WERTE)
+        return (
+            f"Die Herkunft der Aufnahme {gestrafft!r} ist keiner der Werte "
+            f"{erlaubt}."
+        )
+    hat_namen = isinstance(aufnahme, str) and bool(aufnahme.strip())
+    if gestrafft == AUFNAHME_HERKUNFT_LEER and hat_namen:
+        return (
+            "Die Herkunft der Aufnahme ist 'leer', es steht aber ein Name da."
+        )
+    if gestrafft != AUFNAHME_HERKUNFT_LEER and not hat_namen:
+        return (
+            f"Die Herkunft der Aufnahme ist {gestrafft!r}, es steht aber kein "
+            "Name da."
+        )
+    return None
+
+
+def _aufnahme_herkunft(rohwert: object, aufnahme: str | None) -> str:
+    """Die Herkunft, die in den Zettel geht -- nie geraten.
+
+    Ohne Namen ist sie ``leer``, ganz gleich was der Kopf behauptet hat. Mit
+    Namen wird der Wert aus dem Kopf uebernommen; fehlt er dort, gilt
+    ``unbestaetigt``. Das ist die vorsichtige Seite: ein Name, dessen Herkunft
+    der Dienst nicht kennt, darf nicht als bestaetigt in den Zettel wandern.
+    Die Kombinationen, die sich widersprechen, sind vorher abgewiesen
+    (pruefe_aufnahme_herkunft) -- diese Funktion biegt nichts zurecht, sie
+    entscheidet nur den Fall "nichts gesagt".
+    """
+
+    if aufnahme is None:
+        return AUFNAHME_HERKUNFT_LEER
+    if isinstance(rohwert, str) and rohwert.strip() in AUFNAHME_HERKUNFT_WERTE:
+        return rohwert.strip()
+    return AUFNAHME_HERKUNFT_UNBESTAETIGT
+
+
+def sammle_aufnahmen(directory: Path, *, grenze: int = MAX_AUFNAHMEN) -> tuple[list[dict[str, object]], bool]:
+    """Die Aufnahmen eines Ordners, nach NAMEN und ZEITSTEMPEL -- nichts geoeffnet.
+
+    Genommen werden ausschliesslich Dateien, deren Name genau
+    ``JJJJ-MM-TT HH-MM-SS.mp4`` ist. Alles andere im Ordner bleibt liegen und
+    wird nicht genannt: Renderversuche, Handarbeit, Unterordner, andere
+    Endungen. Nicht rekursiv -- ein Absuchen von Unterordnern waere ein
+    Erraten von Ordnernamen.
+
+    Je Aufnahme kommen zwei Zeiten zurueck: ``beginn`` aus dem NAMEN (so hat
+    OBS die Datei genannt, das ist der Aufnahmebeginn) und ``ende`` aus der
+    mtime der Datei. Beide zusammen sagen, wie lange die Aufnahme lief -- und
+    genau das ist es, was einen Kandidaten von einem anderen unterscheidet,
+    wenn an einem Tag mehrere Aufnahmen liegen.
+
+    Zurueck kommen die NEUESTEN ``grenze`` Aufnahmen, absteigend, und ein
+    Kennzeichen, ob abgeschnitten wurde.
+    """
+
+    gefunden: list[dict[str, object]] = []
+    for pfad in directory.iterdir():
+        name = pfad.name
+        if not name.lower().endswith(".mp4"):
+            continue
+        stamm = name[: -len(".mp4")]
+        if AUFNAHME_PATTERN.match(stamm) is None:
+            continue
+        try:
+            beginn = datetime.datetime.strptime(stamm, AUFNAHME_FORMAT)
+        except ValueError:
+            continue
+        try:
+            if not pfad.is_file():
+                continue
+            ende = datetime.datetime.fromtimestamp(pfad.stat().st_mtime)
+        except OSError:
+            continue
+        gefunden.append(
+            {
+                "name": stamm,
+                "beginn": beginn.astimezone().isoformat(),
+                "ende": ende.astimezone().isoformat(),
+                "dauer_sekunden": max(0, int((ende - beginn).total_seconds())),
+            }
+        )
+    gefunden.sort(key=lambda eintrag: eintrag["name"], reverse=True)
+    abgeschnitten = len(gefunden) > grenze
+    return gefunden[:grenze], abgeschnitten
+
+
 def _leer_zu_none(wert: object) -> str | None:
     if not isinstance(wert, str):
         return None
@@ -1460,6 +1660,10 @@ def build_beipackzettel(
 ) -> dict[str, object]:
     """Der Inhalt des Beipackzettels. Rein, damit er ohne HTTP pruefbar ist."""
 
+    # EC: Der Name zuerst, die Herkunft danach -- die Herkunft haengt am Namen
+    # und nicht umgekehrt. Ohne Namen kann sie nur "leer" sein, und dann ist
+    # sie es auch, gleich was im Kopf stand.
+    aufnahme = _leer_zu_none(metadaten.get("aufnahme"))
     return {
         "schema_version": BEIPACKZETTEL_SCHEMA_VERSION,
         "exportiert_am": exportiert_am,
@@ -1473,6 +1677,10 @@ def build_beipackzettel(
         "datum": _leer_zu_none(metadaten.get("datum")),
         "format": _leer_zu_none(format_),
         "chart_quelle": _chart_quelle(metadaten.get("chart_quelle")),
+        "aufnahme": aufnahme,
+        "aufnahme_herkunft": _aufnahme_herkunft(
+            metadaten.get("aufnahme_herkunft"), aufnahme
+        ),
     }
 
 
@@ -1917,6 +2125,7 @@ class ThumbnailHTTPServer(ThreadingHTTPServer):
         html_file: Path = HTML_FILE,
         stability_delay: float = STABILITY_DELAY_SECONDS,
         idle_guard: "IdleShutdownGuard | None" = None,
+        aufnahme_directory: Path | None = None,
     ):
         super().__init__(server_address, handler_class)
         # Ohne Waechter (Testaufbauten, die create_server direkt benutzen)
@@ -1927,6 +2136,11 @@ class ThumbnailHTTPServer(ThreadingHTTPServer):
         self.export_directory = Path(export_directory)
         self.html_file = Path(html_file)
         self.stability_delay = stability_delay
+        # EC: None heisst "nicht eingestellt" und ist ein regulaerer Zustand,
+        # kein Fehler. Der Compositor laeuft dann ohne Kandidatenliste weiter.
+        self.aufnahme_directory = (
+            Path(aufnahme_directory) if aufnahme_directory is not None else None
+        )
 
 
 class ThumbnailRequestHandler(BaseHTTPRequestHandler):
@@ -2058,7 +2272,74 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 return
             self._serve_emblem(request.query)
             return
+        if request.path == "/api/aufnahmen":
+            if self._reject_invalid_api_token():
+                return
+            if request.query:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    "unexpected_parameters",
+                    "Dieser Endpunkt akzeptiert keine Parameter.",
+                )
+                return
+            self._serve_aufnahmen()
+            return
         self._send_json(HTTPStatus.NOT_FOUND, "not_found", "Endpunkt nicht gefunden.")
+
+    def _serve_aufnahmen(self) -> None:
+        """EC: Die Aufnahmen des eingestellten Ordners -- Namen und Zeitstempel.
+
+        WARUM DAS NIE EIN FEHLER IST. Der Compositor wird taeglich benutzt, und
+        das Feld "aufnahme" ist eine Zugabe, kein Tor. Ist kein Ordner
+        eingestellt oder ist er nicht da, kommt 200 mit einer leeren Liste und
+        einem Grund zurueck -- die Seite sagt dann, warum sie keine Kandidaten
+        anzeigt, statt einen Fehler zu zeigen, der wie ein kaputter Dienst
+        aussieht. Der Unterschied ist wichtig: "kein Ordner eingestellt" und
+        "es gibt keine Aufnahme" sind zwei verschiedene Auskuenfte, und nur die
+        zweite darf zu einem leeren Feld fuehren, das der Mensch so meint.
+
+        Gelesen werden ausschliesslich Namen und mtimes. Keine Datei wird
+        geoeffnet, es wird nicht rekursiv gesucht, und geschrieben wird nichts.
+        """
+
+        verzeichnis = self.server.aufnahme_directory
+        antwort: dict[str, object] = {
+            "ok": True,
+            "wurzel_gesetzt": verzeichnis is not None,
+            "wurzel_lesbar": False,
+            "aufnahmen": [],
+            "abgeschnitten": False,
+        }
+        if verzeichnis is None:
+            antwort["grund"] = (
+                f"Kein Aufnahmeordner eingestellt ({AUFNAHME_DIRECTORY_ENV} "
+                "fehlt). Die Aufnahme kann von Hand eingetragen werden."
+            )
+        elif not verzeichnis.is_dir():
+            antwort["grund"] = (
+                "Der eingestellte Aufnahmeordner ist nicht vorhanden."
+            )
+        else:
+            try:
+                aufnahmen, abgeschnitten = sammle_aufnahmen(verzeichnis)
+            except OSError:
+                antwort["grund"] = (
+                    "Der eingestellte Aufnahmeordner konnte nicht gelesen werden."
+                )
+            else:
+                antwort["wurzel_lesbar"] = True
+                antwort["aufnahmen"] = aufnahmen
+                antwort["abgeschnitten"] = abgeschnitten
+                if not aufnahmen:
+                    antwort["grund"] = (
+                        "Im Aufnahmeordner liegt keine Datei der Form "
+                        "'JJJJ-MM-TT HH-MM-SS.mp4'."
+                    )
+        nutzlast = json.dumps(antwort, ensure_ascii=False).encode("utf-8")
+        self._send_headers(
+            HTTPStatus.OK, "application/json; charset=utf-8", len(nutzlast)
+        )
+        self.wfile.write(nutzlast)
 
     def _serve_emblem(self, query: str) -> None:
         """Liest EINE Emblem-Variante read-only aus assets/branding/emblems/.
@@ -2186,6 +2467,15 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.METHOD_NOT_ALLOWED,
                 "method_not_allowed",
                 "Der TradingView-Quellendpunkt ist ausschließlich read-only per GET.",
+            )
+            return
+        if request.path == "/api/aufnahmen":
+            if self._reject_invalid_api_token():
+                return
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "Der Aufnahmeendpunkt ist ausschließlich read-only per GET.",
             )
             return
         if request.path == "/api/series-registry":
@@ -2375,6 +2665,23 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 titel_fehler,
             )
             return
+        # EC: Wie der Videotitel, und aus demselben Grund: eine Aufnahme, die
+        # der Dienst ablehnt, darf nicht erst auffallen, wenn das Bild schon
+        # liegt. Beide Felder werden geprueft, und AUCH ihr Verhaeltnis --
+        # ein Name mit der Herkunft "leer" waere ein Zettel, der etwas anderes
+        # sagt als er meint.
+        aufnahme_fehler = pruefe_aufnahme(metadaten.get("aufnahme"))
+        if aufnahme_fehler is None:
+            aufnahme_fehler = pruefe_aufnahme_herkunft(
+                metadaten.get("aufnahme_herkunft"), metadaten.get("aufnahme")
+            )
+        if aufnahme_fehler is not None:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_aufnahme",
+                aufnahme_fehler,
+            )
+            return
 
         if not self.server.export_directory.is_dir():
             self._send_json(
@@ -2549,6 +2856,7 @@ def create_server(
     html_file: Path = HTML_FILE,
     stability_delay: float = STABILITY_DELAY_SECONDS,
     idle_guard: IdleShutdownGuard | None = None,
+    aufnahme_directory: Path | None = None,
 ) -> ThumbnailHTTPServer:
     token = session_token or secrets.token_urlsafe(32)
     return ThumbnailHTTPServer(
@@ -2560,6 +2868,7 @@ def create_server(
         html_file=html_file,
         stability_delay=stability_delay,
         idle_guard=idle_guard,
+        aufnahme_directory=aufnahme_directory,
     )
 
 
@@ -2619,6 +2928,31 @@ def resolve_directory(
     return fallback
 
 
+def resolve_optional_directory(
+    variable: str,
+    override: Path | None,
+    env_file_values: dict[str, str] | None = None,
+) -> Path | None:
+    """Wie resolve_directory, aber OHNE Rueckfall: nicht gesetzt heisst None.
+
+    EC: Fuer den Aufnahmeordner gibt es keinen sinnvollen Rueckfall. Ein
+    Unterordner des Projekts waere leer, und eine leere Liste saehe aus wie
+    "es gibt keine Aufnahme" -- also wie eine Auskunft, statt wie das
+    Fehlen einer Einstellung. Diese beiden Faelle muessen unterscheidbar
+    bleiben, sonst fuellt oder leert der Zettel sich aus einem Grund, den
+    niemand gesehen hat.
+    """
+    if override is not None:
+        return Path(override).expanduser()
+    configured = os.environ.get(variable, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    from_file = (env_file_values or {}).get(variable, "").strip()
+    if from_file:
+        return Path(from_file).expanduser()
+    return None
+
+
 def describe_directory(label: str, directory: Path) -> str:
     """Eine Konsolenzeile: aufgeloester ABSOLUTER Pfad plus Existenzbefund.
 
@@ -2648,6 +2982,7 @@ def run_server(
     browser_opener: Callable[..., object] | None = None,
     browser_open_delay: float = BROWSER_OPEN_DELAY_SECONDS,
     source_directory: Path | None = None,
+    aufnahme_directory: Path | None = None,
     export_directory: Path | None = None,
     restart_prompt: bool = True,
     force_restart: bool = False,
@@ -2709,6 +3044,11 @@ def run_server(
             EXPORT_DIRECTORY,
             env_file_values,
         )
+        resolved_aufnahmen = resolve_optional_directory(
+            AUFNAHME_DIRECTORY_ENV,
+            aufnahme_directory,
+            env_file_values,
+        )
         # Zwei Anläufe: Der Mutex kann frei sein, während der Port noch von
         # einer verwaisten Instanz gehalten wird. Auch dieser Fall bekommt die
         # Diagnose aus CQ4, danach genau ein Wiederholungsversuch.
@@ -2722,6 +3062,7 @@ def run_server(
                     source_directory=resolved_source,
                     export_directory=resolved_export,
                     idle_guard=idle_guard,
+                    aufnahme_directory=resolved_aufnahmen,
                 )
                 break
             except OSError as error:
@@ -2761,6 +3102,17 @@ def run_server(
         _console_print(f"Lokaler Dienst: http://{HOST}:{actual_port}/")
         _console_print(describe_directory("Quellordner", resolved_source))
         _console_print(describe_directory("Exportordner", resolved_export))
+        # EC: Der Aufnahmeordner steht in derselben Reihe wie die anderen
+        # beiden -- aus demselben Grund (CM1): zweimal ist uns entgangen, dass
+        # der Dienst anderswo suchte als erwartet. Nicht eingestellt wird
+        # ausgeschrieben und nicht verschwiegen, sonst sieht eine leere
+        # Kandidatenliste aus wie ein leerer Ordner.
+        _console_print(
+            describe_directory("Aufnahmeordner", resolved_aufnahmen)
+            if resolved_aufnahmen is not None
+            else f"Aufnahmeordner: nicht eingestellt ({AUFNAHME_DIRECTORY_ENV})"
+            "  [Feld 'aufnahme' bleibt Handeingabe]"
+        )
         _console_print(
             "Selbstbeendigung: "
             + (

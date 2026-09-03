@@ -148,6 +148,20 @@
   .folderButton{width:100%;background:transparent;border:1px solid var(--graphite);color:var(--bone-dim);border-radius:6px;padding:9px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;transition:all .14s}
   .folderButton:hover:not(:disabled){border-color:var(--brass);color:var(--bone)}
   .folderButton:disabled{cursor:not-allowed;opacity:.45}
+  /* EC: Die Kandidatenliste des Feldes "aufnahme". Bewusst keine Auswahlliste
+     (select): der richtige Name kann fehlen -- die Aufnahme, fuer die das Bild
+     gebaut wird, beginnt manchmal erst NACH dem Export. Ein Textfeld mit
+     Kandidaten daneben laesst beides zu; ein select liesse nur das eine. */
+  .aufnahmeStatus{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--bone-dim);line-height:1.55;margin-top:8px;text-transform:uppercase;overflow-wrap:anywhere}
+  .aufnahmeStatus.warnung{color:#d08a5a;opacity:1}
+  .aufnahmeStatus.fehler{color:#ff9a86;opacity:1}
+  .aufnahmeKandidaten{display:flex;flex-direction:column;gap:5px;margin-top:9px}
+  .aufnahmeKandidat{width:100%;text-align:left;background:transparent;border:1px solid var(--graphite);color:var(--bone-dim);border-radius:6px;padding:8px 9px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.06em;line-height:1.5;transition:all .14s}
+  .aufnahmeKandidat:hover{border-color:var(--brass);color:var(--bone)}
+  .aufnahmeKandidat:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+  .aufnahmeKandidat[aria-pressed=true]{background:rgba(169,130,70,.22);border-color:var(--brass);color:var(--bone)}
+  .aufnahmeKandidat .wofuer{display:block;opacity:.62;text-transform:none;letter-spacing:.02em;margin-top:3px}
+  .aufnahmeKandidat.vorschlag{border-style:dashed;border-color:var(--brass)}
   .sourceTools{margin-top:12px;padding-top:12px;border-top:1px solid var(--graphite)}
   .sourceStatus{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--bone-dim);line-height:1.5;text-transform:uppercase;overflow-wrap:anywhere}
   .sourceButton{width:100%;margin-top:8px;background:transparent;border:1px solid var(--graphite);color:var(--bone-dim);border-radius:6px;padding:9px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;transition:all .14s}
@@ -310,6 +324,15 @@
     </div>
 
     <div class="field">
+      <label class="lbl" for="aufnahme">Aufnahme — zu welcher Aufnahme gehoert das Bild</label>
+      <input type="text" id="aufnahme" class="mono" spellcheck="false" value="" placeholder="JJJJ-MM-TT HH-MM-SS" autocomplete="off">
+      <div class="aufnahmeStatus" id="aufnahmeStatus"></div>
+      <div class="aufnahmeKandidaten" id="aufnahmeKandidaten"></div>
+      <button class="folderButton" id="aufnahmeLeeren" type="button" style="margin-top:9px">Leer lassen</button>
+      <div class="hint">Steht NICHT im Bild. Nur im Beipackzettel &mdash; und nur, wenn du sie hier eintraegst. Leer heisst leer: der Zettel schreibt dann <code>aufnahme: null</code> auf, statt aus der Zeitnaehe zu raten. Die Vorschlaege sind Vorschlaege; erst dein Klick macht daraus <code>bestaetigt</code>.</div>
+    </div>
+
+    <div class="field">
       <label class="lbl">Exportformat</label>
       <div class="seg grid2" id="exportFormatSeg">
         <button data-export-format="png" aria-pressed="false">PNG</button>
@@ -381,6 +404,15 @@ const state = {
   color: 'brass',
   title: 'Der Markt *kippt.*',
   videoTitle: '',       // DZ: der YouTube-Titel. Nicht im Bild -- nur im Beipackzettel.
+  // EC: Der Aufnahmename. Nicht im Bild, nicht in der Engine -- nur im
+  // Beipackzettel. applyConfig() laesst ihn bewusst UNBERUEHRT: eine Config
+  // darf keine Aufnahme behaupten, denn hinter einer Config steht kein Mensch,
+  // der sie bestaetigt haette.
+  aufnahme: '',
+  // Gegen WELCHES Chart der Name gesetzt wurde. Aendert sich das Chart danach,
+  // ist der Name nicht mehr bestaetigt -- er ist nur noch da. Genau dieser
+  // Unterschied steht spaeter als aufnahme_herkunft im Zettel.
+  aufnahmeChart: null,
   chartQuelle: null,    // DZ: {herkunft, dateiname, zeitstempel} des geladenen Bildes
   pos: UI_DEFAULT_POS,
   preset: 'standard',
@@ -440,6 +472,43 @@ function videotitelFehler(titel){
   const m = VIDEOTITEL_VERBOTENE_ZEICHEN.exec(String(titel));
   if (m) return 'Der Videotitel enthaelt das verbotene Zeichen "'+m[0]+'".';
   return '';
+}
+
+// EC: DIE FORMSTELLE FUER DIE AUFNAHME.
+// Deckungsgleich mit AUFNAHME_PATTERN und pruefe_aufnahme() im Dienst. Geprueft
+// wird die FORM und die Moeglichkeit des Zeitpunkts -- nicht die Existenz: der
+// richtige Name kann noch fehlen, weil die Aufnahme erst nach dem Export
+// beginnt. Gemessen an den vorhandenen Bildern ist das kein Sonderfall.
+const AUFNAHME_MUSTER = /^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$/;
+const AUFNAHME_HERKUNFT_BESTAETIGT = 'bestaetigt';
+const AUFNAHME_HERKUNFT_UNBESTAETIGT = 'unbestaetigt';
+const AUFNAHME_HERKUNFT_LEER = 'leer';
+function aufnahmeFehler(wert){
+  const t = String(wert == null ? '' : wert).trim();
+  if (!t) return '';
+  if (!AUFNAHME_MUSTER.test(t)) return 'Die Aufnahme "'+t+'" hat nicht die Form JJJJ-MM-TT HH-MM-SS.';
+  const [tag, zeit] = t.split(' ');
+  const [j, mo, d] = tag.split('-').map(Number);
+  const [h, mi, se] = zeit.split('-').map(Number);
+  const dt = new Date(j, mo-1, d, h, mi, se);
+  const echt = dt.getFullYear() === j && dt.getMonth() === mo-1 && dt.getDate() === d
+    && dt.getHours() === h && dt.getMinutes() === mi && dt.getSeconds() === se;
+  if (!echt) return 'Die Aufnahme "'+t+'" hat die Form, nennt aber keinen moeglichen Zeitpunkt.';
+  return '';
+}
+// Welches Chart gerade liegt -- als ein Wort. Wechselt es, ist ein zuvor
+// gesetzter Aufnahmename nicht mehr bestaetigt (siehe state.aufnahmeChart).
+function chartSchluessel(){
+  const q = state.chartQuelle;
+  return q ? (q.dateiname + '|' + q.zeitstempel) : '';
+}
+// Was am Ende im Zettel steht. Ohne Namen kann es nur "leer" sein; mit Namen
+// haengt es daran, ob das Chart seit dem Setzen dasselbe ist.
+function aufnahmeHerkunft(){
+  if (!String(state.aufnahme || '').trim()) return AUFNAHME_HERKUNFT_LEER;
+  return state.aufnahmeChart === chartSchluessel()
+    ? AUFNAHME_HERKUNFT_BESTAETIGT
+    : AUFNAHME_HERKUNFT_UNBESTAETIGT;
 }
 
 function todayISO(){
@@ -1403,6 +1472,17 @@ function loadFile(f, options){
         zeitstempel: f.lastModified ? new Date(f.lastModified).toISOString() : '',
       };
       resetImageTransform();
+      // EC: Ein neues Chart heisst neuer Stichtag UND neue Kandidaten -- und
+      // ein zuvor gesetzter Aufnahmename ist ab hier nicht mehr bestaetigt.
+      // Er wird NICHT geloescht: die Arbeit soll nicht verschwinden. Er wird
+      // nur nicht laenger als bestaetigt ausgegeben (aufnahmeHerkunft).
+      //
+      // ERST anzeigen, DANN nachladen. ladeAufnahmen() geht ueber das Netz und
+      // zeichnet erst danach; bis dahin stuende auf der Seite noch
+      // "bestaetigt", waehrend der Zettel schon "unbestaetigt" schriebe. Genau
+      // in dieser Luecke wuerde jemand exportieren.
+      syncAufnahmeUI();
+      ladeAufnahmen();
       if (!settings.sourceImport) clearSourceIdentityForManualImport();
       drop.classList.add('loaded');
       document.getElementById('dropBig').textContent = f.name;
@@ -1731,6 +1811,205 @@ function syncVideoTitleUI(){
 }
 videoTitleEl.addEventListener('input', () => { state.videoTitle = videoTitleEl.value; syncVideoTitleUI(); });
 
+// ---------- EC: das Feld "aufnahme"
+//
+// WAS HIER NICHT PASSIERT: nichts fuellt dieses Feld von selbst. Der Dienst
+// liefert die Aufnahmen, die es GIBT; welche davon zu diesem Bild gehoert,
+// entscheidet ein Mensch mit einem Klick. Das ist kein Uebermass an Vorsicht,
+// sondern das Ergebnis der Messung an den vorhandenen sieben Bildern:
+//
+//   * Die Regel "die letzte Aufnahme vor dem Chart-Zeitstempel" liegt in vier
+//     von sieben Faellen falsch. Das Thumbnail zu EP. 17 wurde ZWEI MINUTEN
+//     VOR dem Beginn seiner Aufnahme exportiert; die Regel haette die Aufnahme
+//     von vor zwei Tagen genannt.
+//   * Die Regel "das Chart faellt in die laufende Aufnahme" trifft NULL von
+//     sieben. Niemand baut ein Thumbnail, waehrend er vor der Kamera spricht.
+//   * Am 02.09. liegen drei Aufnahmen am selben Tag, zwei davon elf Minuten
+//     lang. Kein Zeitabstand unterscheidet sie.
+//   * Zu den beiden Livestream-Bildern gibt es ueberhaupt keine Aufnahme --
+//     Livestreams laufen nicht ueber diesen Renderweg. Jede Zeitnaehe-Regel
+//     haette hier trotzdem einen Namen geliefert.
+//
+// Was bleibt, ist der KALENDERTAG als Fenster und der Mensch als Entscheider.
+const aufnahmeEl = document.getElementById('aufnahme');
+const aufnahmeStatusEl = document.getElementById('aufnahmeStatus');
+const aufnahmeKandidatenEl = document.getElementById('aufnahmeKandidaten');
+const aufnahmeLeerenEl = document.getElementById('aufnahmeLeeren');
+const aufnahmeState = {
+  // 'aus' (kein Dienst) | 'laedt' | 'da' | 'ohne-ordner' | 'unerreichbar'
+  phase: localService.available ? 'laedt' : 'aus',
+  liste: [],
+  grund: '',
+  abgeschnitten: false,
+};
+
+// Der Tag, an dem gesucht wird. Zuerst das Datum, das AUF DEM BILD steht --
+// das ist die Angabe, die ein Mensch gesetzt hat. Hat das Format kein
+// Datumsfeld (nonchart), gilt der Tag des Charts; ohne Chart der heutige.
+function aufnahmeStichtag(){
+  const feld = PRESET_DATE_FIELD[state.preset];
+  const ausMeta = feld ? String(state.meta[feld] || '').trim() : '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ausMeta)) return { tag: ausMeta, woher: 'dem Datum im Bild' };
+  const q = state.chartQuelle;
+  if (q && q.zeitstempel){
+    const d = new Date(q.zeitstempel);
+    if (!isNaN(d)){
+      const pad = n => String(n).padStart(2,'0');
+      return { tag: d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()), woher: 'dem Zeitstempel des Charts' };
+    }
+  }
+  return { tag: todayISO(), woher: 'heute' };
+}
+
+function tagVersatz(tag, tage){
+  const d = new Date(tag + 'T12:00:00');
+  d.setDate(d.getDate() + tage);
+  const pad = n => String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+}
+
+// Die Kandidaten: der Stichtag zuerst. Ist dort keine, wird auf die
+// Nachbartage geweitet -- und das wird GESAGT, nicht stillschweigend getan.
+// Der Grund fuers Weiten steht in der Messung oben: das Thumbnail entsteht
+// auch mal kurz vor der Aufnahme oder kurz nach Mitternacht.
+function aufnahmeKandidaten(){
+  const stich = aufnahmeStichtag();
+  const tag = stich.tag, woher = stich.woher;
+  const amTag = t => aufnahmeState.liste.filter(a => String(a.name).slice(0,10) === t);
+  const genau = amTag(tag);
+  if (genau.length) return { liste: genau, tag: tag, woher: woher, geweitet: false };
+  const nachbarn = amTag(tagVersatz(tag,-1)).concat(amTag(tagVersatz(tag,1)));
+  return { liste: nachbarn, tag: tag, woher: woher, geweitet: nachbarn.length > 0 };
+}
+
+function uhrzeit(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return '?';
+  const pad = n => String(n).padStart(2,'0');
+  return pad(d.getHours())+':'+pad(d.getMinutes());
+}
+function dauerText(sekunden){
+  const s = Number(sekunden);
+  if (!isFinite(s) || s <= 0) return 'Dauer unbekannt';
+  return s < 90 ? Math.round(s)+' s lang' : Math.round(s/60)+' min lang';
+}
+
+// Was fuer einen Kandidaten spricht -- in Worten, nicht als Punktzahl. Eine
+// Punktzahl waere eine Rangfolge, und eine Rangfolge waere ein Vorschlag, den
+// niemand geprueft hat.
+function kandidatWofuer(a, kandidaten){
+  const teile = [uhrzeit(a.beginn)+' bis '+uhrzeit(a.ende), dauerText(a.dauer_sekunden)];
+  if (String(a.name).slice(0,10) !== kandidaten.tag) teile.push('anderer Tag als '+kandidaten.tag);
+  const laengste = kandidaten.liste.reduce(function(m,x){ return Math.max(m, Number(x.dauer_sekunden)||0); }, 0);
+  if (kandidaten.liste.length > 1 && Number(a.dauer_sekunden) === laengste) teile.push('die laengste des Tages');
+  return teile.join(' \u00b7 ');
+}
+
+function syncAufnahmeUI(){
+  if (aufnahmeEl.value !== state.aufnahme) aufnahmeEl.value = state.aufnahme;
+  const formfehler = aufnahmeFehler(state.aufnahme);
+  const herkunft = aufnahmeHerkunft();
+  const kandidaten = aufnahmeKandidaten();
+
+  const zeilen = [];
+  let klasse = '';
+  if (formfehler){ zeilen.push(formfehler + ' Der Dienst wird das ablehnen.'); klasse = 'fehler'; }
+  else if (herkunft === AUFNAHME_HERKUNFT_LEER){
+    zeilen.push('Leer \u2014 der Zettel schreibt "aufnahme: null" und "aufnahme_herkunft: leer".');
+  } else if (herkunft === AUFNAHME_HERKUNFT_UNBESTAETIGT){
+    zeilen.push('Das Chart hat sich geaendert, seit du diese Aufnahme gesetzt hast. '
+      + 'Der Zettel schreibt "aufnahme_herkunft: unbestaetigt" \u2014 der Longform-Weg fragt dann nach, statt sie zu nehmen. '
+      + 'Klick die Aufnahme erneut an oder tipp sie neu, wenn sie weiter stimmt.');
+    klasse = 'warnung';
+  } else {
+    zeilen.push('Bestaetigt \u2014 der Zettel schreibt "aufnahme_herkunft: bestaetigt".');
+  }
+
+  if (aufnahmeState.phase === 'aus'){
+    zeilen.push('Ohne den lokalen Dienst gibt es keine Kandidatenliste. Der Name kann von Hand eingetragen werden.');
+  } else if (aufnahmeState.phase === 'laedt'){
+    zeilen.push('Aufnahmen werden gelesen \u2026');
+  } else if (aufnahmeState.phase === 'unerreichbar'){
+    zeilen.push('Die Aufnahmen konnten nicht gelesen werden' + (aufnahmeState.grund ? ': '+aufnahmeState.grund : '.'));
+  } else if (aufnahmeState.phase === 'ohne-ordner'){
+    zeilen.push(aufnahmeState.grund || 'Kein Aufnahmeordner eingestellt.');
+  } else if (!kandidaten.liste.length){
+    zeilen.push('Keine Aufnahme an ' + kandidaten.tag + ' (' + kandidaten.woher + ') und auch nicht an den Nachbartagen. '
+      + 'Beginnt die Aufnahme erst nach dem Export, gibt es sie hier noch nicht \u2014 dann bleibt das Feld leer.');
+  } else if (kandidaten.geweitet){
+    zeilen.push('Keine Aufnahme an ' + kandidaten.tag + ' (' + kandidaten.woher + '). Die Nachbartage stehen unten.');
+  } else if (kandidaten.liste.length === 1){
+    zeilen.push('Eine Aufnahme an ' + kandidaten.tag + ' (' + kandidaten.woher + '). Vorschlag \u2014 bestaetige ihn mit einem Klick.');
+  } else {
+    zeilen.push(kandidaten.liste.length + ' Aufnahmen an ' + kandidaten.tag + ' (' + kandidaten.woher + '). '
+      + 'Welche es ist, entscheidet nichts hier \u2014 waehle sie aus.');
+  }
+  if (aufnahmeState.abgeschnitten) zeilen.push('Die Liste ist auf die neuesten Aufnahmen begrenzt.');
+  aufnahmeStatusEl.textContent = zeilen.join(' ');
+  aufnahmeStatusEl.className = 'aufnahmeStatus' + (klasse ? ' '+klasse : '');
+
+  aufnahmeKandidatenEl.innerHTML = '';
+  // Nur EIN Kandidat und noch nichts gesetzt: das ist der Fall, in dem die
+  // Zuordnung eindeutig aussieht. Er wird gestrichelt hervorgehoben -- und
+  // trotzdem nicht gesetzt. Ein Vorschlag, der sich selbst annimmt, ist keiner.
+  const einzigerVorschlag = kandidaten.liste.length === 1 && !state.aufnahme;
+  kandidaten.liste.forEach(function(a){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'aufnahmeKandidat' + (einzigerVorschlag ? ' vorschlag' : '');
+    b.setAttribute('aria-pressed', String(a.name === state.aufnahme));
+    const kopf = document.createElement('span');
+    kopf.textContent = a.name;
+    const wofuer = document.createElement('span');
+    wofuer.className = 'wofuer';
+    wofuer.textContent = kandidatWofuer(a, kandidaten);
+    b.appendChild(kopf); b.appendChild(wofuer);
+    b.addEventListener('click', function(){ setzeAufnahme(a.name); });
+    aufnahmeKandidatenEl.appendChild(b);
+  });
+}
+
+// Der EINZIGE Weg, auf dem ein Name in den Zustand kommt: eine Handlung eines
+// Menschen. Der Klick auf einen Kandidaten und das Tippen im Feld gehen beide
+// hier durch, und beide halten fest, gegen welches Chart entschieden wurde.
+function setzeAufnahme(name){
+  state.aufnahme = String(name == null ? '' : name).trim();
+  state.aufnahmeChart = state.aufnahme ? chartSchluessel() : null;
+  syncAufnahmeUI();
+}
+aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value); });
+aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme(''); });
+
+async function ladeAufnahmen(){
+  if (!localService.available){ aufnahmeState.phase = 'aus'; syncAufnahmeUI(); return; }
+  try {
+    const antwort = await fetch('/api/aufnahmen', {
+      headers: {'X-Session-Token': localService.token},
+      cache: 'no-store',
+      credentials: 'same-origin',
+    });
+    // Ein Dienst der Fassung 3 kennt die Route nicht. Das ist kein Ausfall:
+    // das Feld bleibt Handeingabe. Deshalb steigt REQUIRED_PROTOCOL_VERSION
+    // hierfuer NICHT -- der Compositor ist auf diese Route nicht angewiesen.
+    if (antwort.status === 404){
+      aufnahmeState.phase = 'unerreichbar';
+      aufnahmeState.grund = 'der laufende Dienst kennt /api/aufnahmen noch nicht (aeltere Fassung).';
+      syncAufnahmeUI();
+      return;
+    }
+    if (!antwort.ok) throw new Error('HTTP '+antwort.status);
+    const daten = await antwort.json();
+    aufnahmeState.liste = Array.isArray(daten.aufnahmen) ? daten.aufnahmen : [];
+    aufnahmeState.abgeschnitten = daten.abgeschnitten === true;
+    aufnahmeState.grund = typeof daten.grund === 'string' ? daten.grund : '';
+    aufnahmeState.phase = (daten.wurzel_gesetzt && daten.wurzel_lesbar) ? 'da' : 'ohne-ordner';
+  } catch (fehler){
+    aufnahmeState.phase = 'unerreichbar';
+    aufnahmeState.grund = fehler && fehler.message ? fehler.message : '';
+  }
+  syncAufnahmeUI();
+}
+
 function syncExportFormatUI(){ const seg=document.getElementById('exportFormatSeg'); [...seg.children].forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.exportFormat===state.exportFormat))); exportBtn.textContent = state.exportFormat.toUpperCase()+' exportieren (2560×1440)'; }
 // Emblem-Bedienung: nur bei aiv sichtbar, Werte gehen 1:1 in den State.
 // Das Auswahlfeld wird EINMAL aus EMBLEMS aufgebaut. Bei nur einer Variante
@@ -1938,7 +2217,12 @@ function renderMetaFields(){
       wrap.appendChild(warn);
       inp.addEventListener('input', paintWarning);
     }
-    inp.addEventListener('input', e => { state.meta[f.id] = e.target.value; render(); });
+    inp.addEventListener('input', e => {
+      state.meta[f.id] = e.target.value;
+      // EC: Nur das Datumsfeld verschiebt den Stichtag; die Nummer nicht.
+      if (f.id === PRESET_DATE_FIELD[state.preset]) syncAufnahmeUI();
+      render();
+    });
     box.appendChild(wrap);
   });
   document.getElementById('imgLabel').textContent = cfg.imgLabel;
@@ -1953,6 +2237,9 @@ document.getElementById('presetSeg').addEventListener('click', e => {
   state.preset = btn.dataset.preset;
   renderMetaFields();
   syncEmblemUI();
+  // EC: Das Format entscheidet, welches Datumsfeld gilt -- und das Datum ist
+  // der Stichtag der Kandidaten.
+  syncAufnahmeUI();
   render();
 });
 
@@ -2009,6 +2296,11 @@ function beipackzettelDaten(){
     videotitel: state.videoTitle,
     datum: (PRESET_DATE_FIELD[state.preset] && state.meta[PRESET_DATE_FIELD[state.preset]]) || '',
     chart_quelle: state.chartQuelle,
+    // EC: Beide Felder gehen zusammen los. Die Herkunft wird HIER gerechnet
+    // und nicht mitgefuehrt: sie haengt am Namen und am gerade geladenen
+    // Chart, und beides kann sich bis zum Export noch aendern.
+    aufnahme: state.aufnahme,
+    aufnahme_herkunft: aufnahmeHerkunft(),
   };
 }
 
@@ -2031,6 +2323,11 @@ async function beipackzettelInhalt(blob, filename){
     datum: d.datum.trim() || null,
     format: state.preset,
     chart_quelle: d.chart_quelle,
+    // EC: Deckungsgleich mit build_beipackzettel() im Dienst -- derselbe
+    // Zettel, gleich welcher der beiden Wege ihn schreibt. Ohne Namen ist die
+    // Herkunft "leer", und der Name ist dann null, nicht "".
+    aufnahme: d.aufnahme.trim() || null,
+    aufnahme_herkunft: d.aufnahme.trim() ? d.aufnahme_herkunft : AUFNAHME_HERKUNFT_LEER,
   };
 }
 
@@ -2123,7 +2420,12 @@ async function writeExportToLocalService(blob, filename){
     // dessen Beipackzettel der Dienst gerade abgelehnt hat -- der Export saehe
     // geglueckt aus. Solche Codes brechen deshalb ab, statt auszuweichen.
     exportServiceRejected = error && (error.exportCode === 'invalid_video_title'
-      || error.exportCode === 'invalid_export_metadata');
+      || error.exportCode === 'invalid_export_metadata'
+      // EC: Eine abgelehnte Aufnahme ist so wenig ein Ausfall wie ein
+      // abgelehnter Titel. Faellt der Aufrufer hier auf den Browserdownload
+      // zurueck, landet ein Bild ohne Zettel im Downloadordner und der Export
+      // saehe geglueckt aus.
+      || error.exportCode === 'invalid_aufnahme');
     return false;
   }
 }
@@ -2190,6 +2492,15 @@ exportBtn.addEventListener('click', async () => {
       meta.textContent = 'Export abgebrochen: '+titelFehler+' Es wurde nichts geschrieben.';
       return;
     }
+    // EC: Dieselbe Regel wie beim Videotitel. Der Dienst prueft die Form der
+    // Aufnahme noch einmal und ist die eigentliche Instanz; hier erspart die
+    // Pruefung nur den Weg dorthin und den Ausgang, bei dem ein Bild ohne
+    // Zettel im Downloadordner landet.
+    const aufnahmeformFehler = aufnahmeFehler(state.aufnahme);
+    if (aufnahmeformFehler){
+      meta.textContent = 'Export abgebrochen: '+aufnahmeformFehler+' Es wurde nichts geschrieben.';
+      return;
+    }
     await ensureFonts();
     render();
     const isJpeg = state.exportFormat === 'jpg';
@@ -2204,7 +2515,16 @@ exportBtn.addEventListener('click', async () => {
         ? ' + '+gespeichert.beipackzettel
         : '';
       const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung].filter(Boolean);
-      meta.textContent = 'Gespeichert im Export-Ordner: '+gespeichert.filename+zettel
+      // EC: Was im Zettel ueber die Aufnahme steht, steht auch hier. Sonst
+      // erfaehrt niemand, dass gerade ein Zettel ohne Aufnahme entstanden ist
+      // -- und genau der ist es, dem der Longform-Weg spaeter nicht glauben
+      // darf.
+      const zettelAufnahme = gespeichert.beipackzettel
+        ? (state.aufnahme
+            ? ' (Aufnahme '+state.aufnahme+', '+aufnahmeHerkunft()+')'
+            : ' (ohne Aufnahme)')
+        : '';
+      meta.textContent = 'Gespeichert im Export-Ordner: '+gespeichert.filename+zettel+zettelAufnahme
         + (hinweise.length ? ' — ACHTUNG: '+hinweise.join(' ') : '');
       if (gespeichert.warning) console.warn('Series registry:', gespeichert.warning);
       if (gespeichert.beipackzettelWarnung) console.warn('Beipackzettel:', gespeichert.beipackzettelWarnung);
@@ -2433,6 +2753,7 @@ function startHeartbeat(){
   syncAutoUI();
   syncPosUI();
   syncVideoTitleUI();
+  syncAufnahmeUI();
   syncExportFormatUI();
   syncImageTransformUI();
   buildEmblemVariantUI();
@@ -2441,6 +2762,10 @@ function startHeartbeat(){
   await loadEmblem();
   render();
   startHeartbeat();
+  // EC: Nach loadLatestSource() waere es ein zweites Mal -- loadFile() ruft
+  // ladeAufnahmen() ohnehin. Hier davor, damit die Liste auch dann steht,
+  // wenn kein Chart geladen wird.
+  await ladeAufnahmen();
   if (localService.available) await loadLatestSource();
 })();
 </script>

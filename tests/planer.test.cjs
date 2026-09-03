@@ -110,11 +110,23 @@ test('pruefeArgumenteStrikt und pruefeKeineFreienArgumente stehen vor allem ande
 });
 
 test('pruefeKeineFreienArgumente wird importiert, nicht nachgebaut', () => {
-  assert.match(NURCODE, /const \{ pruefeKeineFreienArgumente, AUFNAHME_FORM, EXIT \} = require\('\.\/uebergabe-leser'\)/);
+  // EH: Geprueft wird, WAS geholt wird, nicht wie die Zeile umbricht. Vorher
+  // stand hier die Liste als ein Stueck im Muster; als SHA256_FORM dazukam und
+  // die Zeile mehrzeilig wurde, fiel der Test, obwohl die Zusage genau
+  // eingehalten war. Ein Test, der an der Zeilenlaenge haengt, misst die
+  // Zeilenlaenge.
+  const block = NURCODE.match(/const \{[^}]*\} = require\('\.\/uebergabe-leser'\);/);
+  assert.ok(block, 'der Planer laedt nichts aus ./uebergabe-leser');
+  for (const name of ['pruefeKeineFreienArgumente', 'AUFNAHME_FORM', 'SHA256_FORM', 'EXIT']) {
+    assert.ok(new RegExp('\\b' + name + '\\b').test(block[0]),
+      name + ' wird nicht aus ./uebergabe-leser geholt:\n' + block[0]);
+  }
   assert.ok(!/function pruefeKeineFreienArgumente/.test(NURCODE),
     'der Planer baut pruefeKeineFreienArgumente nach, statt sie zu importieren');
   assert.ok(!/const AUFNAHME_FORM\s*=/.test(NURCODE),
     'der Planer baut AUFNAHME_FORM nach, statt sie zu importieren');
+  assert.ok(!/const SHA256_FORM\s*=/.test(NURCODE),
+    'der Planer baut SHA256_FORM nach, statt sie zu importieren');
 });
 
 test('der Planer ruft nichts auf und geht nicht ins Netz', () => {

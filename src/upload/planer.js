@@ -53,7 +53,11 @@ const ERLAUBTE_ARGUMENTE = ['--freigabe=', '--execute', '--jetzt=', '--json'];
 // DNa Punkt 1: Der Flagname geht als Parameter mit. Vorher stand in der
 // Funktion '--aufnahme=' fest verdrahtet, und der Planer bekam damit einen
 // Vorschlag, den er selbst nicht ausfuehren kann -- er heisst --freigabe=.
-const { pruefeKeineFreienArgumente, AUFNAHME_FORM, EXIT } = require('./uebergabe-leser');
+// EH: SHA256_FORM kommt aus demselben Grund von dort wie AUFNAHME_FORM -- die
+// Form einer sha256 steht im Repo einmal und nicht je Modul einmal.
+const {
+  pruefeKeineFreienArgumente, AUFNAHME_FORM, SHA256_FORM, EXIT,
+} = require('./uebergabe-leser');
 
 if (require.main === module) {
   pruefeArgumenteStrikt(process.argv, ERLAUBTE_ARGUMENTE, 'src/upload/planer.js');
@@ -121,8 +125,6 @@ const BEKANNTE_FREIGABE_VERSIONEN = ['1.0'];
 // tests/planer.test.cjs sie gegeneinander.
 const GEDAECHTNIS_ARTIFACT_TYPE = 'adw_shorts_uploads';
 const BEKANNTE_GEDAECHTNIS_VERSIONEN = ['1.0'];
-
-const SHA256_FORM = /^[0-9a-f]{64}$/;
 
 // Die Form, in der publish_at im Gedaechtnis steht -- RFC 3339 in UTC, so wie
 // der Uploader es geschrieben und an die API gegeben hat. Seit DS haengt der

@@ -510,6 +510,70 @@ test('der Plan wird streng gelesen', () => {
   assert.equal(U.lesePlan(text, PROBE).sha256, crypto.createHash('sha256').update(text, 'utf8').digest('hex'));
 });
 
+// EH: Die Gegenrichtung zur sha256-Form.
+//
+// Die Form steht seit EH einmal im Repo (uebergabe-leser.js) und wird von hier
+// geholt. Die Gegenprobe dazu -- die eine Fassung absichtlich falsch machen --
+// hat gezeigt, dass der Uploader sie nur in EINE Richtung festhielt: wird die
+// Form zu STRENG, fallen hier sechzehn Tests, denn dann geht keine echte
+// Pruefsumme mehr durch. Wird sie zu FREIZUEGIG (/^[0-9a-f]+$/), fiel hier
+// nichts -- der Uploader hatte an keiner seiner drei Stellen einen Fall, in
+// dem etwas, das keine sha256 ist, auch abgelehnt werden muss.
+//
+// Eine Regel, die nur in einer Richtung geprueft ist, ist eine halbe. Dieser
+// Test schliesst die andere Richtung an den beiden Stellen, die von hier aus
+// erreichbar sind: lesePlan und leseGedaechtnis.
+
+const KEINE_SHA256 = [
+  ['zu kurz', 'a'.repeat(63)],
+  ['zu lang', 'a'.repeat(65)],
+  ['Grossbuchstaben', 'A'.repeat(64)],
+  ['keine Hexziffern', 'g'.repeat(64)],
+  ['leer', ''],
+  ['mit Leerraum', ' ' + 'a'.repeat(63)],
+  ['mit Zeilenumbruch', 'a'.repeat(63) + String.fromCharCode(10)],
+];
+
+test('EH: was keine sha256 ist, wird abgelehnt -- im Plan und im Gedaechtnis', () => {
+  const planBasis = () => ({
+    artifact_type: P.PLAN_ARTIFACT_TYPE, schema_version: P.PLAN_SCHEMA_VERSION,
+    aufnahme: PROBE, verbindlich: 'publish_at',
+    termine: [{ sha256: 'a'.repeat(64), kennung: PROBE + '/1', titel: 'T',
+      publish_at: '2026-09-02T06:55:00.000Z' }],
+  });
+  // Erst die Annahmerichtung -- sonst prueft die Ablehnung nichts.
+  assert.deepEqual(U.lesePlan(JSON.stringify(planBasis()), PROBE).fehler, []);
+
+  for (const [was, wert] of KEINE_SHA256) {
+    const d = planBasis();
+    d.termine[0].sha256 = wert;
+    const fehler = U.lesePlan(JSON.stringify(d), PROBE).fehler;
+    assert.ok(fehler.length > 0, 'Plan: ' + was + ' ging als sha256 durch.');
+    assert.match(fehler[0], /sha256 ist keine sha256-Summe/,
+      'Plan: ' + was + ' -- falsche Meldung: ' + fehler[0]);
+  }
+
+  // Und dasselbe im Gedaechtnis, an einer Wegwerf-Wurzel.
+  const w = wegwerfWurzel();
+  fs.mkdirSync(path.join(w, 'data', 'uploads'), { recursive: true });
+  const planSha = 'b'.repeat(64);
+  const schreibe = (sha) => {
+    const g = U.neuesGedaechtnis(PROBE, planSha, JETZT);
+    g.uploads.push({ sha256: sha, videoId: 'attrappe-1' });
+    fs.writeFileSync(U.gedaechtnisPfad(w, PROBE), JSON.stringify(g, null, 2));
+  };
+  schreibe('c'.repeat(64));
+  assert.deepEqual(U.leseGedaechtnis(w, PROBE, planSha).fehler, [],
+    'Ein gueltiges Gedaechtnis muss angenommen werden, sonst prueft die Ablehnung nichts.');
+  for (const [was, wert] of KEINE_SHA256) {
+    schreibe(wert);
+    const fehler = U.leseGedaechtnis(w, PROBE, planSha).fehler;
+    assert.ok(fehler.length > 0, 'Gedaechtnis: ' + was + ' ging als sha256 durch.');
+    assert.match(fehler[0], /uploads\[0\] ist unvollstaendig/,
+      'Gedaechtnis: ' + was + ' -- falsche Meldung: ' + fehler[0]);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // TEIL 2 -- DAS GEDAECHTNIS (N6), DIE PRUEFSUMME (N5), DIE ZEIT (N8), --anzahl (N9)
 // ---------------------------------------------------------------------------

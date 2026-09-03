@@ -1356,3 +1356,145 @@ test('DNa: jedes der drei Skripte schlaegt SEIN eigenes Argument vor', () => {
     assert.ok(!r.stderr.includes(fremd), f.skript + ' nennt das fremde Argument ' + fremd);
   }
 });
+
+// ---------------------------------------------------------------------------
+// EH: die sha256-Form steht im Repo EINMAL
+// ---------------------------------------------------------------------------
+//
+// Sie stand an drei Stellen und war an keiner exportiert; der
+// Beipackzettel-Leser haette sie zum vierten Mal hinschreiben muessen. Sie
+// steht jetzt hier und wird importiert. Die Gegenprobe dazu ist von Hand
+// gemacht (Bericht EH): wird diese eine Fassung falsch, fallen Tests an allen
+// Fundstellen. Was die Gegenprobe NICHT kann, ist verhindern, dass morgen
+// jemand eine zweite Fassung dazuschreibt -- dann bliebe alles gruen und die
+// Zusammenfuehrung waere still wieder aufgehoben. Genau dagegen stehen die
+// vier Tests hier.
+
+// Ein Regex-Literal aus 64 Hexziffern, in welcher Schreibweise auch immer.
+const SECHZIG_VIER_HEX = /\/\^?\[0-9a-f(?:A-F)?\]\{64\}\$?\//i;
+
+// Was in src/upload/*.js an solchen Literalen stehen DARF -- Datei, Bezeichner
+// und der Grund. Jede weitere Fundstelle ist eine zweite Fassung.
+const ERLAUBTE_HEXFORMEN = [
+  {
+    datei: 'uebergabe-leser.js',
+    kennzeichen: 'const SHA256_FORM =',
+    grund: 'die eine Form einer sha256; alle anderen Module holen sie von hier',
+  },
+  {
+    datei: 'uebergabe-leser.js',
+    kennzeichen: '[0-9a-fA-F]{64}',
+    grund: 'absichtlich WEITER als SHA256_FORM: sie trennt "mit Grossbuchstaben ' +
+      'geschrieben" von "gar keine Hexziffern", damit die Meldung sagt, was los ist',
+  },
+  {
+    datei: 'uploader.js',
+    kennzeichen: 'const ZUFALL_FORM =',
+    grund: '32 Zufallsbytes als Hex -- gleiche Gestalt, andere Frage. Wird der ' +
+      'Zufallswert eines Tages laenger, darf die sha256-Form sich nicht mitbewegen',
+  },
+];
+
+// Sucht die Fundstellen in einem Text. Als eigene Funktion, damit derselbe
+// Sucher unten an einem erfundenen Text vorgefuehrt werden kann.
+function hexformenIn(text, datei) {
+  const gefunden = [];
+  text.split(/\r?\n/).forEach((zeile, i) => {
+    if (SECHZIG_VIER_HEX.test(zeile)) {
+      gefunden.push({ datei, zeile: i + 1, quelle: zeile.trim() });
+    }
+  });
+  return gefunden;
+}
+
+// Nur die Module, die das Repo wirklich traegt. Eine ungetrackte Datei im
+// Arbeitsbaum ist noch nicht Teil dieser Zusage -- sie wird es in dem Commit,
+// der sie eincheckt.
+function getrackteUploadModule() {
+  const roh = execFileSync('git', ['ls-files', 'src/upload'],
+    { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
+  return roh.split(/\r?\n/).filter((z) => z.endsWith('.js'));
+}
+
+test('EH: SHA256_FORM ist exportiert und erkennt genau 64 Hexziffern in Kleinschreibung', () => {
+  assert.ok(L.SHA256_FORM instanceof RegExp, 'SHA256_FORM ist nicht exportiert.');
+  const echt = crypto.createHash('sha256').update('irgendetwas').digest('hex');
+  assert.equal(echt.length, 64);
+  assert.ok(L.SHA256_FORM.test(echt), 'Eine echte sha256 wird nicht erkannt.');
+  assert.ok(L.SHA256_FORM.test('0'.repeat(64)));
+  assert.ok(L.SHA256_FORM.test('abcdef0123456789'.repeat(4)));
+  // Und die Gegenrichtung -- eine Form, die alles annimmt, ist keine.
+  assert.ok(!L.SHA256_FORM.test('a'.repeat(63)), '63 Zeichen duerfen nicht durchgehen.');
+  assert.ok(!L.SHA256_FORM.test('a'.repeat(65)), '65 Zeichen duerfen nicht durchgehen.');
+  assert.ok(!L.SHA256_FORM.test(echt.toUpperCase()), 'Grossbuchstaben duerfen nicht durchgehen.');
+  assert.ok(!L.SHA256_FORM.test('g'.repeat(64)), 'Nicht-Hexziffern duerfen nicht durchgehen.');
+  assert.ok(!L.SHA256_FORM.test(''), 'Leer darf nicht durchgehen.');
+  assert.ok(!L.SHA256_FORM.test(' ' + echt), 'Fuehrender Leerraum darf nicht durchgehen.');
+  assert.ok(!L.SHA256_FORM.test(echt + '\n'), 'Angehaengter Zeilenumbruch darf nicht durchgehen.');
+});
+
+test('EH: in src/upload steht die sha256-Form genau einmal, dazu zwei benannte Nachbarn', () => {
+  const gefunden = [];
+  for (const rel of getrackteUploadModule()) {
+    const voll = path.join(__dirname, '..', rel);
+    gefunden.push(...hexformenIn(fs.readFileSync(voll, 'utf8'), path.basename(rel)));
+  }
+  const uebrig = gefunden.slice();
+  const fehlend = [];
+  for (const erlaubt of ERLAUBTE_HEXFORMEN) {
+    const i = uebrig.findIndex((g) => g.datei === erlaubt.datei &&
+      g.quelle.includes(erlaubt.kennzeichen));
+    if (i === -1) fehlend.push(erlaubt.datei + ': ' + erlaubt.kennzeichen);
+    else uebrig.splice(i, 1);
+  }
+  assert.deepEqual(fehlend, [],
+    'Erwartete Fundstellen fehlen: ' + fehlend.join(', ') +
+    ' -- entweder wurde etwas umbenannt, oder eine Regel ist verschwunden.');
+  assert.deepEqual(uebrig, [],
+    'Eine ZWEITE Fassung der sha256-Form ist dazugekommen:\n' +
+    uebrig.map((g) => '  ' + g.datei + ':' + g.zeile + '  ' + g.quelle).join('\n') +
+    '\nSie steht in uebergabe-leser.js und wird importiert.');
+  assert.equal(gefunden.length, ERLAUBTE_HEXFORMEN.length);
+});
+
+test('EH: jedes Modul, das SHA256_FORM benutzt, holt sie aus uebergabe-leser.js', () => {
+  const nutzer = [];
+  for (const rel of getrackteUploadModule()) {
+    if (path.basename(rel) === 'uebergabe-leser.js') continue;
+    const text = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+    if (!text.includes('SHA256_FORM')) continue;
+    nutzer.push(rel);
+    // Der Bezeichner steht im require-Block aus './uebergabe-leser', und das
+    // Modul schreibt ihn nirgends selbst hin.
+    const block = text.match(/const \{[^}]*\} = require\('\.\/uebergabe-leser'\);/);
+    assert.ok(block, rel + ' benutzt SHA256_FORM, laedt aber nichts aus ./uebergabe-leser.');
+    assert.ok(block[0].includes('SHA256_FORM'),
+      rel + ' benutzt SHA256_FORM, holt sie aber nicht aus ./uebergabe-leser:\n' + block[0]);
+    assert.ok(!/const SHA256_FORM\s*=/.test(text),
+      rel + ' schreibt SHA256_FORM selbst hin, statt sie zu holen.');
+  }
+  // Eine Zusage ueber eine leere Menge ist keine.
+  assert.ok(nutzer.length >= 2,
+    'Erwartet waren mindestens zwei Module, die die Form holen; gefunden: ' +
+    JSON.stringify(nutzer));
+});
+
+test('EH: der Sucher schnappt zu, wenn eine zweite Fassung dazukommt', () => {
+  // Vorgefuehrt statt behauptet -- an einem erfundenen Text, nicht an der
+  // Platte, damit dieser Test nichts anfasst.
+  const harmlos = [
+    "const FOO = 'bar';",
+    "if (SHA256_FORM.test(x)) return;",
+  ].join('\n');
+  assert.deepEqual(hexformenIn(harmlos, 'erfunden.js'), []);
+
+  const mitZweiterFassung = harmlos + "\nconst SHA256_FORM = /^[0-9a-f]{64}$/;";
+  const treffer = hexformenIn(mitZweiterFassung, 'erfunden.js');
+  assert.equal(treffer.length, 1, 'Der Sucher hat die zweite Fassung nicht gesehen.');
+  assert.equal(treffer[0].zeile, 3);
+  assert.ok(treffer[0].quelle.includes('SHA256_FORM'));
+  // Auch die Schreibweise mit Grossbuchstaben faellt auf.
+  assert.equal(hexformenIn("const X = /^[0-9a-fA-F]{64}$/;", 'erfunden.js').length, 1);
+  // Und eine Form, die NICHT 64 Hexziffern meint, faellt nicht auf.
+  assert.deepEqual(hexformenIn("const P = /^[0-9]{1,5}$/;", 'erfunden.js'), []);
+});

@@ -69,8 +69,10 @@ const ERLAUBTE_ARGUMENTE = [
   TROCKENLAUF_FLAG,
 ];
 
+// EH: SHA256_FORM steht im Repo einmal, in uebergabe-leser.js, und wird von
+// hier geholt. ZUFALL_FORM weiter unten ist bewusst NICHT dasselbe.
 const {
-  pruefeKeineFreienArgumente, AUFNAHME_FORM, EXIT,
+  pruefeKeineFreienArgumente, AUFNAHME_FORM, SHA256_FORM, EXIT,
   uebergabedateiPfad, parseStreng, pruefeKopf, pfadLiegtUnter,
 } = require('./uebergabe-leser');
 
@@ -236,7 +238,6 @@ const GEDAECHTNIS_ARTIFACT_TYPE = 'adw_shorts_uploads';
 const GEDAECHTNIS_SCHEMA_VERSION = '1.0';
 const BEKANNTE_PLAN_VERSIONEN = [PLAN_SCHEMA_VERSION];
 
-const SHA256_FORM = /^[0-9a-f]{64}$/;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 
 // ---------------------------------------------------------------------------

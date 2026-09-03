@@ -206,6 +206,25 @@ const DATEINAME = 'uebergabe.json';
 const AUFNAHME_FORM = /^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$/;
 // ISO-8601 mit Zonenversatz; "Z" ist der Versatz +00:00 und zaehlt mit.
 const ISO_MIT_VERSATZ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+// EH: DIE Form einer sha256 -- genau 64 Hexziffern in Kleinschreibung.
+//
+// Sie stand bis hierher an drei Stellen im Repo (hier, planer.js, uploader.js)
+// und war an keiner exportiert; der Beipackzettel-Leser haette sie zum vierten
+// Mal hinschreiben muessen. Vier Fassungen einer Regel sind auf Dauer zwei:
+// eine, die jemand korrigiert, und drei, die es nicht mitbekommen.
+//
+// Sie steht hier, weil dieses Modul die Wurzel der Kette ist -- planer.js,
+// uploader.js, freigabe-server.js, uebersicht.js und zettel-leser.js laden es,
+// es laedt keines von ihnen. Und sie steht neben AUFNAHME_FORM, wo die
+// Schwesterregel schon steht.
+//
+// Nicht dasselbe, und darum ausdruecklich NICHT hierher zusammengefuehrt:
+// uploader.js/ZUFALL_FORM (32 Zufallsbytes als Hex -- gleiche Gestalt, andere
+// Frage; wird der Zufall eines Tages laenger, darf diese Regel sich nicht
+// mitbewegen) und die weitere Form in pruefeEintrag unten, die
+// Grossbuchstaben ZULAESST, um "falsch geschrieben" von "keine Hexziffern" zu
+// unterscheiden. tests/uebergabe-leser.test.cjs haelt beides fest.
 const SHA256_FORM = /^[0-9a-f]{64}$/;
 
 const PFLICHTFELDER = [
@@ -1256,7 +1275,7 @@ module.exports = {
   VERNUNFT_MIN_MS, VERNUNFT_MAX_MS, BEOBACHTET_MIN_MS, BEOBACHTET_MAX_MS,
   BEOBACHTET_STICHPROBEN,
   GANZZAHL_POSITIV_FELDER, GANZZAHL_FELDER, TEXT_FELDER, FELDSCHLEIFEN,
-  AUFNAHME_FORM, pruefeKeineFreienArgumente,
+  AUFNAHME_FORM, SHA256_FORM, pruefeKeineFreienArgumente,
   neueSperre, uebergabedateiPfad, istAbgeschnitten, parseStreng, pruefeKopf,
   pruefeEintrag, pruefePlatte, pruefeUebergabe, formatiere, pfadLiegtUnter,
 };

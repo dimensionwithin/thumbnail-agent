@@ -17,10 +17,17 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from thumbnail_service import (
     SERIES_NAMES,
+    BEIPACKZETTEL_SCHEMA_VERSION,
+    VIDEOTITEL_MAX_ZEICHEN,
+    beipackzettel_name,
+    build_beipackzettel,
+    pruefe_videotitel,
+    write_beipackzettel,
+    zaehle_titel_zeichen,
     BrowserOpenChannel,
     BrowserOpenCoordinator,
     HOST,
@@ -265,6 +272,23 @@ class HttpEndpointTests(unittest.TestCase):
         self.export = root / "export"
         self.source.mkdir()
         self.export.mkdir()
+        # DZ: Der HTTP-Pfad schreibt die Serien-Registry ueber die
+        # Modul-Globalen -- also in das ECHTE data/series-registry.json dieses
+        # Repos. Jeder Test, der X-Export-Preset mitschickt, haette damit den
+        # laufenden Zaehler des Kanals verstellt (einmal passiert: standard
+        # sprang auf 144, weil ein Test "EP. 144" schickte). Hier auf den
+        # temporaeren Ordner umgebogen. SeriesRegistryPerSeriesTest ruft die
+        # reine Funktion mit expliziten Pfaden und war davon nie betroffen --
+        # nur der Weg ueber HTTP.
+        self.registry_path = root / "series-registry.json"
+        self.registry_backups = root / "backups"
+        for ziel, wert in (
+            ("thumbnail_service.SERIES_REGISTRY_FILE", self.registry_path),
+            ("thumbnail_service.SERIES_REGISTRY_BACKUP_DIRECTORY", self.registry_backups),
+        ):
+            patcher = patch(ziel, wert)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.image = write_file(
             self.source,
             "Chart äöü.PNG",
@@ -314,21 +338,52 @@ class HttpEndpointTests(unittest.TestCase):
         connection.close()
         return result
 
+    def bilder(self) -> set[str]:
+        """Nur die Bilder im Exportordner.
+
+        Seit DZ liegt neben jedem Bild ein Beipackzettel gleichen Namens mit der
+        Endung .json. Die Pruefungen zur Namensvergabe meinen die BILDER --
+        deshalb hier gefiltert statt jede einzelne Erwartung zu verdoppeln. Dass
+        der Zettel wirklich entsteht, pruefen die BeipackzettelTests.
+        """
+
+        return {
+            entry.name
+            for entry in self.export.iterdir()
+            if entry.suffix.lower() != ".json"
+        }
+
     def export_request(
         self,
         filename: str,
         content_type: str,
         payload: bytes,
+        *,
+        preset: str | None = None,
+        episode: str | None = None,
+        beipackzettel: object = None,
+        beipackzettel_roh: str | None = None,
     ) -> tuple[int, dict[str, str], dict[str, object]]:
+        request_headers = {
+            "Content-Type": content_type,
+            "Content-Length": str(len(payload)),
+            "X-Export-Filename": filename,
+        }
+        if preset is not None:
+            request_headers["X-Export-Preset"] = preset
+        if episode is not None:
+            request_headers["X-Export-Episode"] = quote(episode)
+        if beipackzettel_roh is not None:
+            request_headers["X-Export-Beipackzettel"] = beipackzettel_roh
+        elif beipackzettel is not None:
+            request_headers["X-Export-Beipackzettel"] = quote(
+                json.dumps(beipackzettel, ensure_ascii=False)
+            )
         status, headers, data = self.request(
             method="POST",
             path="/api/export",
             body=payload,
-            headers={
-                "Content-Type": content_type,
-                "Content-Length": str(len(payload)),
-                "X-Export-Filename": filename,
-            },
+            headers=request_headers,
         )
         return status, headers, json.loads(data)
 
@@ -493,9 +548,7 @@ class HttpEndpointTests(unittest.TestCase):
             self.assertEqual(status, 200, result)
             responses.append(result["filename"])
         self.assertEqual(responses, expected)
-        self.assertEqual(
-            sorted(path.name for path in self.export.iterdir()), sorted(expected)
-        )
+        self.assertEqual(sorted(self.bilder()), sorted(expected))
 
     def test_five_sequential_jpg_exports_create_five_files(self) -> None:
         expected = [
@@ -514,9 +567,7 @@ class HttpEndpointTests(unittest.TestCase):
             self.assertEqual(status, 200, result)
             responses.append(result["filename"])
         self.assertEqual(responses, expected)
-        self.assertEqual(
-            sorted(path.name for path in self.export.iterdir()), sorted(expected)
-        )
+        self.assertEqual(sorted(self.bilder()), sorted(expected))
 
     def test_existing_base_and_suffix_two_choose_suffix_three(self) -> None:
         (self.export / "thumbnail.png").write_bytes(b"base")
@@ -562,11 +613,11 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(existing.read_bytes(), b"case-sensitive-test")
 
     def test_success_response_always_names_an_existing_new_file(self) -> None:
-        before = {path.name for path in self.export.iterdir()}
+        before = self.bilder()
         status, _, result = self.export_request(
             "thumbnail.png", "image/png", png_bytes(b"new")
         )
-        after = {path.name for path in self.export.iterdir()}
+        after = self.bilder()
         self.assertEqual(status, 200, result)
         self.assertEqual(after - before, {result["filename"]})
         self.assertGreater((self.export / str(result["filename"])).stat().st_size, 0)
@@ -598,7 +649,21 @@ class HttpEndpointTests(unittest.TestCase):
             | {f"thumbnail ({index}).png" for index in range(2, 9)},
         )
         self.assertEqual(
-            {path.read_bytes() for path in self.export.iterdir()}, set(payloads)
+            {
+                path.read_bytes()
+                for path in self.export.iterdir()
+                if path.suffix.lower() != ".json"
+            },
+            set(payloads),
+        )
+        # Und zu jedem der acht Bilder liegt genau ein Beipackzettel.
+        self.assertEqual(
+            {beipackzettel_name(name) for name in names},
+            {
+                path.name
+                for path in self.export.iterdir()
+                if path.suffix.lower() == ".json"
+            },
         )
 
     def test_png_and_jpg_collision_namespaces_are_separate(self) -> None:
@@ -803,17 +868,26 @@ class ClientContractTests(unittest.TestCase):
         # ein Objekt {filename, warning} statt eines nackten Strings -- der
         # angezeigte Name muss weiterhin der vom Dienst BESTAETIGTE sein, nie der
         # lokal gebaute.
-        self.assertIn("return { filename: result.filename, warning:", self.html)
+        self.assertIn("      filename: result.filename,", self.html)
         self.assertIn(
-            "'Gespeichert im Export-Ordner: '+serviceResult.filename", self.html
+            "'Gespeichert im Export-Ordner: '+gespeichert.filename", self.html
         )
         self.assertNotIn(
             "writeExportToLocalService(blob, filename) ||", self.html
         )
+        # DZ: Der angezeigte Name kommt weiterhin aus der ANTWORT des Dienstes,
+        # nicht aus dem lokal gebauten Namen -- und der Beipackzettel auch.
+        self.assertNotIn("'Gespeichert im Export-Ordner: '+filename", self.html)
 
     def test_client_surfaces_a_registry_warning_next_to_the_filename(self) -> None:
-        self.assertIn("serviceResult.warning", self.html)
-        self.assertIn("— ACHTUNG: '+serviceResult.warning", self.html)
+        # DZ: Seit dem Beipackzettel koennen ZWEI Hinweise anfallen (Registry und
+        # Zettel). Beide stehen hinter demselben ACHTUNG, keiner faellt weg.
+        self.assertIn("gespeichert.warning", self.html)
+        self.assertIn(
+            "const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung].filter(Boolean);",
+            self.html,
+        )
+        self.assertIn("' — ACHTUNG: '+hinweise.join(' ')", self.html)
 
     def test_every_source_error_code_has_its_own_label(self) -> None:
         """CN2: Verschiedene Ursachen duerfen nicht gleich aussehen.
@@ -878,6 +952,505 @@ class ClientContractTests(unittest.TestCase):
         self.assertIn("exportDirectory.busy = true;", self.html)
         self.assertIn("exportDirectory.busy = false;", self.html)
         self.assertIn("exportBtn.disabled = !state.img;", self.html)
+
+
+class BeipackzettelTests(HttpEndpointTests):
+    """DZ: Neben jedem exportierten Bild liegt eine Datei gleichen Namens mit der
+    Endung .json -- der Beipackzettel. Er schreibt auf, welches Bild zu welchem
+    Video gehoert. Ohne ihn bliebe dem Uploader nur "die neueste Datei", und das
+    ist eine Vermutung."""
+
+    quelle = {
+        "herkunft": "dienst",
+        "dateiname": "BTCUSD_2026-09-02_12-45-54_b24cd.png",
+        "zeitstempel": "2026-09-02T10:45:54.000Z",
+    }
+
+    def zettel(self, name: str) -> dict:
+        return json.loads((self.export / name).read_text(encoding="utf-8"))
+
+    def test_export_lays_a_beipackzettel_next_to_the_image(self) -> None:
+        payload = png_bytes(b"mit-zettel")
+        status, _, result = self.export_request(
+            "adw-standard-ep-144.png",
+            "image/png",
+            payload,
+            preset="standard",
+            episode="EP. 144",
+            beipackzettel={
+                "videotitel": "Der Markt kippt \u2014 was jetzt z\u00e4hlt",
+                "datum": "2026-09-03",
+                "chart_quelle": self.quelle,
+            },
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["beipackzettel"], "adw-standard-ep-144.json")
+        self.assertNotIn("beipackzettel_warnung", result)
+        zettel = self.zettel("adw-standard-ep-144.json")
+        self.assertEqual(zettel["schema_version"], BEIPACKZETTEL_SCHEMA_VERSION)
+        self.assertEqual(zettel["bild"]["dateiname"], "adw-standard-ep-144.png")
+        self.assertEqual(zettel["bild"]["bytes"], len(payload))
+        self.assertEqual(zettel["videotitel"], "Der Markt kippt \u2014 was jetzt z\u00e4hlt")
+        self.assertEqual(zettel["episode"], "EP. 144")
+        self.assertEqual(zettel["datum"], "2026-09-03")
+        self.assertEqual(zettel["format"], "standard")
+        self.assertEqual(zettel["chart_quelle"], self.quelle)
+        # Der Exportzeitpunkt ist eine lesbare ISO-8601-Zeit mit Zonenversatz.
+        self.assertIsNotNone(
+            datetime.datetime.fromisoformat(zettel["exportiert_am"]).tzinfo
+        )
+
+    def test_the_sha256_in_the_note_matches_the_image_on_disk(self) -> None:
+        """Der Kern des Zettels: die Pruefsumme muss gegen die Platte stimmen,
+        nicht gegen das, was der Dienst empfangen zu haben glaubt."""
+        payload = png_bytes(b"pruefsumme")
+        status, _, result = self.export_request(
+            "adw-pruefsumme.png", "image/png", payload, preset="standard"
+        )
+        self.assertEqual(status, 200, result)
+        auf_platte = (self.export / result["filename"]).read_bytes()
+        self.assertEqual(
+            self.zettel(result["beipackzettel"])["bild"]["sha256"],
+            hashlib.sha256(auf_platte).hexdigest(),
+        )
+
+    def test_the_note_follows_the_suffixed_image_name(self) -> None:
+        """Bei Namenskollision heisst das Bild 'x (2).png' -- der Zettel muss
+        'x (2).json' heissen, sonst zeigt er auf das falsche Bild."""
+        for index in range(2):
+            status, _, result = self.export_request(
+                "adw-doppelt.png",
+                "image/png",
+                png_bytes(f"lauf-{index}".encode()),
+                preset="standard",
+            )
+            self.assertEqual(status, 200, result)
+        self.assertEqual(result["filename"], "adw-doppelt (2).png")
+        self.assertEqual(result["beipackzettel"], "adw-doppelt (2).json")
+        zettel = self.zettel("adw-doppelt (2).json")
+        self.assertEqual(zettel["bild"]["dateiname"], "adw-doppelt (2).png")
+        self.assertEqual(
+            zettel["bild"]["sha256"],
+            hashlib.sha256((self.export / "adw-doppelt (2).png").read_bytes()).hexdigest(),
+        )
+        # Und der erste Zettel zeigt weiterhin auf das erste Bild.
+        self.assertEqual(
+            self.zettel("adw-doppelt.json")["bild"]["sha256"],
+            hashlib.sha256((self.export / "adw-doppelt.png").read_bytes()).hexdigest(),
+        )
+
+    def test_a_jpg_export_gets_a_json_note_too(self) -> None:
+        status, _, result = self.export_request(
+            "adw-jpg.jpg", "image/jpeg", b"\xff\xd8jpeg", preset="livestream"
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["beipackzettel"], "adw-jpg.json")
+        self.assertEqual(self.zettel("adw-jpg.json")["format"], "livestream")
+
+    def test_missing_fields_become_null_instead_of_empty_strings(self) -> None:
+        """Ein leerer Videotitel ist erlaubt -- der YouTube-Titel steht beim Bau
+        des Thumbnails nicht immer schon fest. Er wird dann als Luecke notiert,
+        nicht als leerer Text."""
+        status, _, result = self.export_request(
+            "adw-leer.png",
+            "image/png",
+            png_bytes(b"leer"),
+            preset="memberlive",
+            episode="",
+            beipackzettel={"videotitel": "   ", "datum": "", "chart_quelle": None},
+        )
+        self.assertEqual(status, 200, result)
+        zettel = self.zettel("adw-leer.json")
+        self.assertIsNone(zettel["videotitel"])
+        self.assertIsNone(zettel["episode"])
+        self.assertIsNone(zettel["datum"])
+        self.assertIsNone(zettel["chart_quelle"])
+
+    def test_the_registry_write_lands_in_the_test_directory(self) -> None:
+        """Beweist zugleich, dass die Umbiegung in setUp greift: der Zaehler
+        landet im temporaeren Ordner und nicht im echten Repo."""
+        status, _, result = self.export_request(
+            "adw-registry.png",
+            "image/png",
+            png_bytes(b"registry"),
+            preset="standard",
+            episode="EP. 4711",
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(self.registry_path.is_file())
+        eintrag = json.loads(self.registry_path.read_text(encoding="utf-8"))
+        self.assertEqual(eintrag["lastAssigned"]["standard"]["number"], 4711)
+
+    def test_an_export_without_the_metadata_header_still_gets_a_note(self) -> None:
+        status, _, result = self.export_request(
+            "adw-ohne-header.png", "image/png", png_bytes(b"ohne"), preset="standard"
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["beipackzettel"], "adw-ohne-header.json")
+        self.assertIsNone(self.zettel("adw-ohne-header.json")["videotitel"])
+
+    # ---- Punkt 1: die Grenze des Videotitels -------------------------------
+
+    def test_a_video_title_with_101_codepoints_is_refused(self) -> None:
+        status, _, data = self.export_request(
+            "adw-zu-lang.png",
+            "image/png",
+            png_bytes(b"zu-lang"),
+            beipackzettel={"videotitel": "a" * 101},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["code"], "invalid_video_title")
+        self.assertIn("101", data["message"])
+        # NICHTS wurde geschrieben -- weder Bild noch Zettel.
+        self.assertEqual(list(self.export.iterdir()), [])
+
+    def test_exactly_100_codepoints_are_accepted(self) -> None:
+        status, _, result = self.export_request(
+            "adw-genau-100.png",
+            "image/png",
+            png_bytes(b"genau"),
+            beipackzettel={"videotitel": "a" * 100},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(len(self.zettel("adw-genau-100.json")["videotitel"]), 100)
+
+    def test_a_video_title_with_an_angle_bracket_is_refused(self) -> None:
+        for zeichen in ("<", ">"):
+            with self.subTest(zeichen=zeichen):
+                status, _, data = self.export_request(
+                    "adw-spitz.png",
+                    "image/png",
+                    png_bytes(b"spitz"),
+                    beipackzettel={"videotitel": f"Der Markt {zeichen} kippt"},
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(data["code"], "invalid_video_title")
+                self.assertEqual(list(self.export.iterdir()), [])
+
+    def test_the_limit_is_counted_in_codepoints_not_utf16_units(self) -> None:
+        """DR, noch einmal: der Uploader zaehlte einst UTF-16-Einheiten und die
+        Freigabeseite Codepunkte. Ein Titel aus 100 Emoji hat 200 UTF-16-
+        Einheiten und muss trotzdem durchgehen -- sonst gibt es wieder zwei
+        Zaehlweisen fuer dieselbe Grenze."""
+        hundert_emoji = "\U0001f642" * 100
+        self.assertEqual(len(hundert_emoji.encode("utf-16-le")) // 2, 200)
+        status, _, result = self.export_request(
+            "adw-emoji.png",
+            "image/png",
+            png_bytes(b"emoji"),
+            beipackzettel={"videotitel": hundert_emoji},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(self.zettel("adw-emoji.json")["videotitel"], hundert_emoji)
+
+        status, _, data = self.export_request(
+            "adw-emoji-zuviel.png",
+            "image/png",
+            png_bytes(b"emoji2"),
+            beipackzettel={"videotitel": "\U0001f642" * 101},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["code"], "invalid_video_title")
+
+    def test_a_broken_metadata_header_is_refused_instead_of_ignored(self) -> None:
+        status, _, data = self.export_request(
+            "adw-kaputt.png",
+            "image/png",
+            png_bytes(b"kaputt"),
+            beipackzettel_roh="%7Bkein-json",
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["code"], "invalid_export_metadata")
+        self.assertEqual(list(self.export.iterdir()), [])
+
+    def test_a_metadata_header_that_is_not_an_object_is_refused(self) -> None:
+        status, _, data = self.export_request(
+            "adw-liste.png", "image/png", png_bytes(b"liste"), beipackzettel=["a"]
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["code"], "invalid_export_metadata")
+
+    def test_an_unknown_field_in_the_source_does_not_reach_the_file(self) -> None:
+        """Was im Header steht, wird nicht ungeprueft in eine Datei kopiert, die
+        spaeter jemand liest."""
+        status, _, result = self.export_request(
+            "adw-fremd.png",
+            "image/png",
+            png_bytes(b"fremd"),
+            preset="standard",
+            beipackzettel={
+                "videotitel": "ok",
+                "chart_quelle": {"dateiname": "c.png", "boeses": {"tief": 1}},
+                "unbekannt": "irgendwas",
+            },
+        )
+        self.assertEqual(status, 200, result)
+        zettel = self.zettel("adw-fremd.json")
+        self.assertEqual(zettel["chart_quelle"], {"dateiname": "c.png"})
+        self.assertNotIn("unbekannt", zettel)
+
+
+class BeipackzettelUnitTests(unittest.TestCase):
+    """Die reinen Funktionen -- ohne HTTP."""
+
+    def test_counting_is_codepoints(self) -> None:
+        self.assertEqual(zaehle_titel_zeichen("abc"), 3)
+        self.assertEqual(zaehle_titel_zeichen("\U0001f642\U0001f642"), 2)
+        self.assertEqual(VIDEOTITEL_MAX_ZEICHEN, 100)
+
+    def test_pruefe_videotitel_accepts_empty_and_none(self) -> None:
+        self.assertIsNone(pruefe_videotitel(""))
+        self.assertIsNone(pruefe_videotitel(None))
+
+    def test_pruefe_videotitel_names_the_reason(self) -> None:
+        self.assertIn("101", pruefe_videotitel("a" * 101) or "")
+        self.assertIn("<", pruefe_videotitel("a<b") or "")
+        self.assertIn(">", pruefe_videotitel("a>b") or "")
+
+    def test_beipackzettel_name_keeps_the_stem(self) -> None:
+        self.assertEqual(beipackzettel_name("adw-x.png"), "adw-x.json")
+        self.assertEqual(beipackzettel_name("adw-x (2).jpg"), "adw-x (2).json")
+
+    def test_build_beipackzettel_has_every_field_the_uploader_needs(self) -> None:
+        zettel = build_beipackzettel(
+            dateiname="adw-x.jpg",
+            sha256="ab" * 32,
+            bytes_geschrieben=7,
+            format_="innercircle",
+            episode="INNER CIRCLE #12",
+            metadaten={
+                "videotitel": "Titel",
+                "datum": "2026-09-03",
+                "chart_quelle": {"herkunft": "manuell", "dateiname": "c.png", "zeitstempel": "z"},
+            },
+            exportiert_am="2026-09-03T12:00:00+02:00",
+        )
+        self.assertEqual(
+            sorted(zettel),
+            [
+                "bild", "chart_quelle", "datum", "episode", "exportiert_am",
+                "format", "schema_version", "videotitel",
+            ],
+        )
+
+    def test_write_beipackzettel_leaves_no_temporary_file_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as ordner:
+            verzeichnis = Path(ordner)
+            name = write_beipackzettel(verzeichnis, "adw-x.png", {"schema_version": 1})
+            self.assertEqual(name, "adw-x.json")
+            self.assertEqual([q.name for q in verzeichnis.iterdir()], ["adw-x.json"])
+
+    def test_write_beipackzettel_replaces_a_stale_note(self) -> None:
+        """Loescht jemand ein Bild und laesst den Zettel liegen, gehoert der
+        Name beim naechsten Export wieder dem neuen Bild."""
+        with tempfile.TemporaryDirectory() as ordner:
+            verzeichnis = Path(ordner)
+            (verzeichnis / "adw-x.json").write_text("alt", encoding="utf-8")
+            write_beipackzettel(verzeichnis, "adw-x.png", {"schema_version": 1})
+            self.assertEqual(
+                json.loads((verzeichnis / "adw-x.json").read_text(encoding="utf-8")),
+                {"schema_version": 1},
+            )
+
+
+class VideotitelZaehlstelleTests(unittest.TestCase):
+    """DZ: EINE Zaehlweise fuer die Grenze von 100 -- an allen vier Stellen.
+
+    Bis DR zaehlte src/upload/uploader.js mit titel.length (UTF-16-Einheiten)
+    und src/upload/freigabe-seite.js mit Array.from() (Codepunkte). Diese
+    Pruefung soll verhindern, dass beim naechsten Feld wieder zwei Zaehlweisen
+    fuer dieselbe Grenze entstehen.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        wurzel = Path(__file__).resolve().parents[1]
+        cls.html = (wurzel / "thumbnail-compositor.html").read_text(encoding="utf-8")
+        cls.uploader = (wurzel / "src" / "upload" / "uploader.js").read_text(encoding="utf-8")
+        cls.seite = (wurzel / "src" / "upload" / "freigabe-seite.js").read_text(encoding="utf-8")
+
+    def test_all_three_javascript_sites_count_with_array_from(self) -> None:
+        self.assertIn("return Array.from(String(titel)).length;", self.uploader)
+        self.assertIn("const n = Array.from(titel.value).length;", self.seite)
+        self.assertIn(
+            "function zaehleTitelZeichen(titel){ return Array.from(String(titel)).length; }",
+            self.html,
+        )
+
+    def test_the_compositor_does_not_count_utf16_units(self) -> None:
+        self.assertNotIn("state.videoTitle.length", self.html)
+        self.assertNotIn("videoTitleEl.value.length", self.html)
+
+    def test_all_four_sites_use_the_same_limit(self) -> None:
+        self.assertIn("const TITEL_MAX_ZEICHEN = 100;", self.uploader)
+        self.assertIn("von hoechstens 100 Zeichen", self.seite)
+        self.assertIn("const VIDEOTITEL_MAX_ZEICHEN = 100;", self.html)
+        self.assertEqual(VIDEOTITEL_MAX_ZEICHEN, 100)
+
+    def test_the_field_carries_no_maxlength_so_the_service_stays_testable(self) -> None:
+        """Dieselbe Begruendung wie in freigabe-seite.js: ein Browser, der 101
+        Zeichen gar nicht erst zulaesst, macht die Pruefung im Dienst
+        untestbar."""
+        self.assertIn(
+            '<input type="text" id="videoTitle" spellcheck="false" value="">', self.html
+        )
+
+
+class BeipackzettelClientTests(unittest.TestCase):
+    """Was die Oberflaeche beitraegt -- und was sie bewusst NICHT tut."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def test_the_video_title_never_reaches_the_canvas(self) -> None:
+        """Der Videotitel gehoert nicht ins Bild. Gezeichnet wird allein
+        state.title -- state.videoTitle darf in keiner Zeichenfunktion
+        vorkommen."""
+        gezeichnet = self.html[
+            self.html.index("function drawHeadline()") : self.html.index("// ---------- wiring")
+        ]
+        self.assertNotIn("videoTitle", gezeichnet)
+        self.assertIn("const tokens = parseTitle(state.title);", gezeichnet)
+
+    def test_the_client_sends_what_the_service_cannot_know(self) -> None:
+        self.assertIn(
+            "'X-Export-Beipackzettel': encodeURIComponent(JSON.stringify(beipackzettelDaten())),",
+            self.html,
+        )
+        self.assertIn("videotitel: state.videoTitle,", self.html)
+        self.assertIn("chart_quelle: state.chartQuelle,", self.html)
+
+    def test_format_and_episode_are_not_sent_twice(self) -> None:
+        """Sie stehen schon in X-Export-Preset / X-Export-Episode. Ein zweiter
+        Weg dafuer waere eine zweite Wahrheit."""
+        daten = self.html[
+            self.html.index("function beipackzettelDaten()") : self.html.index(
+                "async function beipackzettelInhalt("
+            )
+        ]
+        self.assertNotIn("format:", daten)
+        self.assertNotIn("episode:", daten)
+
+    def test_the_source_of_the_background_image_is_recorded_in_one_place(self) -> None:
+        self.assertEqual(1, self.html.count("state.chartQuelle = {"))
+        self.assertIn("herkunft: settings.sourceImport ? 'dienst' : 'manuell',", self.html)
+
+    def test_the_connected_folder_writes_the_image_before_the_note(self) -> None:
+        ordner = self.html[
+            self.html.index("async function writeExportToDirectory(") : self.html.index(
+                "exportBtn.addEventListener('click'"
+            )
+        ]
+        self.assertLess(
+            ordner.index("await writable.write(blob);"),
+            ordner.index("beipackzettelName(filename)"),
+        )
+
+    def test_the_browser_download_writes_no_note_and_says_so(self) -> None:
+        """Ueber file:// ohne Dienst vergibt der BROWSER den endgueltigen Namen
+        -- ein Zettel koennte ihn nur behaupten."""
+        self.assertIn("Ohne Zielordner entsteht KEIN Beipackzettel", self.html)
+        klick = self.html[self.html.index("exportBtn.addEventListener('click'") :]
+        download = klick[klick.index("downloadExportBlob(blob, filename);") :]
+        self.assertNotIn("beipackzettelInhalt", download)
+
+    def test_a_refused_title_never_falls_back_to_a_download(self) -> None:
+        self.assertIn("error.exportCode === 'invalid_video_title'", self.html)
+        self.assertIn("} else if (exportServiceRejected) {", self.html)
+        self.assertIn("Es wurde nichts geschrieben.", self.html)
+
+    def test_a_service_without_the_note_is_named_not_ignored(self) -> None:
+        self.assertIn("Der Dienst hat keinen Beipackzettel bestaetigt", self.html)
+
+    def test_the_date_field_map_matches_the_watermark_tail(self) -> None:
+        """PRESET_DATE_FIELD spiegelt tail() -- das Datum im Zettel muss das
+        Datum sein, das auf dem Bild steht."""
+        for preset, feld in (
+            ("standard", "dateIC"), ("innercircle", "dateIC"), ("livestream", "dateLS"),
+            ("aiv", "dateAIV"), ("memberlive", "dateML"),
+        ):
+            with self.subTest(preset=preset):
+                self.assertIn(f"{preset}: '{feld}'", self.html)
+                self.assertIn(f"fmtDate(m.{feld})", self.html)
+        self.assertIn("nonchart: null", self.html)
+        nonchart = self.html[self.html.index("  nonchart: {") : self.html.index("  // BJ4: AIV")]
+        self.assertNotIn("fmtDate", nonchart)
+
+
+class VorgabenBeimOeffnenTests(unittest.TestCase):
+    """DZ Punkt 4: zwei Vorgaben beim Oeffnen -- und beide Knoepfe bleiben."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def test_the_page_opens_with_bottom_left_and_jpg(self) -> None:
+        self.assertIn("const UI_DEFAULT_POS = 'bottom-left';", self.html)
+        self.assertIn("  pos: UI_DEFAULT_POS,", self.html)
+        self.assertIn("  exportFormat: 'jpg',", self.html)
+        self.assertIn('<button data-pos="bottom-left"  aria-pressed="true">', self.html)
+        self.assertIn('<button data-export-format="jpg" aria-pressed="true">', self.html)
+
+    def test_both_buttons_stay(self) -> None:
+        self.assertIn(
+            '<button data-pos="bottom" aria-pressed="false">Unten</button>', self.html
+        )
+        self.assertIn(
+            '<button data-export-format="png" aria-pressed="false">PNG</button>', self.html
+        )
+
+    def test_the_headless_engine_keeps_its_own_starting_position(self) -> None:
+        """Die Render-Harness faehrt dieselbe Datei ueber window.adwRender().
+        Fuer sie darf sich nicht aendern, wie ein Bedienfeld beim Oeffnen
+        vorbelegt ist -- gemessen: mit 'bottom-left' als Startwert kam der erste
+        Auftrag aus configs.sample.json anders heraus."""
+        self.assertIn("const ENGINE_DEFAULT_POS = 'bottom';", self.html)
+        self.assertIn(
+            "if (!engineStartRestored){ engineStartRestored = true; state.pos = ENGINE_DEFAULT_POS; }",
+            self.html,
+        )
+
+    def test_the_export_button_label_follows_the_chosen_format(self) -> None:
+        """syncExportFormatUI() lief bisher NUR beim Klick -- der Knopf haette
+        sonst weiter 'PNG exportieren' gesagt und JPG geschrieben."""
+        init = self.html[self.html.index("(async function init(){") :]
+        self.assertIn("syncExportFormatUI();", init)
+
+
+class BedienreihenfolgeTests(unittest.TestCase):
+    """DZ Punkt 3: die Bloecke stehen in Joshuas Ablauf -- erst das
+    Hintergrundbild, dann die Titelposition, dann Emblem und Titeltext."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def test_the_blocks_follow_the_working_order(self) -> None:
+        erwartet = [
+            'id="imgLabel">Chart-Bild',
+            'for="imageZoom">Bild-Zoom',
+            'class="lbl">Titel-Position',
+            'id="autoBtn"',
+            'id="emblemControls"',
+            'class="lbl">Titel<',
+            'class="lbl">Titelgr\u00f6\u00dfe',
+            'class="lbl">Farbe',
+            'class="lbl">Format',
+            'class="lbl">Watermark',
+            'for="videoTitle">Videotitel',
+            'class="lbl">Exportformat',
+            'class="lbl">Export-Ordner',
+            'id="export" disabled',
+        ]
+        stellen = [self.html.index(teil) for teil in erwartet]
+        self.assertEqual(stellen, sorted(stellen), "Reihenfolge der Bedienfelder")
 
 
 @unittest.skipUnless(os.name == "nt", "Windows-Named-IPC wird nur unter Windows geprüft.")

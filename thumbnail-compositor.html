@@ -79,6 +79,9 @@
   }
   .hint{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--bone-dim);opacity:.7;margin-top:8px;line-height:1.5}
   .hint code{color:var(--brass);background:rgba(169,130,70,.1);padding:1px 5px;border-radius:3px}
+  /* DZ: Zeichenzaehler unter dem Videotitel -- zaehlt und faerbt, haelt nichts auf. */
+  .zaehler{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--bone-dim);opacity:.7;margin-top:8px}
+  .zaehler.zuviel{color:#ff9a86;opacity:1}
 
   textarea, input[type=text], input[type=date]{
     width:100%;background:var(--ink-deep);border:1px solid var(--graphite);
@@ -207,6 +210,23 @@
       <button class="imageReset" id="imageTransformReset" disabled>↺ Bild zurücksetzen</button>
     </div>
 
+    <div class="field">
+      <label class="lbl">Titel-Position</label>
+      <div class="seg grid2" id="posSeg">
+        <button data-pos="top"    aria-pressed="false">Oben</button>
+        <button data-pos="bottom" aria-pressed="false">Unten</button>
+        <button data-pos="left"   aria-pressed="false">Links</button>
+        <button data-pos="right"  aria-pressed="false">Rechts</button>
+        <button data-pos="bottom-left"  aria-pressed="true">Links unten</button>
+        <button data-pos="bottom-right" aria-pressed="false">Rechts unten</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <button class="autobtn" id="autoBtn" aria-pressed="true">⟳ Auto-Platzierung</button>
+      <div class="hint">Schlägt Position &amp; Größe aus dem Bild vor. Sobald du Position oder Größe änderst, schaltet Auto ab.</div>
+    </div>
+
     <div class="field" id="emblemControls" hidden>
       <label class="lbl" for="emblemVariant">Emblem-Variante</label>
       <select id="emblemVariant" class="mono" style="width:100%;margin-bottom:6px;"></select>
@@ -243,15 +263,6 @@
     </div>
 
     <div class="field">
-      <label class="lbl">Farbe — Akzent &amp; Ecken</label>
-      <div class="seg" id="colorSeg">
-        <button class="col sage"    data-color="sage"    aria-pressed="false"><span class="swatch"><span class="dot" style="background:#6a8a6a"></span>Grün</span></button>
-        <button class="col oxblood" data-color="oxblood" aria-pressed="false"><span class="swatch"><span class="dot" style="background:#8a2a2a"></span>Rot</span></button>
-        <button class="col brass"   data-color="brass"   aria-pressed="true"><span class="swatch"><span class="dot" style="background:#a98246"></span>Gold</span></button>
-      </div>
-    </div>
-
-    <div class="field">
       <label class="lbl">Titel</label>
       <textarea id="title" spellcheck="false">Der Markt *kippt.*</textarea>
       <div class="hint">Akzentwort mit <code>*Sternchen*</code> markieren → kursiv + Farbe. Zeilenumbruch mit Enter.</div>
@@ -266,20 +277,12 @@
     </div>
 
     <div class="field">
-      <label class="lbl">Titel-Position</label>
-      <div class="seg grid2" id="posSeg">
-        <button data-pos="top"    aria-pressed="false">Oben</button>
-        <button data-pos="bottom" aria-pressed="true">Unten</button>
-        <button data-pos="left"   aria-pressed="false">Links</button>
-        <button data-pos="right"  aria-pressed="false">Rechts</button>
-        <button data-pos="bottom-left"  aria-pressed="false">Links unten</button>
-        <button data-pos="bottom-right" aria-pressed="false">Rechts unten</button>
+      <label class="lbl">Farbe — Akzent &amp; Ecken</label>
+      <div class="seg" id="colorSeg">
+        <button class="col sage"    data-color="sage"    aria-pressed="false"><span class="swatch"><span class="dot" style="background:#6a8a6a"></span>Grün</span></button>
+        <button class="col oxblood" data-color="oxblood" aria-pressed="false"><span class="swatch"><span class="dot" style="background:#8a2a2a"></span>Rot</span></button>
+        <button class="col brass"   data-color="brass"   aria-pressed="true"><span class="swatch"><span class="dot" style="background:#a98246"></span>Gold</span></button>
       </div>
-    </div>
-
-    <div class="field">
-      <button class="autobtn" id="autoBtn" aria-pressed="true">⟳ Auto-Platzierung</button>
-      <div class="hint">Schlägt Position &amp; Größe aus dem Bild vor. Sobald du Position oder Größe änderst, schaltet Auto ab.</div>
     </div>
 
     <div class="field">
@@ -300,10 +303,17 @@
     </div>
 
     <div class="field">
+      <label class="lbl" for="videoTitle">Videotitel — der YouTube-Titel</label>
+      <input type="text" id="videoTitle" spellcheck="false" value="">
+      <div class="zaehler" id="videoTitleCount"></div>
+      <div class="hint">Hat mit dem Titel im Bild nichts zu tun und steht NICHT im Bild. Er wird nur in den Beipackzettel neben das Bild geschrieben, damit spaeter feststeht, welches Bild zu welchem Video gehoert.</div>
+    </div>
+
+    <div class="field">
       <label class="lbl">Exportformat</label>
       <div class="seg grid2" id="exportFormatSeg">
-        <button data-export-format="png" aria-pressed="true">PNG</button>
-        <button data-export-format="jpg" aria-pressed="false">JPG</button>
+        <button data-export-format="png" aria-pressed="false">PNG</button>
+        <button data-export-format="jpg" aria-pressed="true">JPG</button>
       </div>
     </div>
 
@@ -336,6 +346,29 @@ const C = {
 const W = 1280, H = 720;        // logical design space
 const SCALE = 2;                // render @2x → 2560×1440
 
+// DZ: ZWEI VORGABEN FUER DIE TITELPOSITION -- UND WARUM ES ZWEI SEIN MUESSEN.
+//
+// Beim Oeffnen der Seite steht 'Links unten' vorbelegt; das ist die Stellung,
+// mit der Joshua taeglich anfaengt. Die Render-Harness dagegen faehrt dieselbe
+// Datei headless ueber window.adwRender() -- fuer sie darf sich NICHTS daran
+// aendern, wie ein Bedienfeld beim Oeffnen vorbelegt ist.
+//
+// GEMESSEN, NICHT ANGENOMMEN: mit EINER gemeinsamen Vorgabe aendert sich das
+// gerenderte Bild. applyAuto() liest state.pos, BEVOR autoPlace() laeuft --
+// ueber emblemVisible() (`state.pos !== 'bottom'`) haengt daran die Sperrflaeche
+// des Emblems und damit die gefundene Titelstellung. Der erste Auftrag aus
+// configs.sample.json kam mit 'bottom-left' als Startwert nachweislich anders
+// heraus als mit 'bottom' (sha256 der Data-URL 17f4da9e... statt ebb9d25e...).
+//
+// Deshalb nimmt der ERSTE adwRender()-Aufruf die Seitenvorgabe zurueck und
+// setzt den Engine-Wert. Danach NIE WIEDER -- und das ist Absicht: heute traegt
+// ein Auftrag ohne eigene 'position' die Stellung des vorherigen weiter, und
+// diese Uebertragung ist messbar wirksam (ein Zuruecksetzen bei JEDEM Aufruf
+// aenderte vid003, p02 und p03). Sie zu beseitigen waere eine eigene
+// Entscheidung, keine Nebenwirkung dieser hier.
+const ENGINE_DEFAULT_POS = 'bottom';
+const UI_DEFAULT_POS = 'bottom-left';
+
 // ---------- state ----------
 const state = {
   img: null,
@@ -347,12 +380,14 @@ const state = {
   emblemY: 720,         // Unterkante -- buendig mit dem Bildrand
   color: 'brass',
   title: 'Der Markt *kippt.*',
-  pos: 'bottom',
+  videoTitle: '',       // DZ: der YouTube-Titel. Nicht im Bild -- nur im Beipackzettel.
+  chartQuelle: null,    // DZ: {herkunft, dateiname, zeitstempel} des geladenen Bildes
+  pos: UI_DEFAULT_POS,
   preset: 'standard',
   meta: {},
   titleScale: 1.0,
   auto: true,
-  exportFormat: 'png',
+  exportFormat: 'jpg',   // DZ: Vorgabe beim Oeffnen (frueher 'png'), beide Knoepfe bleiben
   imageZoom: 1,
   imageOffsetX: 0,
   imageOffsetY: 0,
@@ -375,6 +410,37 @@ const sourceState = {
   requestGeneration: 0,
   controller: null,
 };
+
+// DZ: DIE ZAEHLSTELLE FUER DEN VIDEOTITEL.
+//
+// Gezaehlt werden CODEPUNKTE -- Array.from(x).length, genau wie
+// zaehleTitelZeichen() in src/upload/uploader.js und wie der Zaehler unter dem
+// Titelfeld in src/upload/freigabe-seite.js. Der Dienst zaehlt in
+// thumbnail_service.py mit len() auf einem str, was dasselbe misst.
+//
+// WARUM DAS WICHTIG IST: bis DR zaehlte der Uploader mit titel.length
+// (UTF-16-Einheiten) und die Freigabeseite mit Array.from() (Codepunkte). Bei
+// einem Titel mit Emoji standen 57 gegen 102 -- die eine Stelle nahm ihn an,
+// die andere wies ihn ab, und zwar erst nach der Freigabe. Zwei Zaehlweisen
+// fuer dieselbe Grenze sind ein Fehler, den dieses Projekt schon einmal hatte.
+//
+// Warum 100 und warum Codepunkte: an 998 Titeln gemessen, die YouTube fuer
+// diesen Kanal angenommen hat -- in UTF-16-Einheiten lagen 39 darueber, in
+// Codepunkten kein einziger. Die Herleitung steht bei uploader.js.
+const VIDEOTITEL_MAX_ZEICHEN = 100;
+const VIDEOTITEL_VERBOTENE_ZEICHEN = /[<>]/;
+function zaehleTitelZeichen(titel){ return Array.from(String(titel)).length; }
+
+// Gibt den Grund zurueck, warum dieser Videotitel abgewiesen wird -- oder ''.
+// Leer ist erlaubt: der YouTube-Titel steht beim Bau des Thumbnails nicht immer
+// schon fest. Der Beipackzettel traegt dann videotitel: null.
+function videotitelFehler(titel){
+  const n = zaehleTitelZeichen(titel);
+  if (n > VIDEOTITEL_MAX_ZEICHEN) return 'Der Videotitel hat '+n+' Zeichen, erlaubt sind hoechstens '+VIDEOTITEL_MAX_ZEICHEN+'.';
+  const m = VIDEOTITEL_VERBOTENE_ZEICHEN.exec(String(titel));
+  if (m) return 'Der Videotitel enthaelt das verbotene Zeichen "'+m[0]+'".';
+  return '';
+}
 
 function todayISO(){
   const d=new Date(), p=n=>String(n).padStart(2,'0');
@@ -448,6 +514,15 @@ const PRESETS = {
     fields:[ {id:'dateML', label:'Datum', type:'date', def:'today'} ],
     tail: m => [ 'MEMBER LIVESTREAM', fmtDate(m.dateML) ],
   },
+};
+// DZ: Welches Datumsfeld gehoert zu welchem Format? Gespiegelt aus tail() oben --
+// dort steht, welches Datum am Watermark gedruckt wird, und genau dieses Datum
+// gehoert in den Beipackzettel. standard hat kein eigenes Datumsfeld und druckt
+// dateIC mit; nonchart druckt gar kein Datum. Die Zuordnung wird von
+// test_thumbnail_service.py gegen tail() geprueft, damit sie nicht abdriftet.
+const PRESET_DATE_FIELD = {
+  standard: 'dateIC', innercircle: 'dateIC', livestream: 'dateLS',
+  nonchart: null, aiv: 'dateAIV', memberlive: 'dateML',
 };
 // Muster je Serie, spiegelt SERIES_NUMBER_PATTERN in thumbnail_service.py.
 const SERIES_NUMBER_RE = {
@@ -1159,6 +1234,8 @@ const emblemYEl = document.getElementById('emblemY'), emblemYVal = document.getE
 const emblemResetBtn = document.getElementById('emblemReset');
 const sourceStatus = document.getElementById('sourceStatus');
 const sourceRefreshBtn = document.getElementById('sourceRefresh');
+const videoTitleEl = document.getElementById('videoTitle');
+const videoTitleCount = document.getElementById('videoTitleCount');
 const folderStatus = document.getElementById('folderStatus');
 const folderConnectBtn = document.getElementById('folderConnect');
 const EXPORT_DIRECTORY_DB = 'dimensionwithin-thumbnail-compositor';
@@ -1315,6 +1392,16 @@ function loadFile(f, options){
       }
       state.img = img;
       state.hasManualImage = true;
+      // DZ: Woher das Hintergrundbild kam -- fuer den Beipackzettel. Genau hier,
+      // weil loadFile() der einzige Weg ist: Ablegen, Dateiauswahl und
+      // Dienstimport laufen alle durch diese Stelle. Beim Dienstimport traegt
+      // das File-Objekt bereits Quellname und Quell-mtime (siehe
+      // loadLatestSource), es braucht also keinen zweiten Zweig.
+      state.chartQuelle = {
+        herkunft: settings.sourceImport ? 'dienst' : 'manuell',
+        dateiname: f.name,
+        zeitstempel: f.lastModified ? new Date(f.lastModified).toISOString() : '',
+      };
       resetImageTransform();
       if (!settings.sourceImport) clearSourceIdentityForManualImport();
       drop.classList.add('loaded');
@@ -1631,6 +1718,19 @@ function syncPosUI(){ const seg=document.getElementById('posSeg'); [...seg.child
 function syncSizeUI(){ const v=Math.round(state.titleScale*100); sizeEl.value=v; sizeVal.textContent=v+' %'; }
 function syncAutoUI(){ document.getElementById('autoBtn').setAttribute('aria-pressed', String(state.auto)); }
 function syncPresetUI(){ const seg=document.getElementById('presetSeg'); [...seg.children].forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.preset===state.preset))); }
+// DZ: Zaehlt und faerbt -- haelt nichts auf. Das Feld traegt bewusst KEIN
+// maxlength und kein pattern: ein Browser, der 101 Zeichen gar nicht erst
+// zulaesst, macht die Pruefung im Dienst untestbar. Dieselbe Begruendung steht
+// in src/upload/freigabe-seite.js, und der Wortlaut hier ist derselbe.
+function syncVideoTitleUI(){
+  const n = zaehleTitelZeichen(state.videoTitle);
+  const fehler = videotitelFehler(state.videoTitle);
+  videoTitleCount.textContent = n + ' von hoechstens ' + VIDEOTITEL_MAX_ZEICHEN + ' Zeichen'
+    + (fehler ? ' — der Dienst wird das ablehnen.' : '');
+  videoTitleCount.classList.toggle('zuviel', Boolean(fehler));
+}
+videoTitleEl.addEventListener('input', () => { state.videoTitle = videoTitleEl.value; syncVideoTitleUI(); });
+
 function syncExportFormatUI(){ const seg=document.getElementById('exportFormatSeg'); [...seg.children].forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.exportFormat===state.exportFormat))); exportBtn.textContent = state.exportFormat.toUpperCase()+' exportieren (2560×1440)'; }
 // Emblem-Bedienung: nur bei aiv sichtbar, Werte gehen 1:1 in den State.
 // Das Auswahlfeld wird EINMAL aus EMBLEMS aufgebaut. Bei nur einer Variante
@@ -1899,6 +1999,48 @@ function exportFilename(extension){
   return 'adw-' + (slug || 'thumbnail') + '.' + extension;
 }
 
+// DZ: Was die Oberflaeche zum Beipackzettel beitraegt. Dateiname, sha256, Groesse
+// und der Exportzeitpunkt kommen NICHT von hier -- die kennt erst die Stelle,
+// die das Bild wirklich hinlegt. Format und Episode stehen schon in den
+// vorhandenen Kopfzeilen X-Export-Preset / X-Export-Episode; sie hier ein
+// zweites Mal zu schicken waere eine zweite Wahrheit.
+function beipackzettelDaten(){
+  return {
+    videotitel: state.videoTitle,
+    datum: (PRESET_DATE_FIELD[state.preset] && state.meta[PRESET_DATE_FIELD[state.preset]]) || '',
+    chart_quelle: state.chartQuelle,
+  };
+}
+
+// Der volle Zettel -- gebraucht nur dort, wo die Seite selbst schreibt
+// (verbundener Ordner). Beim Dienst baut ihn der Dienst.
+async function beipackzettelInhalt(blob, filename){
+  const cfgForExport = PRESETS[state.preset];
+  const episode = (cfgForExport && cfgForExport.series && cfgForExport.numberField)
+    ? (state.meta[cfgForExport.numberField] || '') : '';
+  const puffer = await blob.arrayBuffer();
+  const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', puffer))]
+    .map(b => b.toString(16).padStart(2,'0')).join('');
+  const d = beipackzettelDaten();
+  return {
+    schema_version: 1,
+    exportiert_am: new Date().toISOString(),
+    bild: { dateiname: filename, sha256: sha, bytes: blob.size },
+    videotitel: d.videotitel.trim() || null,
+    episode: episode.trim() || null,
+    datum: d.datum.trim() || null,
+    format: state.preset,
+    chart_quelle: d.chart_quelle,
+  };
+}
+
+// Gleicher Name, Endung .json. Deckungsgleich mit beipackzettel_name() im
+// Dienst (Path(...).with_suffix('.json')): 'adw-x (2).jpg' -> 'adw-x (2).json'.
+function beipackzettelName(bildDateiname){
+  const punkt = bildDateiname.lastIndexOf('.');
+  return (punkt > 0 ? bildDateiname.slice(0, punkt) : bildDateiname) + '.json';
+}
+
 function downloadExportBlob(blob, filename){
   const a = document.createElement('a');
   const href = URL.createObjectURL(blob);
@@ -1911,9 +2053,11 @@ function downloadExportBlob(blob, filename){
 // CN2: Traegt die Begruendung des Dienstes vom fehlgeschlagenen Versuch bis zur
 // Statuszeile. Wird vor jedem Versuch zurueckgesetzt.
 let exportServiceFailure = null;
+let exportServiceRejected = false;
 
 async function writeExportToLocalService(blob, filename){
   exportServiceFailure = null;
+  exportServiceRejected = false;
   if (!localService.available) return false;
   try {
     // U1: Der Export ist der einzige Moment, in dem der Registry-Zaehler
@@ -1933,6 +2077,8 @@ async function writeExportToLocalService(blob, filename){
         'X-Export-Filename': encodeURIComponent(filename),
         'X-Export-Preset': state.preset,
         'X-Export-Episode': encodeURIComponent(episodeForExport),
+        // DZ: Was der Dienst fuer den Beipackzettel braucht und noch nicht hat.
+        'X-Export-Beipackzettel': encodeURIComponent(JSON.stringify(beipackzettelDaten())),
         'Content-Type': blob.type,
       },
       body: blob,
@@ -1952,7 +2098,19 @@ async function writeExportToLocalService(blob, filename){
         !result.filename.toLowerCase().endsWith(expectedExtension)){
       throw new Error('Der lokale Exportdienst hat keinen gültigen Zieldateinamen bestätigt.');
     }
-    return { filename: result.filename, warning: typeof result.registry_warning === 'string' ? result.registry_warning : null };
+    return {
+      filename: result.filename,
+      warning: typeof result.registry_warning === 'string' ? result.registry_warning : null,
+      // DZ: Der Dienst bestaetigt den Beipackzettel namentlich. Bestaetigt er
+      // gar nichts, laeuft eine aeltere Fassung des Dienstes weiter -- die HTML
+      // wird pro Anfrage frisch von der Platte gelesen, der Dienst nicht. Genau
+      // so ist das schon einmal mit /api/emblem passiert, nur unbemerkt.
+      beipackzettel: typeof result.beipackzettel === 'string' ? result.beipackzettel : null,
+      beipackzettelWarnung: typeof result.beipackzettel_warnung === 'string'
+        ? result.beipackzettel_warnung
+        : (typeof result.beipackzettel === 'string' ? null
+           : 'Der Dienst hat keinen Beipackzettel bestaetigt — er laeuft vermutlich in einer aelteren Fassung. Bitte neu starten.'),
+    };
   } catch (error) {
     console.error('Local export service failed for "'+filename+'".', error);
     // CN2: Bisher verschwand hier die Begruendung des Dienstes und der Aufrufer
@@ -1960,6 +2118,12 @@ async function writeExportToLocalService(blob, filename){
     // war von "kein Dateisystemzugriff" nicht zu unterscheiden. Die Meldung
     // wird jetzt weitergereicht und angezeigt.
     exportServiceFailure = error && error.message ? error.message : null;
+    // DZ: Eine ZURUECKWEISUNG ist kein Ausfall des Dienstes. Faellt der Aufrufer
+    // hier auf den Browserdownload zurueck, landet ein Bild im Downloadordner,
+    // dessen Beipackzettel der Dienst gerade abgelehnt hat -- der Export saehe
+    // geglueckt aus. Solche Codes brechen deshalb ab, statt auszuweichen.
+    exportServiceRejected = error && (error.exportCode === 'invalid_video_title'
+      || error.exportCode === 'invalid_export_metadata');
     return false;
   }
 }
@@ -1984,7 +2148,25 @@ async function writeExportToDirectory(blob, filename){
     const writable = await fileHandle.createWritable();
     await writable.write(blob);
     await writable.close();
-    return true;
+    // DZ: Erst jetzt der Beipackzettel -- BILD ZUERST. Ein Zettel ohne Bild
+    // behauptet eine Zuordnung, die es nicht gibt; ein Bild ohne Zettel laesst
+    // nur eine Luecke. Scheitert der Zettel, bleibt der Export gueltig und die
+    // Statuszeile sagt es (wie beim Dienst).
+    let beipackzettel = null, beipackzettelWarnung = null;
+    try {
+      const name = beipackzettelName(filename);
+      const inhalt = await beipackzettelInhalt(blob, filename);
+      const zettelHandle = await exportDirectory.handle.getFileHandle(name, {create:true});
+      const zettelWritable = await zettelHandle.createWritable();
+      await zettelWritable.write(new Blob([JSON.stringify(inhalt, null, 2)], {type:'application/json'}));
+      await zettelWritable.close();
+      beipackzettel = name;
+    } catch (error) {
+      console.error('Beipackzettel konnte nicht geschrieben werden.', error);
+      beipackzettelWarnung = 'Der Beipackzettel konnte nicht neben das Bild gelegt werden. '
+        + 'Die Zuordnung Bild zu Video ist nicht aufgeschrieben.';
+    }
+    return { filename: filename, beipackzettel: beipackzettel, beipackzettelWarnung: beipackzettelWarnung };
   } catch (error) {
     console.error('Direct export to directory failed for "'+filename+'".', error);
     await refreshExportDirectoryPermission();
@@ -1999,6 +2181,15 @@ exportBtn.addEventListener('click', async () => {
   exportBtn.disabled = true;
   setExportDirectoryState(exportDirectory.state);
   try {
+    // DZ: Der Videotitel wird geprueft, BEVOR irgendetwas exportiert wird. Der
+    // Dienst prueft ihn noch einmal und ist die eigentliche Instanz -- diese
+    // Pruefung hier erspart nur den Weg dorthin und den Ausgang, bei dem ein
+    // Bild ohne Beipackzettel im Downloadordner landet.
+    const titelFehler = videotitelFehler(state.videoTitle);
+    if (titelFehler){
+      meta.textContent = 'Export abgebrochen: '+titelFehler+' Es wurde nichts geschrieben.';
+      return;
+    }
     await ensureFonts();
     render();
     const isJpeg = state.exportFormat === 'jpg';
@@ -2006,18 +2197,35 @@ exportBtn.addEventListener('click', async () => {
     const filename = exportFilename(isJpeg ? 'jpg' : 'png');
     const blob = await canvasToBlob(mimeType, isJpeg ? 0.94 : undefined);
     const serviceResult = await writeExportToLocalService(blob, filename);
-    if (serviceResult) {
-      meta.textContent = serviceResult.warning
-        ? 'Gespeichert im Export-Ordner: '+serviceResult.filename+' — ACHTUNG: '+serviceResult.warning
-        : 'Gespeichert im Export-Ordner: '+serviceResult.filename;
-      if (serviceResult.warning) console.warn('Series registry:', serviceResult.warning);
-    } else if (await writeExportToDirectory(blob, filename)) {
-      meta.textContent = 'Gespeichert im Export-Ordner: '+filename;
+    const directoryResult = serviceResult ? null : await writeExportToDirectory(blob, filename);
+    const gespeichert = serviceResult || directoryResult;
+    if (gespeichert) {
+      const zettel = gespeichert.beipackzettel
+        ? ' + '+gespeichert.beipackzettel
+        : '';
+      const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung].filter(Boolean);
+      meta.textContent = 'Gespeichert im Export-Ordner: '+gespeichert.filename+zettel
+        + (hinweise.length ? ' — ACHTUNG: '+hinweise.join(' ') : '');
+      if (gespeichert.warning) console.warn('Series registry:', gespeichert.warning);
+      if (gespeichert.beipackzettelWarnung) console.warn('Beipackzettel:', gespeichert.beipackzettelWarnung);
+    } else if (exportServiceRejected) {
+      // DZ: Der Dienst hat abgelehnt, nicht versagt. Kein Ausweichdownload.
+      meta.textContent = 'Der Dienst hat den Export abgelehnt: '+exportServiceFailure+' Es wurde nichts geschrieben.';
     } else {
       downloadExportBlob(blob, filename);
-      meta.textContent = exportServiceFailure
+      // DZ: OHNE ZIELORDNER GIBT ES KEINEN BEIPACKZETTEL -- und zwar mit Absicht.
+      // Auf diesem Weg legt der Browser die Datei ab, nicht diese Seite: bei
+      // einem Namenskonflikt haengt er stumm " (1)" an, und die Seite erfaehrt
+      // den endgueltigen Namen nie. Ein Zettel, der einen Dateinamen behauptet,
+      // den er nicht kennt, waere genau die Vermutung, gegen die er da ist --
+      // und ein zweiter Download koennte GENAUSO umbenannt werden. Statt eines
+      // zweiten Downloads sagt die Statuszeile deshalb, was fehlt.
+      // (Der sha256 waere hier berechenbar: Chrome zaehlt file:// als sicheren
+      // Kontext, crypto.subtle ist da. Am Dateinamen scheitert es, nicht daran.)
+      meta.textContent = (exportServiceFailure
         ? 'Speichern im Export-Ordner fehlgeschlagen: '+exportServiceFailure+' – Browserdownload gestartet.'
-        : 'Direktes Speichern nicht verfügbar – Browserdownload gestartet.';
+        : 'Direktes Speichern nicht verfügbar – Browserdownload gestartet.')
+        + ' Ohne Zielordner entsteht KEIN Beipackzettel: den endgültigen Dateinamen vergibt der Browser, nicht diese Seite.';
     }
   } catch (error) {
     console.error('Export failed.', error);
@@ -2143,7 +2351,10 @@ function applyConfig(cfg){
   syncPosUI(); syncSizeUI(); syncAutoUI(); syncImageTransformUI(); syncEmblemUI();
   render();
 }
+let engineStartRestored = false;
 window.adwRender = async function(cfg){
+  // DZ: Einmalig die Seitenvorgabe zuruecknehmen -- siehe ENGINE_DEFAULT_POS.
+  if (!engineStartRestored){ engineStartRestored = true; state.pos = ENGINE_DEFAULT_POS; }
   // BK2: Das Emblem MUSS vor applyConfig() geladen sein -- applyConfig ruft
   // applyAuto(), und die Sperrflaeche existiert nur, wenn das Bild geladen ist.
   await loadEmblem();   // init() laeuft evtl. noch; idempotent
@@ -2220,6 +2431,9 @@ function startHeartbeat(){
   renderMetaFields();
   syncPresetUI();
   syncAutoUI();
+  syncPosUI();
+  syncVideoTitleUI();
+  syncExportFormatUI();
   syncImageTransformUI();
   buildEmblemVariantUI();
   syncEmblemUI();

@@ -70,6 +70,24 @@ MAX_SERIES_REGISTRY_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 MAX_EXPORT_BYTES = 60 * 1024 * 1024
 MAX_CANDIDATE_ATTEMPTS = 8
+# DZ: Der Beipackzettel -- die Datei gleichen Namens mit der Endung .json, die
+# beim Export neben das Bild gelegt wird. Sie schreibt auf, welches Bild zu
+# welchem Video gehoert; ohne sie bliebe dem Uploader nur "die neueste Datei",
+# und das ist eine Vermutung.
+BEIPACKZETTEL_SCHEMA_VERSION = 1
+BEIPACKZETTEL_SUFFIX = ".json"
+# DZ: WIE EIN VIDEOTITEL GEZAEHLT WIRD.
+# Die Grenze und die Zaehlweise stammen aus src/upload/uploader.js
+# (zaehleTitelZeichen) -- gezaehlt werden CODEPUNKTE, gemessen an 998 Titeln,
+# die YouTube fuer diesen Kanal tatsaechlich angenommen hat. Pythons len() auf
+# einem str zaehlt genau das; Array.from(x).length im Browser ebenso. Zwei
+# Zaehlweisen fuer dieselbe Grenze waeren ein Fehler, den dieses Projekt schon
+# einmal hatte (UTF-16-Einheiten hier gegen Codepunkte dort).
+VIDEOTITEL_MAX_ZEICHEN = 100
+VIDEOTITEL_VERBOTENE_ZEICHEN = "<>"
+# Obergrenze fuer den Metadaten-Header. Ein Titel mit 100 Zeichen kommt
+# prozentkodiert auf hoechstens ~900 Bytes; dazu Dateiname und Datum.
+MAX_EXPORT_METADATA_CHARS = 8192
 STABILITY_DELAY_SECONDS = 0.25
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -1369,6 +1387,139 @@ def commit_export_temp(
             raise
 
 
+def zaehle_titel_zeichen(titel: str) -> int:
+    """Codepunkte -- die EINZIGE Zaehlstelle im Dienst.
+
+    Deckungsgleich mit zaehleTitelZeichen() in src/upload/uploader.js und mit
+    Array.from(...).length in src/upload/freigabe-seite.js und im Compositor.
+    """
+
+    return len(titel)
+
+
+def pruefe_videotitel(titel: object) -> str | None:
+    """Gibt den Grund zurueck, warum dieser Videotitel abgewiesen wird -- oder None.
+
+    Ein LEERER Titel ist erlaubt: der Compositor wird taeglich benutzt, und der
+    YouTube-Titel steht beim Bau des Thumbnails nicht immer schon fest. Der
+    Beipackzettel traegt dann videotitel: null -- das ist eine ehrliche Luecke
+    und keine falsche Zuordnung.
+    """
+
+    if titel is None:
+        return None
+    if not isinstance(titel, str):
+        return "Der Videotitel muss Text sein."
+    anzahl = zaehle_titel_zeichen(titel)
+    if anzahl > VIDEOTITEL_MAX_ZEICHEN:
+        return (
+            f"Der Videotitel hat {anzahl} Zeichen, erlaubt sind hoechstens "
+            f"{VIDEOTITEL_MAX_ZEICHEN}."
+        )
+    for zeichen in VIDEOTITEL_VERBOTENE_ZEICHEN:
+        if zeichen in titel:
+            return f"Der Videotitel enthaelt das verbotene Zeichen {zeichen!r}."
+    return None
+
+
+def _leer_zu_none(wert: object) -> str | None:
+    if not isinstance(wert, str):
+        return None
+    gestrafft = wert.strip()
+    return gestrafft or None
+
+
+def _chart_quelle(rohwert: object) -> dict[str, str] | None:
+    """Die Quelldatei des Charts, so wie die Oberflaeche sie anzeigt.
+
+    Uebernommen wird nur, was als Text ankommt, und nur die drei bekannten
+    Felder -- alles andere aus dem Header faellt weg, statt ungeprueft in eine
+    Datei zu wandern, die spaeter jemand liest.
+    """
+
+    if not isinstance(rohwert, dict):
+        return None
+    quelle = {
+        schluessel: _leer_zu_none(rohwert.get(schluessel))
+        for schluessel in ("herkunft", "dateiname", "zeitstempel")
+    }
+    if quelle["dateiname"] is None:
+        return None
+    return {k: v for k, v in quelle.items() if v is not None}
+
+
+def build_beipackzettel(
+    *,
+    dateiname: str,
+    sha256: str,
+    bytes_geschrieben: int,
+    format_: str,
+    episode: object,
+    metadaten: dict,
+    exportiert_am: str,
+) -> dict[str, object]:
+    """Der Inhalt des Beipackzettels. Rein, damit er ohne HTTP pruefbar ist."""
+
+    return {
+        "schema_version": BEIPACKZETTEL_SCHEMA_VERSION,
+        "exportiert_am": exportiert_am,
+        "bild": {
+            "dateiname": dateiname,
+            "sha256": sha256,
+            "bytes": bytes_geschrieben,
+        },
+        "videotitel": _leer_zu_none(metadaten.get("videotitel")),
+        "episode": _leer_zu_none(episode),
+        "datum": _leer_zu_none(metadaten.get("datum")),
+        "format": _leer_zu_none(format_),
+        "chart_quelle": _chart_quelle(metadaten.get("chart_quelle")),
+    }
+
+
+def beipackzettel_name(bild_dateiname: str) -> str:
+    """Gleicher Name, Endung .json -- 'adw-x (2).jpg' -> 'adw-x (2).json'."""
+
+    return Path(bild_dateiname).with_suffix(BEIPACKZETTEL_SUFFIX).name
+
+
+def write_beipackzettel(
+    export_directory: Path, bild_dateiname: str, inhalt: dict[str, object]
+) -> str:
+    """Legt den Beipackzettel atomar neben das Bild -- temporaer, dann umbenannt.
+
+    REIHENFOLGE: Diese Funktion laeuft erst, wenn das Bild bereits endgueltig
+    liegt. Ein Beipackzettel ohne Bild waere schlimmer als ein Bild ohne
+    Beipackzettel: das erste behauptet eine Zuordnung, die es nicht gibt, das
+    zweite laesst nur eine Luecke. Deshalb nie umgekehrt, und deshalb reisst ein
+    Fehler hier den bereits gespeicherten Export nicht mit (siehe Aufrufstelle).
+    """
+
+    ziel_name = beipackzettel_name(bild_dateiname)
+    nutzlast = json.dumps(inhalt, ensure_ascii=False, indent=2).encode("utf-8")
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=".thumbnail-export-",
+            suffix=".tmp",
+            dir=export_directory,
+            delete=False,
+        ) as temporary:
+            temp_path = Path(temporary.name)
+            temporary.write(nutzlast)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temp_path, export_directory / ziel_name)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+    return ziel_name
+
+
 def _snapshot(path: Path) -> FileSnapshot:
     info = path.lstat()
     return FileSnapshot(
@@ -2203,6 +2354,28 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 "Der Exportdateiname ist ungültig.",
             )
             return
+        # DZ: Der Beipackzettel wird VOR dem ersten Schreibvorgang geprueft.
+        # Ein Videotitel, den der Dienst ablehnt, darf nicht erst auffallen,
+        # nachdem das Bild schon im Ordner liegt -- dann stuende dort ein Bild
+        # ohne die Zuordnung, fuer die der Beipackzettel da ist.
+        try:
+            metadaten = self._read_export_metadata()
+        except ValueError as fehler:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_export_metadata",
+                str(fehler),
+            )
+            return
+        titel_fehler = pruefe_videotitel(metadaten.get("videotitel"))
+        if titel_fehler is not None:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "invalid_video_title",
+                titel_fehler,
+            )
+            return
+
         if not self.server.export_directory.is_dir():
             self._send_json(
                 HTTPStatus.NOT_FOUND,
@@ -2221,12 +2394,19 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 delete=False,
             ) as temporary:
                 temp_path = Path(temporary.name)
+                # DZ: Die Pruefsumme entsteht aus genau den Bytes, die in die
+                # temporaere Datei laufen -- und commit_export_temp() benennt
+                # dieselbe Datei nur noch um. Damit gilt der sha256 im
+                # Beipackzettel fuer das Bild, das hinterher auf der Platte
+                # liegt, und nicht fuer etwas, das nochmal neu gelesen wurde.
+                digest = hashlib.sha256()
                 remaining = length
                 while remaining:
                     chunk = self.rfile.read(min(1024 * 1024, remaining))
                     if not chunk:
                         break
                     temporary.write(chunk)
+                    digest.update(chunk)
                     remaining -= len(chunk)
                 if remaining:
                     raise EOFError("Der Export wurde nicht vollständig übertragen.")
@@ -2284,7 +2464,40 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
             _console_print(f"Registry-Schreibversuch fehlgeschlagen (Export bleibt gueltig): {error!r}")
             registry_warning = "Die Folgennummer konnte nicht in die Registry geschrieben werden (siehe Server-Log)."
 
+        # DZ: Erst jetzt -- das Bild liegt endgueltig im Ordner. Ein Fehler hier
+        # darf den gespeicherten Export so wenig ungeschehen machen wie ein
+        # Fehler der Registry; gemeldet wird er trotzdem, sonst faellt ein
+        # fehlender Beipackzettel erst dem Uploader auf.
+        beipackzettel_datei: str | None = None
+        beipackzettel_warnung: str | None = None
+        try:
+            beipackzettel_datei = write_beipackzettel(
+                self.server.export_directory,
+                actual_filename,
+                build_beipackzettel(
+                    dateiname=actual_filename,
+                    sha256=digest.hexdigest(),
+                    bytes_geschrieben=length,
+                    format_=self.headers.get("X-Export-Preset", ""),
+                    episode=unquote(self.headers.get("X-Export-Episode", "")),
+                    metadaten=metadaten,
+                    exportiert_am=datetime.datetime.now().astimezone().isoformat(),
+                ),
+            )
+        except Exception as error:  # pragma: no cover - defensive, Bild bleibt gueltig
+            _console_print(
+                f"Beipackzettel konnte nicht geschrieben werden (Bild bleibt gueltig): {error!r}"
+            )
+            beipackzettel_warnung = (
+                "Der Beipackzettel konnte nicht neben das Bild gelegt werden "
+                "(siehe Server-Log). Die Zuordnung Bild zu Video ist nicht aufgeschrieben."
+            )
+
         result: dict[str, object] = {"ok": True, "filename": actual_filename, "size": length}
+        if beipackzettel_datei:
+            result["beipackzettel"] = beipackzettel_datei
+        if beipackzettel_warnung:
+            result["beipackzettel_warnung"] = beipackzettel_warnung
         if registry_warning:
             result["registry_warning"] = registry_warning
         payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
@@ -2292,6 +2505,28 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
             HTTPStatus.OK, "application/json; charset=utf-8", len(payload)
         )
         self.wfile.write(payload)
+
+    def _read_export_metadata(self) -> dict:
+        """DZ: liest X-Export-Beipackzettel (prozentkodiertes JSON-Objekt).
+
+        Fehlt der Header, ist das kein Fehler -- dann entsteht ein
+        Beipackzettel ohne Videotitel, Datum und Quelle. Was da ist, muss aber
+        stimmen: ein kaputter Header wird abgewiesen, statt still zu einem
+        leeren Zettel zu werden.
+        """
+
+        roh = self.headers.get("X-Export-Beipackzettel", "")
+        if not roh:
+            return {}
+        if len(roh) > MAX_EXPORT_METADATA_CHARS:
+            raise ValueError("Die Exportmetadaten sind zu lang.")
+        try:
+            geparst = json.loads(unquote(roh))
+        except (ValueError, UnicodeDecodeError) as fehler:
+            raise ValueError("Die Exportmetadaten sind kein gueltiges JSON.") from fehler
+        if not isinstance(geparst, dict):
+            raise ValueError("Die Exportmetadaten muessen ein JSON-Objekt sein.")
+        return geparst
 
     def _record_series_registry_export(self) -> str | None:
         """U1: liest die Export-Header und delegiert an die reine (testbare)

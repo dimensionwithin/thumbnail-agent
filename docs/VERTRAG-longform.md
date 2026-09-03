@@ -1,5 +1,23 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 4 (EH, 04.09.2026).** Vier Stellen, an denen der Bau des
+Beipackzettel-Lesers (EG) den Vertrag mit sich selbst uneins gefunden hat,
+sind geklaert — und nur diese vier. Erstens tragen die Matrixzeilen fuer
+Zettel einer **anderen** Aufnahme (4 bis 6, 13 bis 15, 31 bis 33) jetzt
+denselben Zusatz "(im Fenster)" wie die uebrigen; die Anmerkung unter der
+Matrix zaehlte sie nie zu den immer genannten, die Tabelle sah anders aus.
+Zweitens traegt das Kalendertag-Fenster jetzt seinen Grund dafuer, dass es in
+der Ortszeit des **Rechners** rechnet und nicht in `Europe/Berlin` wie der
+Planer — samt der Angabe, dass die Herkunft des Aufnahmenamens aus dieser Zone
+abgeleitet und nicht gemessen ist (10). Drittens sagt 3.3 jetzt ausdruecklich,
+dass ein ausgeschriebenes `null` in `aufnahme_herkunft` kein zugelassener Wert
+ist, und benennt die Asymmetrie zu `aufnahme`. Viertens steht bei Zeile 37,
+dass ihr Ausgang der des Bildes und der Abbruch der des Laufs ist. **Die
+Rangfolge, die Fensterregel selbst, die Formatregel, die Sperre, die Tag-Regel
+und die vier offenen Punkte aus Abschnitt 11 sind unveraendert.** Wie diese
+Fassung entstanden ist, steht im Bericht EG (die Funde) und EH (die
+Eintragung).
+
 **Fassung 3 (EE, 03.09.2026).** Die acht Entscheidungen zu Fassung 2 sind
 eingetragen, jede mit ihrem Grund: das zweite Zettelfeld `aufnahme_herkunft`,
 der Rang 1 nur fuer Bestaetigtes, das Kalendertag-Fenster statt des
@@ -394,6 +412,21 @@ Das Fenster **ordnet** die Vorschlagsliste (juengstes zuerst), es **waehlt
 nie**: bestaetigt wird weiter durch den Menschen, mit Dateiname und sha256 in
 der ersten Ermaechtigung.
 
+**Warum die Ortszeit des Rechners und ausdruecklich nicht `Europe/Berlin` wie
+im Planer.** Der Aufnahmename wird von der Aufnahmesoftware in der Zone des
+Rechners geschrieben; wer ihn gegen eine mtime haelt — die auch die Uhr dieses
+Rechners traegt —, muss in derselben Zone rechnen, sonst vergleicht er zwei
+Kalender. Der Planer nagelt `Europe/Berlin` fest (`planer.js`, `ZONE`), weil
+seine Frage eine andere ist: er zielt auf das Publikum, nicht auf den
+Rechner — ein Termin um 08:00 soll fuer die Zuschauer um 08:00 liegen, gleich
+wo der Rechner steht. Zwei Uhren fuer zwei Fragen, und das ist kein Versehen.
+Ein Import von `zonenTeile` aus dem Planer waere hier deshalb **keine**
+Vereinheitlichung, sondern ein dritter Zustand: Vertragswortlaut, Planerzone
+und Modulverhalten wuerden dann drei verschiedene Dinge sagen. Dass der
+Aufnahmename tatsaechlich aus der Ortszeit des Rechners stammt, ist
+**abgeleitet und nicht gemessen** — keine Zusage der Shorts-Linie sagt es;
+siehe Ungeprueft (10).
+
 **Grund, und nur dieser:** Fassung 2 verlangte "die juengste Bilddatei, die
 nach dem Render-Zeitstempel entstanden ist". Dieser Filter entfernt beim
 Render vom 31.08. das einzige Bild, das es gibt; es wurde 17 Minuten vor
@@ -461,18 +494,18 @@ geht weiter. "Abbruch" heisst 1, vor dem ersten Schreibaufruf.
 | 1 | B | G | Z | **Rang 1, genommen** | "Zettel <name> nennt diese Aufnahme, bestaetigt; Format <f>." |
 | 2 | B | G | N | **Abbruch** | "Zettel <name> nennt diese Aufnahme, bestaetigt, traegt aber das Format <f>, das keine Aufnahme hat. Zettel neu exportieren oder wegnehmen." |
 | 3 | B | G | ? | **Abbruch** | "Zettel <name> nennt diese Aufnahme, bestaetigt, hat aber kein lesbares Format." |
-| 4 | B | A | Z | genannt, kein Kandidat | "Zettel <name> gehoert bestaetigt zur Aufnahme <andere>." |
-| 5 | B | A | N | genannt, kein Kandidat | "Zettel <name> gehoert bestaetigt zur Aufnahme <andere> und traegt das Format <f>, das keine Aufnahme hat." |
-| 6 | B | A | ? | genannt, kein Kandidat | "Zettel <name> gehoert bestaetigt zur Aufnahme <andere>, ohne lesbares Format." |
+| 4 | B | A | Z | genannt, kein Kandidat (im Fenster) | "Zettel <name> gehoert bestaetigt zur Aufnahme <andere>." |
+| 5 | B | A | N | genannt, kein Kandidat (im Fenster) | "Zettel <name> gehoert bestaetigt zur Aufnahme <andere> und traegt das Format <f>, das keine Aufnahme hat." |
+| 6 | B | A | ? | genannt, kein Kandidat (im Fenster) | "Zettel <name> gehoert bestaetigt zur Aufnahme <andere>, ohne lesbares Format." |
 | 7 | B | K | Z | genannt, uebergangen | "Zettel <name> sagt bestaetigt und nennt keine Aufnahme; Format <f>. Widerspruechlich, nicht vom Dienst geschrieben." |
 | 8 | B | K | N | genannt, uebergangen | "Zettel <name> sagt bestaetigt, nennt keine Aufnahme und traegt das Format <f>, das keine Aufnahme hat. Widerspruechlich." |
 | 9 | B | K | ? | genannt, uebergangen | "Zettel <name> sagt bestaetigt, nennt keine Aufnahme, ohne lesbares Format. Widerspruechlich." |
 | 10 | U | G | Z | **Rang 2a, Vorschlag** | "Zettel <name> nennt diese Aufnahme, unbestaetigt (das Chart hat sich seit dem Setzen geaendert); Format <f>." |
 | 11 | U | G | N | genannt, kein Kandidat | "Zettel <name> nennt diese Aufnahme, unbestaetigt, traegt aber das Format <f>, das keine Aufnahme hat." |
 | 12 | U | G | ? | genannt, kein Kandidat | "Zettel <name> nennt diese Aufnahme, unbestaetigt, ohne lesbares Format." |
-| 13 | U | A | Z | genannt, kein Kandidat | "Zettel <name> gehoert unbestaetigt zur Aufnahme <andere>." |
-| 14 | U | A | N | genannt, kein Kandidat | "Zettel <name> gehoert unbestaetigt zur Aufnahme <andere> und traegt das Format <f>, das keine Aufnahme hat." |
-| 15 | U | A | ? | genannt, kein Kandidat | "Zettel <name> gehoert unbestaetigt zur Aufnahme <andere>, ohne lesbares Format." |
+| 13 | U | A | Z | genannt, kein Kandidat (im Fenster) | "Zettel <name> gehoert unbestaetigt zur Aufnahme <andere>." |
+| 14 | U | A | N | genannt, kein Kandidat (im Fenster) | "Zettel <name> gehoert unbestaetigt zur Aufnahme <andere> und traegt das Format <f>, das keine Aufnahme hat." |
+| 15 | U | A | ? | genannt, kein Kandidat (im Fenster) | "Zettel <name> gehoert unbestaetigt zur Aufnahme <andere>, ohne lesbares Format." |
 | 16 | U | K | Z | genannt, uebergangen | "Zettel <name> sagt unbestaetigt und nennt keine Aufnahme; Format <f>. Widerspruechlich." |
 | 17 | U | K | N | genannt, uebergangen | "Zettel <name> sagt unbestaetigt, nennt keine Aufnahme, Format <f> ohne Aufnahme. Widerspruechlich." |
 | 18 | U | K | ? | genannt, uebergangen | "Zettel <name> sagt unbestaetigt, nennt keine Aufnahme, ohne lesbares Format. Widerspruechlich." |
@@ -488,9 +521,9 @@ geht weiter. "Abbruch" heisst 1, vor dem ersten Schreibaufruf.
 | 28 | F | G | Z | **Rang 2a, Vorschlag** | "Zettel <name> nennt diese Aufnahme ohne Herkunftsangabe (nicht vom Dienst geschrieben); wie unbestaetigt behandelt. Format <f>." |
 | 29 | F | G | N | genannt, kein Kandidat | "Zettel <name> nennt diese Aufnahme ohne Herkunftsangabe und traegt das Format <f>, das keine Aufnahme hat." |
 | 30 | F | G | ? | genannt, kein Kandidat | "Zettel <name> nennt diese Aufnahme ohne Herkunftsangabe, ohne lesbares Format." |
-| 31 | F | A | Z | genannt, kein Kandidat | "Zettel <name> nennt die Aufnahme <andere> ohne Herkunftsangabe." |
-| 32 | F | A | N | genannt, kein Kandidat | "Zettel <name> nennt die Aufnahme <andere> ohne Herkunftsangabe, Format <f> ohne Aufnahme." |
-| 33 | F | A | ? | genannt, kein Kandidat | "Zettel <name> nennt die Aufnahme <andere> ohne Herkunftsangabe, ohne lesbares Format." |
+| 31 | F | A | Z | genannt, kein Kandidat (im Fenster) | "Zettel <name> nennt die Aufnahme <andere> ohne Herkunftsangabe." |
+| 32 | F | A | N | genannt, kein Kandidat (im Fenster) | "Zettel <name> nennt die Aufnahme <andere> ohne Herkunftsangabe, Format <f> ohne Aufnahme." |
+| 33 | F | A | ? | genannt, kein Kandidat (im Fenster) | "Zettel <name> nennt die Aufnahme <andere> ohne Herkunftsangabe, ohne lesbares Format." |
 | 34 | F | K | Z | **Rang 2b, Vorschlag** (im Fenster) | "Zettel <name> von vor dem Nachtrag (kein Aufnahmefeld), exportiert am <t>; Format <f>." |
 | 35 | F | K | N | genannt, kein Kandidat (im Fenster) | "Zettel <name> von vor dem Nachtrag traegt das Format <f>, das keine Aufnahme hat." |
 | 36 | F | K | ? | genannt, kein Kandidat (im Fenster) | "Zettel <name> von vor dem Nachtrag, ohne lesbares Format." |
@@ -507,6 +540,18 @@ Satz, was an ihm nicht lesbar war. Die Zellen 2 und 3 brechen ab, die Zellen
 11 und 12 nicht: hinter Zelle 2 steht die Bestaetigung eines Menschen, die der
 Formatregel widerspricht, und das entscheidet keine Maschine; hinter Zelle 11
 steht ein Name, den nach dem Chartwechsel niemand mehr bestaetigt hat.
+
+**Zu Zeile 37, damit sie nicht als Widerspruch gelesen wird.** Ihr Ausgang
+"Rang 3, Vorschlag" ist der Ausgang **des Bildes**: es steht in der
+Vorschlagsliste, mit Dateiname, Zeitpunkt und Groesse. Der Abbruch, den
+Abschnitt 4 (Schritt 5) und Abschnitt 6 fuer Rang 3 nennen, ist der Ausgang
+**des Laufs**, und er kommt nicht aus 2.7, sondern aus 2.8: ohne Zettel kein
+Videotitel, ohne Videotitel kein Upload. Das sind zwei Ebenen und kein
+Widerspruch — und sie muessen getrennt bleiben, denn genau hier gaebe es sonst
+wieder die zwei Zustaende, die gleich aussehen: "Bild gefunden" und "Upload
+moeglich". Ein Befund zu Rang 3 traegt beides zugleich: die Bildliste **und**
+den Abbruch mit dem Satz, dass der Titel aus einem Zettel kommen muss und
+keiner da ist.
 
 **Die drei Faelle:**
 
@@ -983,7 +1028,8 @@ ausschliesslich Dateien mit der Endung `.json`, die sich als Zettel lesen
 lassen: `schema_version` 1; `bild.dateiname`, `bild.sha256`, `bild.bytes`
 vorhanden und wohlgeformt; `aufnahme` in der Form `JJJJ-MM-TT HH-MM-SS` oder
 `null` oder fehlend; `aufnahme_herkunft` einer der drei Werte `bestaetigt`,
-`unbestaetigt`, `leer` oder fehlend; `format` einer der sechs Presets oder
+`unbestaetigt`, `leer` oder **ganz fehlend, und `null` ist hier keines von
+beidem**; `format` einer der sechs Presets oder
 `null` oder fehlend (ein anderer Wert ist "kein lesbares Format", Spalte ? in
 der Matrix, nicht "kein Zettel"). Eine `.json`, die kein Zettel ist, wird beim
 Namen genannt und uebergangen, nicht als Abbruch behandelt: der Export-Ordner
@@ -992,6 +1038,23 @@ anderes liegen. Fuer die Bilder ohne Zettel (Rang 3) werden die Dateien mit
 den Endungen `.jpg`, `.jpeg` und `.png` im selben Ordner angesehen, nach
 Namen, mtime und Groesse; keine wird geoeffnet, bevor der Mensch eine
 bestaetigt hat, ausser zum Rechnen der sha256 fuer die Vorschau.
+
+**Ein ausgeschriebenes `"aufnahme_herkunft": null` macht den Zettel unlesbar.**
+Es ist weder einer der drei Werte noch ein fehlendes Feld; der Zettel wird
+darum beim Namen genannt und uebergangen (wie in der Anmerkung zur
+Zustandsmatrix beschrieben) und faellt **nicht** in Spalte F der Matrix.
+`null` und "fehlt" sind an dieser Stelle also zwei verschiedene Dinge — anders
+als bei `aufnahme`, wo `null` der Normalfall ist.
+
+**Die Asymmetrie ist Absicht, und sie steht hier, damit sie niemandem beim
+Handaendern eines Zettels zum Verhaengnis wird.** Der Dienst schreibt in
+`aufnahme` sehr wohl `null` (das ist der leere Zettel, 2.7), in
+`aufnahme_herkunft` dagegen nie: dort steht immer einer der drei Werte, und
+vor EC stand das Feld gar nicht da. Ein `null` in diesem Feld kann also nur
+von Hand hineingekommen sein — und ein von Hand geaenderter Zettel, dessen
+Herkunftsangabe nicht mehr lesbar ist, soll gemeldet und nicht wie ein Zettel
+von vor EC behandelt werden. Wer die Herkunft wirklich entfernen will,
+entfernt das Feld.
 
 ### 3.4 Die Konfiguration, die ein Mensch bearbeitet
 
@@ -1469,6 +1532,16 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   derselben.
 - **Andere Betriebssysteme, andere Browser.** Der Freigabedienst ist unter
   Windows in einem Chromium gemessen; der Longform-Modus erbt das.
+- **Dass der Aufnahmename aus der Ortszeit des Rechners stammt.** Das Fenster
+  in 2.7 rechnet den Kalendertag in der Zone des Rechners, und der Grund dafuer
+  ist, dass der Name `JJJJ-MM-TT HH-MM-SS` in eben dieser Zone entsteht. Das
+  ist **abgeleitet**, nicht gemessen: keine Zusage der Shorts-Linie sagt, in
+  welcher Zone sie den Namen bildet, und `ZUSAGE-freigabedienst-aufruf.md`
+  nennt nur die Form, nicht die Uhr. Solange Aufnahme und Bild auf demselben
+  Rechner entstehen, faellt der Unterschied nicht auf; ein Schnitt auf einem
+  zweiten Rechner in einer anderen Zone koennte den Tag verschieben. Was das
+  messen wuerde: ein Aufnahmename gegen die mtime der Rohaufnahme desselben
+  Laufs, an einem Lauf nach 22:00 Ortszeit.
 
 ---
 

@@ -118,7 +118,10 @@ function pruefeKeineFreienArgumenteOhneAufnahme(argv) {
 // ---------------------------------------------------------------------------
 
 const UEBERSICHT_ARTIFACT_TYPE = 'adw_shorts_uebersicht';
-const UEBERSICHT_SCHEMA_VERSION = '1.0';
+// 1.1 und nicht mehr 1.0: `gelesen.<sorte>.sitzungen` traegt seit EI Objekte
+// { aufnahme, modus, name } statt blosser Aufnahmenamen. Wer die --json-Ausgabe
+// liest, merkt das an der Fassung und nicht erst an einem Feldzugriff.
+const UEBERSICHT_SCHEMA_VERSION = '1.1';
 
 const LINKS_ARTIFACT_TYPE = 'adw_shorts_links';
 const LINKS_SCHEMA_VERSION = '1.0';
@@ -171,6 +174,61 @@ function sha256Text(text) {
 // LESEN -- DREI VERZEICHNISSE
 // ---------------------------------------------------------------------------
 //
+// DIE SPERRFORM -- GELESEN, NICHT NACHGEBAUT (EI)
+//
+// Der Freigabedienst legt seine Sperre unter <aufnahme>.sperre.json ab und im
+// zweiten Betriebsmodus unter <aufnahme>.<modus>.sperre.json (Vertrag 2.13).
+// Diese Funktion erkennt BEIDE -- und jede weitere, die derselben Form folgt.
+//
+// WARUM KEINE LISTE DER MODI: eine Liste muesste hier bei jedem neuen Modus
+// nachgezogen werden, und wer sie vergisst, legt genau das lahm, was diese
+// Datei beantworten soll. Vorgefuehrt am Stand vor diesem Bau: eine Sperrdatei
+// unter einem Namen, den diese Funktion nicht kennt, faellt in die Formpruefung
+// darunter, leseVerzeichnis gibt { fehler } zurueck, und die Uebersicht
+// entsteht fuer die ganze Dauer der Sitzung NICHT -- kein "was steht aus", kein
+// Vorrat, keine Zahl. Ein Werkzeug, das eine fremde Datei nur DEUTEN will, darf
+// dabei nicht davon abhaengen, alle ihre Sorten zu kennen.
+//
+// WAS TROTZDEM SCHARF BLEIBT: die Form. Der Kern muss <aufnahme> oder
+// <aufnahme>.<wort> sein, <aufnahme> in der festen Zeitform und <wort> ohne
+// weiteren Punkt. Alles andere faellt weiterhin durch und bricht ab. Diese
+// Uebersicht baut keinen Sperrnamen -- das tut sperrPfad im Dienst, an genau
+// einer Stelle -- sie liest einen.
+//
+// Gibt { aufnahme, modus } oder null. modus ist null fuer die Form ohne
+// Einschub; sie ist die des Shorts-Modus, aber diese Datei nennt keinen
+// Modusnamen, den sie nicht aus dem Dateinamen gelesen hat.
+function sperrform(kernOhneSperre) {
+  if (AUFNAHME_FORM.test(kernOhneSperre)) return { aufnahme: kernOhneSperre, modus: null };
+  // Ein Aufnahmename traegt keinen Punkt; der erste trennt ihn also vom Modus.
+  const punkt = kernOhneSperre.indexOf('.');
+  if (punkt <= 0) return null;
+  const aufnahme = kernOhneSperre.slice(0, punkt);
+  const modus = kernOhneSperre.slice(punkt + 1);
+  if (!AUFNAHME_FORM.test(aufnahme)) return null;
+  if (!modus.length || modus.includes('.')) return null;
+  return { aufnahme, modus };
+}
+
+// Was in der Ausgabe neben einer Sperrdatei steht.
+//
+// Die Zeile fuer die Form ohne Einschub ist WOERTLICH die von DV geblieben.
+// Fuer einen Modus mit Einschub steht dort NICHT derselbe Satz: eine
+// Longform-Sitzung schreibt die Freigabedatei nicht (Vertrag 2.13), und "die
+// Freigabedatei kann sich gerade aendern" waere dort schlicht falsch.
+//
+// Und sie sagt, was diese Uebersicht ueber den fremden Modus NICHT weiss. Ob
+// sie den Longform-Stand fuehrt, ist offener Punkt 11.3 des Vertrags; er wird
+// hier nicht gefuellt, sondern benannt.
+function sitzungssatz(sitzung) {
+  if (sitzung.modus === null) {
+    return 'FREIGABE-SITZUNG laeuft oder Sperrdatei liegengeblieben -- die Freigabedatei ' +
+      'kann sich gerade aendern';
+  }
+  return sitzung.modus.toUpperCase() + '-SITZUNG laeuft oder Sperrdatei liegengeblieben -- ' +
+    'diese Uebersicht zeigt von diesem Modus nichts als dass er laeuft';
+}
+
 // Dieselbe Regel wie leseGedaechtnisverzeichnis im Planer, fuer data/freigaben
 // und data/plaene: <aufnahme>.json wird gelesen; eine ANDERE Datei, die auf
 // .json endet, bricht ab und wird nicht uebergangen; was nicht auf .json endet
@@ -181,12 +239,13 @@ function sha256Text(text) {
 // die Antwort "was steht aus" soll auf genau demselben Lesen beruhen wie der
 // naechste Plan.
 //
-// Eine Ausnahme kennt nur data/freigaben: <aufnahme>.sperre.json ist die
-// Sperrdatei einer laufenden Freigabe-Sitzung (freigabe-server.js, nimmSperre).
-// Sie ist kein Fremdkoerper und wird als Sitzung gemeldet, nicht als Fehler.
+// Eine Ausnahme kennt nur data/freigaben: eine Sperrdatei einer laufenden
+// Freigabe-Sitzung (freigabe-server.js, nimmSperre). Sie ist kein Fremdkoerper
+// und wird als Sitzung gemeldet, nicht als Fehler.
 //
 // Gibt { fehler } oder { fehler: [], vorhanden, dateien, sitzungen, uebergangen }.
 // dateien: [{ aufnahme, name, datei, pfad, text, geaendert_ms, sha256 }].
+// sitzungen: [{ aufnahme, modus, name }], modus null fuer die Form ohne Einschub.
 function leseVerzeichnis(verzeichnis, anzeige, { sperrdateien = false } = {}) {
   const fehler = [];
   const dateien = [];
@@ -205,10 +264,9 @@ function leseVerzeichnis(verzeichnis, anzeige, { sperrdateien = false } = {}) {
   for (const name of namen) {
     if (!name.endsWith('.json')) { uebergangen.push(name); continue; }
     const kern = name.slice(0, name.length - 5);
-    if (sperrdateien && kern.endsWith('.sperre') &&
-        AUFNAHME_FORM.test(kern.slice(0, kern.length - 7))) {
-      sitzungen.push(kern.slice(0, kern.length - 7));
-      continue;
+    if (sperrdateien && kern.endsWith('.sperre')) {
+      const s = sperrform(kern.slice(0, kern.length - '.sperre'.length));
+      if (s) { sitzungen.push({ aufnahme: s.aufnahme, modus: s.modus, name }); continue; }
     }
     if (!AUFNAHME_FORM.test(kern)) {
       fehler.push('In ' + anzeige + '/ liegt die Datei ' + JSON.stringify(name) + '. Ihr Name ' +
@@ -720,9 +778,8 @@ function formatiere(u) {
     for (const d of s.dateien) {
       z.push('  ' + d.datei.padEnd(42) + ' geaendert ' + d.geaendert_am_ortszeit);
     }
-    for (const a of s.sitzungen) {
-      z.push('  ' + s.verzeichnis + '/' + a + '.sperre.json   FREIGABE-SITZUNG laeuft oder ' +
-        'Sperrdatei liegengeblieben -- die Freigabedatei kann sich gerade aendern');
+    for (const si of s.sitzungen) {
+      z.push('  ' + s.verzeichnis + '/' + si.name + '   ' + sitzungssatz(si));
     }
     for (const n of s.uebergangen) {
       z.push('  ' + s.verzeichnis + '/' + n + '   uebergangen (kein .json)');
@@ -905,6 +962,7 @@ module.exports = {
   LINKS_ARTIFACT_TYPE, LINKS_SCHEMA_VERSION, LINKDATEI, VIDEO_ART_SHORT,
   LINKFORM_SHORT, LINKFORM_ALLGEMEIN, LINK_HINWEIS, VIDEOID_FORM, ISO_MIT_VERSATZ,
   linkdateiPfad, shortsLink, allgemeinerLink,
+  sperrform, sitzungssatz,
   leseVerzeichnis, leseAlles, baueUebersicht, erstelleUebersicht,
   formatiere, fuehreAus,
 };

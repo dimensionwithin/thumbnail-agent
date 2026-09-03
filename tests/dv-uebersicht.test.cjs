@@ -671,11 +671,152 @@ test('eine laufende Freigabe-Sitzung und uebergangene Namen werden genannt, nich
     assert.match(r.stdout, /data\/uploads\/\.2026-08-31 17-36-21\.json\.tmp\.1234\.1 {3}uebergangen \(kein \.json\)/);
     assert.match(r.stdout, /data\/plaene\/archiv {3}uebergangen \(kein \.json\)/);
     const j = JSON.parse(lauf(w, ['--json']).stdout);
-    assert.deepEqual(j.gelesen.freigaben.sitzungen, [C]);
+    assert.deepEqual(j.gelesen.freigaben.sitzungen,
+      [{ aufnahme: C, modus: null, name: C + '.sperre.json' }]);
     assert.deepEqual(j.gelesen.uploads.uebergangen, ['.' + A + '.json.tmp.1234.1']);
     assert.deepEqual(j.gelesen.plaene.uebergangen, ['archiv']);
     assert.equal(j.ausstehend.anzahl, 4, 'die Sitzung hat die Zaehlung veraendert');
   } finally { weg(w); }
+});
+
+// ---------------------------------------------------------------------------
+// EI: DIE ZWEITE SPERRFORM
+// ---------------------------------------------------------------------------
+//
+// DER SCHADEN, GEGEN DEN DIESE FUENF TESTS GEBAUT SIND -- gemessen am Stand vor
+// dem Bau (Bericht EI, Nachweis 1), nicht vermutet:
+//
+//   Ohne Longform-Sperre:  Rueckgabewert 0, "AUSSTEHENDE TERMINE: 4".
+//   Eine Datei mehr im Ordner, data/freigaben/<aufnahme>.longform.sperre.json:
+//   Rueckgabewert 1, stdout LEER, stderr "ABBRUCH: es entsteht keine
+//   Uebersicht."  Die Frage "was steht aus" war fuer die ganze Dauer der
+//   Longform-Sitzung nicht mehr zu beantworten -- nicht falsch beantwortet,
+//   sondern gar nicht.
+//
+// Der Grund war nicht der Name, sondern die BAUART: leseVerzeichnis kannte
+// genau eine Sperrform und behandelte jede andere .json als Fremdkoerper.
+// Darum pruefen die Tests unten nicht nur den einen neuen Namen.
+
+const LONGFORM_SPERRE = C + '.longform.sperre.json';
+
+test('EI: eine Longform-Sperre legt die Uebersicht nicht mehr still', () => {
+  const w = wegwerfWurzel();
+  try {
+    echteLageInKlein(w);
+    const ohne = lauf(w, []);
+    assert.equal(ohne.code, U.EXIT_OK, ohne.stderr);
+    const ausstehendOhne = ohne.stdout.match(/AUSSTEHENDE TERMINE: (\d+)/)[1];
+
+    lege(w, 'freigaben', LONGFORM_SPERRE, JSON.stringify({
+      artifact_type: 'adw_longform_freigabe_sperre', schema_version: '1.1',
+      aufnahme: C, modus: 'longform', pid: 1, port: 8791,
+      gestartet_am: '2026-09-04T10:00:00.000Z',
+    }, null, 2) + '\n');
+
+    const mit = lauf(w, []);
+    // DAS ist der Unterschied zum kaputten Stand: 0 statt 1, und dieselbe Zahl.
+    assert.equal(mit.code, U.EXIT_OK, mit.stderr);
+    assert.equal(mit.stdout.match(/AUSSTEHENDE TERMINE: (\d+)/)[1], ausstehendOhne,
+      'die Sitzung hat die Auskunft veraendert');
+    assert.match(mit.stdout, /LONGFORM-SITZUNG laeuft oder Sperrdatei liegengeblieben/);
+    assert.ok(mit.stdout.includes('data/freigaben/' + LONGFORM_SPERRE),
+      'die Datei wird beim Namen genannt');
+
+    const j = JSON.parse(lauf(w, ['--json']).stdout);
+    assert.deepEqual(j.gelesen.freigaben.sitzungen,
+      [{ aufnahme: C, modus: 'longform', name: LONGFORM_SPERRE }]);
+  } finally { weg(w); }
+});
+
+test('EI: die Zeile der Shorts-Sperre ist woertlich die von DV geblieben', () => {
+  // Die Uebersicht ist das Werkzeug, mit dem ein Mensch nachsieht, ob eine
+  // Sitzung offen ist. Der Satz aendert sich nicht, nur weil ein zweiter
+  // danebentritt.
+  const w = wegwerfWurzel();
+  try {
+    echteLageInKlein(w);
+    lege(w, 'freigaben', C + '.sperre.json', '{"pid":1}\n');
+    lege(w, 'freigaben', LONGFORM_SPERRE, '{"pid":2}\n');
+    const r = lauf(w, []);
+    assert.equal(r.code, U.EXIT_OK, r.stderr);
+    // Woertlich, nicht als Muster: der Freigabe-Check des Repos liest zwei
+    // Rueckstriche am Stueck als UNC-Pfad, und ein Literalvergleich sagt hier
+    // ohnehin genauer, was geschuetzt wird.
+    assert.ok(r.stdout.includes('data/freigaben/' + C +
+      '.sperre.json   FREIGABE-SITZUNG laeuft oder Sperrdatei liegengeblieben -- ' +
+      'die Freigabedatei kann sich gerade aendern'), r.stdout);
+    // Und die zweite traegt NICHT denselben Satz: eine Longform-Sitzung
+    // schreibt die Freigabedatei nicht (Vertrag 2.13).
+    const longformZeile = r.stdout.split('\n').find((z) => z.includes(LONGFORM_SPERRE));
+    assert.ok(longformZeile, 'die Longform-Zeile steht da');
+    assert.ok(!longformZeile.includes('die Freigabedatei kann sich gerade aendern'),
+      'die Longform-Zeile behauptet nichts ueber die Freigabedatei: ' + longformZeile);
+    assert.ok(!longformZeile.includes('FREIGABE-SITZUNG'), longformZeile);
+    // Beide Sitzungen stehen nebeneinander -- die Sperre gilt je Aufnahme UND
+    // Modus, und die Uebersicht bildet das ab, statt eine der beiden zu schlucken.
+    const j = JSON.parse(lauf(w, ['--json']).stdout);
+    // Sortiert nach Dateiname: ".longform.sperre" steht vor ".sperre".
+    assert.deepEqual(j.gelesen.freigaben.sitzungen.map((s) => s.modus), ['longform', null]);
+  } finally { weg(w); }
+});
+
+test('EI: ein Modus, den diese Uebersicht nicht kennt, legt sie ebenfalls nicht still', () => {
+  // Der Kern des Fundes. Haette leseVerzeichnis statt der FORM eine LISTE der
+  // Modi gelernt, waere der Schaden nur verschoben: der dritte Modus legte die
+  // Uebersicht wieder still, und zwar erst, wenn ihn jemand baut.
+  const w = wegwerfWurzel();
+  try {
+    echteLageInKlein(w);
+    lege(w, 'freigaben', C + '.gibtesnicht.sperre.json', '{"pid":1}\n');
+    const r = lauf(w, []);
+    assert.equal(r.code, U.EXIT_OK, r.stderr);
+    assert.match(r.stdout, /GIBTESNICHT-SITZUNG laeuft oder Sperrdatei liegengeblieben/);
+    assert.match(r.stdout, /AUSSTEHENDE TERMINE: 4/);
+  } finally { weg(w); }
+});
+
+test('EI: die Uebersicht fuehrt keine Liste der Modi -- sie liest die Form', () => {
+  // Ein Modusname im Quelltext dieser Datei waere die Liste, die beim naechsten
+  // Modus vergessen wird. Der Name kommt aus dem Dateinamen und nirgendwo sonst.
+  assert.ok(!/longform/i.test(NURCODE),
+    'die Uebersicht darf keinen Modusnamen fest verdrahten');
+  assert.ok(!/require\('\.\/freigabe-server'\)|freigabe-server/.test(NURCODE),
+    'und sie laedt den Dienst nicht, um ihn zu fragen -- der bringt http und '
+    + 'child_process mit, und dieses Werkzeug hat beides nicht');
+});
+
+test('EI: was nicht die Sperrform hat, bricht die Uebersicht weiter ab', () => {
+  // Die Regel ist WEITER geworden, nicht weicher. "Eine Uebersicht, die still
+  // weniger zeigt, ist schlimmer als keine" gilt unveraendert -- geprueft an
+  // vier Namen, die alle wie eine Sperre aussehen und keine sind.
+  for (const name of [
+    'nicht-die-form.sperre.json',            // keine Aufnahme davor
+    C + '..sperre.json',                     // leerer Modus
+    C + '.longform.extra.sperre.json',       // zweiter Punkt im Modus
+    C + '.longform.json',                    // gar keine Sperre
+  ]) {
+    const w = wegwerfWurzel();
+    try {
+      echteLageInKlein(w);
+      lege(w, 'freigaben', name, '{}\n');
+      const r = lauf(w, []);
+      assert.equal(r.code, U.EXIT_BEFUND, name + ' haette abbrechen muessen');
+      assert.equal(r.stdout, '', name + ': es darf keine halbe Auskunft geben');
+      assert.match(r.stderr, /ABBRUCH: es entsteht keine Uebersicht/);
+      assert.ok(r.stderr.replace(/\s+/g, ' ').includes(name),
+        name + ' wird beim Namen genannt');
+    } finally { weg(w); }
+  }
+});
+
+test('EI: sperrform liest die Form und nicht eine Liste von Modi', () => {
+  assert.deepEqual(U.sperrform(C), { aufnahme: C, modus: null });
+  assert.deepEqual(U.sperrform(C + '.longform'), { aufnahme: C, modus: 'longform' });
+  assert.deepEqual(U.sperrform(C + '.was-auch-immer'),
+    { aufnahme: C, modus: 'was-auch-immer' });
+  for (const schief of ['', '.', C + '.', '.' + C, 'x.' + C, C + '.a.b', 'nichts']) {
+    assert.equal(U.sperrform(schief), null, JSON.stringify(schief));
+  }
 });
 
 test('der Stand nennt jede gelesene Datei mit Aenderungszeit und Pruefsumme', () => {

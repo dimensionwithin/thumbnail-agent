@@ -1200,7 +1200,7 @@ test('main() nimmt die Sperre, bevor es die Freigabedatei anfasst', () => {
   // die Sperre erst danach genommen, hat die zweite Sitzung den alten Stand
   // laengst im Speicher.
   const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
-  const woSperre = mainRumpf.indexOf('nimmSperre({ projektwurzel, aufnahme })');
+  const woSperre = mainRumpf.indexOf('nimmSperre({ projektwurzel, aufnahme, modus })');
   const woLeser = mainRumpf.indexOf('ruftLeser(aufnahme, wurzel)');
   const woSitzung = mainRumpf.indexOf('baueSitzung({');
   assert.ok(woSperre > 0 && woLeser > 0 && woSitzung > 0);
@@ -1226,9 +1226,11 @@ test('jeder Ausgang nach der Sperre gibt sie wieder frei', () => {
 
 
 // ---------------------------------------------------------------------------
-// DJb: freie Argumente, Browser, Schleife, Sitzungsende
+// EI: DER ZWEITE BETRIEBSMODUS (Vertrag 2.13 und 3.1)
 // ---------------------------------------------------------------------------
 
+// DJb: der echte Prozessstart. Er wird hier von den Argument-Tests BEIDER
+// Abschnitte gebraucht und steht darum vor dem ersten von beiden.
 const SERVER = path.join(__dirname, '..', 'src', 'upload', 'freigabe-server.js');
 
 function rufeDienst(argumente, umgebung) {
@@ -1239,6 +1241,386 @@ function rufeDienst(argumente, umgebung) {
   });
   return { code: lauf.status, aus: (lauf.stdout || '') + (lauf.stderr || '') };
 }
+
+// Der Wortlaut, den die Gegenseite sucht. Er steht hier als KONSTANTE und nicht
+// dreimal als Literal: faellt er, faellt er an einer Stelle auf.
+//
+// ZITAT, ZUSAGE-freigabedienst-aufruf.md, Abschnitt 8 ("Zweite Sitzung auf
+// dieselbe Aufnahme"):
+//
+//   "Der Dienst laesst pro Aufnahme genau eine Sitzung zu. Ein zweiter Start
+//    auf dieselbe Aufnahme beendet sich mit 1 und nennt die laufende Sitzung:
+//
+//      ABBRUCH: Fuer die Aufnahme <name> laeuft bereits eine Freigabesitzung.
+//
+//        Prozessnummer:  <pid>
+//        Port:           <port>   ->   http://127.0.0.1:<port>/
+//        Gestartet am:   <ISO-Zeitpunkt>
+//        Aufnahme:       <name>"
+//
+// und, Kurzfassung fuer den Knopf, Punkt 4:
+//
+//   "1 -> stderr anzeigen. Steht dort 'laeuft bereits eine Freigabesitzung',
+//    ist das kein Fehler: die Sitzung ist schon offen."
+//
+// Der Knopf SUCHT diesen Satz im Text. Deshalb darf der Modus nicht in ihn
+// hinein, sondern nur als eigene Zeile daneben (Vertrag 2.13: "der Satz bleibt
+// im Wortlaut stehen, und die Zeile mit dem Modus kommt dazu").
+const ZUGESAGTER_SATZ = 'laeuft bereits eine Freigabesitzung';
+
+function sperrLage(ordner, modus, { pid = process.pid, port = 8791 } = {}) {
+  const pfad = S.sperrPfad(ordner, AUFNAHME, modus);
+  fs.mkdirSync(path.dirname(pfad), { recursive: true });
+  fs.writeFileSync(pfad, JSON.stringify(S.sperrinhalt({
+    aufnahme: AUFNAHME, pid, port, modus,
+    gestartet_am: '2026-09-04T09:00:00.000Z' }), null, 2) + '\n');
+  return pfad;
+}
+
+test('EI: die alte Zusage bleibt wahr -- ein zweiter SHORTS-Start endet mit 1 und ' +
+  'mit dem zugesagten Satz', () => {
+  const ordner = wegwerfordner();
+  try {
+    const erste = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME });
+    assert.equal(erste.ok, true);
+    S.traegeSperrePortNach(erste, 8791);
+
+    // Ohne Modusangabe -- genau so, wie der Knopf der Gegenseite ruft.
+    const zweite = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME });
+    assert.equal(zweite.ok, false, 'der zweite Shorts-Start bekommt die Sperre nicht');
+    assert.equal(zweite.modus, S.MODUS_SHORTS, 'ohne Angabe ist der Modus shorts');
+
+    const text = S.meldeFremdeSperre(zweite, AUFNAHME);
+    // Der Satz, Wort fuer Wort, mit der Aufnahme darin.
+    assert.ok(text.includes('ABBRUCH: Fuer die Aufnahme ' + AUFNAHME + ' ' +
+      ZUGESAGTER_SATZ + '.'), text);
+    // Die vier Zeilen der Zusage, in ihrer Reihenfolge.
+    const zeilen = text.split('\n');
+    const wo = (anfang) => zeilen.findIndex((z) => z.trim().startsWith(anfang));
+    const reihenfolge = ['Prozessnummer:', 'Port:', 'Gestartet am:', 'Aufnahme:'].map(wo);
+    assert.ok(reihenfolge.every((i) => i > 0), 'alle vier Zeilen stehen da: ' + text);
+    assert.deepEqual(reihenfolge.slice().sort((a, b) => a - b), reihenfolge,
+      'und in der Reihenfolge der Zusage');
+    assert.match(text, new RegExp('Port:\\s+8791\\s+->\\s+http://127\\.0\\.0\\.1:8791/'));
+    // Und der Dateiname ist der von DJa geblieben -- die Zusage und die
+    // Uebersicht kennen ihn.
+    assert.equal(path.basename(erste.pfad), AUFNAHME + '.sperre.json');
+
+    // Der Rueckgabewert: 1. Er faellt in main() und ist dort die einzige Antwort
+    // auf eine fremde Sperre.
+    assert.equal(S.EXIT_ABBRUCH, 1);
+    const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
+    assert.match(mainRumpf, /if \(!sperre\.ok\) \{\s*console\.error\(meldeFremdeSperre\(sperre, aufnahme\)\);\s*process\.exit\(EXIT_ABBRUCH\);/);
+
+    S.gibSperreFrei(erste);
+  } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+});
+
+test('EI: ein Longform-Start neben einer laufenden Shorts-Sitzung ist zulaessig', () => {
+  // Vertrag 2.13: "Eine Shorts-Sitzung und eine Longform-Sitzung auf dieselbe
+  // Aufnahme duerfen nebeneinander laufen." Grund: sie schreiben keine
+  // gemeinsame Datei. Eine Sperre, die beide trennt, schuetzt vor keinem
+  // Schaden und kostet ein Longform-Warten von bis zu 45 Minuten.
+  const ordner = wegwerfordner();
+  try {
+    const shorts = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME });
+    assert.equal(shorts.ok, true);
+    const longform = S.nimmSperre({
+      projektwurzel: ordner, aufnahme: AUFNAHME, modus: S.MODUS_LONGFORM });
+    assert.equal(longform.ok, true, 'dieselbe Aufnahme, anderer Modus -- erlaubt');
+    assert.notEqual(shorts.pfad, longform.pfad);
+    assert.deepEqual(fs.readdirSync(path.dirname(shorts.pfad)).sort(),
+      [AUFNAHME + '.longform.sperre.json', AUFNAHME + '.sperre.json']);
+
+    // Jede gibt nur ihre eigene frei.
+    S.gibSperreFrei(shorts);
+    assert.equal(fs.existsSync(shorts.pfad), false);
+    assert.equal(fs.existsSync(longform.pfad), true, 'die Longform-Sperre bleibt liegen');
+    S.gibSperreFrei(longform);
+    assert.equal(fs.existsSync(longform.pfad), false);
+  } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+});
+
+test('EI: ein zweiter Longform-Start auf dieselbe Aufnahme ist es nicht', () => {
+  const ordner = wegwerfordner();
+  try {
+    const erste = S.nimmSperre({
+      projektwurzel: ordner, aufnahme: AUFNAHME, modus: S.MODUS_LONGFORM });
+    assert.equal(erste.ok, true);
+    S.traegeSperrePortNach(erste, 8792);
+    const zweite = S.nimmSperre({
+      projektwurzel: ordner, aufnahme: AUFNAHME, modus: S.MODUS_LONGFORM });
+    assert.equal(zweite.ok, false, 'zwei Sitzungen desselben Modus: nicht');
+    assert.equal(zweite.modus, S.MODUS_LONGFORM);
+    assert.equal(zweite.vorhanden.pid, process.pid);
+    assert.equal(zweite.vorhanden.modus, S.MODUS_LONGFORM, 'der Modus steht in der Datei');
+    // Auch hier: der Satz, den der Knopf kennt, bleibt.
+    assert.ok(S.meldeFremdeSperre(zweite, AUFNAHME).includes(ZUGESAGTER_SATZ));
+    S.gibSperreFrei(erste);
+  } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+});
+
+test('EI: die zwei Meldungen der Sperre sind verschieden', () => {
+  // Vertrag 2.13: "Die Meldung des zweiten Starts nennt den MODUS der laufenden
+  // Sitzung, sonst sucht der Mensch ein Shorts-Fenster, das es nicht gibt."
+  //
+  // Geprueft wird das HIER und nicht im Kopf des Lesers: die beiden Meldungen
+  // entstehen aus derselben Aufnahme, derselben PID, demselben Port und
+  // derselben Startzeit. Der Modus ist der einzige Unterschied, den es geben
+  // kann -- also muss er der Unterschied sein, den es gibt.
+  const ordner = wegwerfordner();
+  try {
+    const meldungen = {};
+    for (const modus of S.MODI) {
+      const erste = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME, modus });
+      S.traegeSperrePortNach(erste, 8791);
+      const zweite = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME, modus });
+      assert.equal(zweite.ok, false);
+      meldungen[modus] = S.meldeFremdeSperre(zweite, AUFNAHME);
+      S.gibSperreFrei(erste);
+    }
+
+    // 1. Sie sind nicht dieselbe Zeichenkette.
+    assert.notEqual(meldungen[S.MODUS_SHORTS], meldungen[S.MODUS_LONGFORM],
+      'beide Modi melden woertlich dasselbe -- dann nennt die Meldung den Modus nicht');
+
+    // 2. Jede nennt IHRE Bezeichnung und NICHT die der anderen. Das ist der
+    //    Zahn, der zuschnappt, wenn jemand MODUS_BEZEICHNUNG zusammenfallen
+    //    laesst: gleiche Werte -> jede Meldung enthaelt beide -> beide Haelften
+    //    dieser Schleife fallen.
+    for (const modus of S.MODI) {
+      const meine = S.MODUS_BEZEICHNUNG[modus];
+      const andere = S.MODI.filter((m) => m !== modus).map((m) => S.MODUS_BEZEICHNUNG[m]);
+      assert.ok(meldungen[modus].includes('Betriebsmodus:  ' + meine),
+        modus + ': die Meldung nennt den Modus nicht: ' + meldungen[modus]);
+      for (const fremd of andere) {
+        assert.ok(!meldungen[modus].includes(fremd),
+          modus + ': die Meldung nennt auch "' + fremd + '" -- dann sagt sie nichts aus');
+      }
+    }
+
+    // 3. Und die Bezeichnungen selbst sind paarweise verschieden. Ohne diese
+    //    Zeile liesse sich 2. mit zwei gleichen Bezeichnungen nicht ausloesen,
+    //    falls beide Meldungen ausserdem gleich waeren.
+    const bezeichnungen = S.MODI.map((m) => S.MODUS_BEZEICHNUNG[m]);
+    assert.equal(new Set(bezeichnungen).size, bezeichnungen.length,
+      'zwei Modi heissen gleich: ' + bezeichnungen.join(', '));
+
+    // 4. Der zugesagte Satz steht in BEIDEN -- der Modus kommt daneben, nicht
+    //    hinein.
+    for (const modus of S.MODI) assert.ok(meldungen[modus].includes(ZUGESAGTER_SATZ), modus);
+  } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+});
+
+test('EI: die verwaiste Sperre ist EINE Regel, nicht zwei', () => {
+  // Der Auftrag: importiert, nicht nachgebaut. Diese Schleife laeuft ueber
+  // BEIDE Modi durch dieselbe Funktion; wird die Regel in nimmSperre falsch,
+  // faellt sie fuer beide -- und zusaetzlich faellt der aeltere Test
+  // 'N4: eine verwaiste Sperre wird benannt und uebernommen', der nur den
+  // Shorts-Fall kennt. Genau das ist gemeint mit "an beiden Stellen".
+  const tot = toteNummer();
+  for (const modus of S.MODI) {
+    const ordner = wegwerfordner();
+    try {
+      const pfad = sperrLage(ordner, modus, { pid: tot });
+      const sperre = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME, modus });
+      assert.equal(sperre.ok, true, modus + ': die verwaiste Sperre wurde nicht uebernommen');
+      assert.notEqual(sperre.verwaist, null, modus + ': sie wurde nicht BENANNT');
+      assert.equal(sperre.verwaist.vorhanden.pid, tot, modus);
+      assert.match(sperre.verwaist.grund, /keinen Prozess mit dieser Nummer/, modus);
+      assert.equal(JSON.parse(fs.readFileSync(pfad, 'utf8')).pid, process.pid, modus);
+      assert.equal(JSON.parse(fs.readFileSync(pfad, 'utf8')).modus, modus, modus);
+      S.gibSperreFrei(sperre);
+
+      // Und die unlesbare Sperrdatei -- dieselbe Regel, derselbe Zweig.
+      fs.writeFileSync(pfad, '{"artifact_type":"adw_');
+      const zweite = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME, modus });
+      assert.equal(zweite.ok, true, modus + ': halbe Datei');
+      assert.equal(zweite.verwaist.vorhanden, null, modus);
+      assert.match(zweite.verwaist.grund, /kein JSON/, modus);
+      S.gibSperreFrei(zweite);
+    } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+  }
+});
+
+test('EI: es gibt EINE Sperrfunktion und EINEN Sperrpfad, nicht je Modus einen', () => {
+  // Der Vertrag (2.13) sagt: die zweite Sperre entsteht "ueber dieselbe
+  // Formpruefung (sperrPfad ueber freigabePfad), keine zweite Stelle, an der
+  // ein Aufnahmename zu einem Dateinamen wird". Nachgerechnet statt geglaubt.
+  const definitionen = (name) =>
+    (NURCODE.match(new RegExp('function ' + name + '\\s*\\(', 'g')) || []).length;
+  for (const name of ['sperrPfad', 'nimmSperre', 'gibSperreFrei', 'schreibeSperrinhalt',
+    'sperrinhalt', 'meldeFremdeSperre']) {
+    assert.equal(definitionen(name), 1, name + ' ist mehr als einmal definiert');
+  }
+  // Kein zweiter Weg zu einer Sperrdatei -- weder ueber den Modusnamen noch
+  // ueber ein zweites wx.
+  // Genau EIN Anlegen einer Sperrdatei. (openSync(tmp, 'wx') gibt es zweimal --
+  // das sind die Temporaerdateien des atomaren Schreibens und keine Sperren.)
+  assert.equal((NURCODE.match(/openSync\(pfad, 'wx'\)/g) || []).length, 1,
+    "genau ein openSync(pfad, 'wx') -- eine Stelle, an der eine Sperre entsteht");
+  assert.equal((NURCODE.match(/\.sperre\.json/g) || []).length, 1,
+    'die Endung steht genau einmal im Code -- in sperrPfad');
+  assert.ok(!/function .*[Ll]ongform.*\(/.test(NURCODE.replace(/meldeLongformOhneSeite/g, '')),
+    'es gibt keine eigene Longform-Fassung einer dieser Funktionen');
+});
+
+test('EI: der Modus geht so hart in den Dateinamen wie der Aufnahmename', () => {
+  for (const boese of ['erfunden', '', null, 42, '..', 'shorts ', 'SHORTS']) {
+    assert.throws(() => S.sperrPfad('/w', AUFNAHME, boese), /Unbekannter Betriebsmodus/,
+      JSON.stringify(boese));
+    assert.throws(() => S.sperrinhalt({ aufnahme: AUFNAHME, pid: 1, port: null,
+      gestartet_am: 'x', modus: boese }), /Unbekannter Betriebsmodus/, JSON.stringify(boese));
+  }
+  // Und die Formpruefung der Aufnahme gilt in beiden Modi unveraendert.
+  const R = String.fromCharCode(92);
+  for (const modus of S.MODI) {
+    for (const boese of ['..', '../../etc/passwd', 'C:' + R + 'Windows', '', null, 42]) {
+      assert.throws(() => S.sperrPfad('/w', boese, modus), /Form JJJJ-MM-TT HH-MM-SS/,
+        modus + ' ' + JSON.stringify(boese));
+    }
+  }
+  // Der Shorts-Name ist Byte fuer Byte der von DJa -- mit und ohne Angabe.
+  assert.equal(S.sperrPfad('/w', AUFNAHME), S.sperrPfad('/w', AUFNAHME, S.MODUS_SHORTS));
+  assert.equal(path.basename(S.sperrPfad('/w', AUFNAHME)), AUFNAHME + '.sperre.json');
+  assert.equal(path.basename(S.sperrPfad('/w', AUFNAHME, S.MODUS_LONGFORM)),
+    AUFNAHME + '.longform.sperre.json');
+  // Beide liegen im selben Ordner wie die Freigabedatei.
+  assert.equal(path.dirname(S.freigabePfad('/w', AUFNAHME)),
+    path.dirname(S.sperrPfad('/w', AUFNAHME, S.MODUS_LONGFORM)));
+});
+
+// ---------------------------------------------------------------------------
+// EI: --wurzel= in beiden Modi (Vertrag 3.1)
+// ---------------------------------------------------------------------------
+
+test('EI: --wurzel= wird im Longform-Modus mit 2 abgewiesen, mit eigenem Satz', () => {
+  // ECHTER Prozessstart. Er ist hier zulaessig, weil ein 2er faellt, BEVOR
+  // irgendetwas angefasst wird: kein Leser, keine Sperrdatei, kein Port. Genau
+  // das prueft der Test unten mit.
+  const r = rufeDienst(['--aufnahme=' + AUFNAHME, '--modus=longform', '--wurzel=erfundene-wurzel']);
+  assert.equal(r.code, 2, r.aus);
+  // Nicht still verschluckt, sondern abgewiesen -- und die Meldung sagt, wo die
+  // Longform-Wurzel stattdessen steht.
+  assert.match(r.aus, /--wurzel= gibt es im Longform-Modus nicht/);
+  assert.match(r.aus, /LONGFORM_RENDER_WURZEL/);
+  assert.match(r.aus, /wer es mitgibt, soll nicht glauben,\s*es wirke/);
+  // Nichts angefasst.
+  assert.ok(!/Rufe den Leser/.test(r.aus), r.aus);
+  assert.ok(!/Sperre/.test(r.aus), r.aus);
+  assert.ok(!/erfundene-wurzel/.test(r.aus), 'der Wert wird nicht ausgegeben, er wird abgewiesen');
+});
+
+test('EI: --wurzel= wird im Shorts-Modus unveraendert angenommen', () => {
+  // Wie zeigt man, dass ein Argument NICHT abgewiesen wird, ohne den Dienst
+  // wirklich starten zu lassen? Man laesst ihn an der NAECHSTEN Pruefung
+  // scheitern. --port=0 ist keine Portnummer; diese Pruefung liegt hinter der
+  // Verbindungspruefung und vor der Sperre. Ein 2er mit der PORT-Meldung
+  // beweist damit, dass --wurzel= durchgegangen ist.
+  //
+  // (Ein vollstaendiger Start wuerde in data/freigaben/ DIESES Repos eine
+  // Sperrdatei anlegen. Kein Test dieser Datei fasst data/ an.)
+  for (const argumente of [
+    ['--aufnahme=' + AUFNAHME, '--wurzel=erfundene-wurzel', '--port=0'],
+    ['--aufnahme=' + AUFNAHME, '--wurzel=erfundene-wurzel', '--modus=shorts', '--port=0'],
+  ]) {
+    const r = rufeDienst(argumente);
+    assert.equal(r.code, 2, r.aus);
+    assert.match(r.aus, /--port= ist "0" und keine Portnummer/, argumente.join(' '));
+    assert.ok(!/--wurzel=/.test(r.aus), 'der Shorts-Modus weist --wurzel= nicht ab: ' + r.aus);
+  }
+});
+
+test('EI: die Verbindungspruefung liegt nach der Listenpruefung und vor der Sperre', () => {
+  // Vertrag 3.1: "sie liegt nach der Listenpruefung und vor der Sperre, und sie
+  // endet mit 2 wie die Listenpruefung, denn nichts wurde angefasst."
+  const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
+  const wo = (s) => mainRumpf.indexOf(s);
+  assert.ok(wo('pruefeModusVerbindung(modus, argv)') > 0);
+  assert.ok(wo('pruefeModusVerbindung(modus, argv)') < wo('nimmSperre({'),
+    'die Verbindungspruefung kommt vor der Sperre');
+  assert.ok(wo('MODI.includes(modus)') < wo('pruefeModusVerbindung(modus, argv)'),
+    'der Modus wird geprueft, bevor er benutzt wird');
+  // Sie endet mit 2 und nicht mit 1.
+  assert.match(mainRumpf,
+    /if \(verbindungsfehler\) \{\s*console\.error\(verbindungsfehler\);\s*process\.exit\(EXIT_AUFRUFFEHLER\);/);
+  // Und als reine Funktion, ohne Prozess: in beide Richtungen.
+  assert.notEqual(S.pruefeModusVerbindung(S.MODUS_LONGFORM, ['n', 'x', '--wurzel=Q']), null);
+  assert.equal(S.pruefeModusVerbindung(S.MODUS_SHORTS, ['n', 'x', '--wurzel=Q']), null);
+  assert.equal(S.pruefeModusVerbindung(S.MODUS_LONGFORM, ['n', 'x', '--port=1']), null);
+});
+
+test('EI: ein unbekannter Modus endet mit 2, bevor etwas angefasst wird', () => {
+  const r = rufeDienst(['--aufnahme=' + AUFNAHME, '--modus=vielleicht']);
+  assert.equal(r.code, 2, r.aus);
+  assert.match(r.aus, /--modus= ist "vielleicht" und keiner der Betriebsmodi/);
+  assert.match(r.aus, /shorts, longform/);
+  assert.ok(!/Rufe den Leser/.test(r.aus));
+  assert.ok(!/Sperre/.test(r.aus));
+});
+
+test('EI: der Longform-Modus zeigt keine Shorts-Seite, sondern sagt, was fehlt', () => {
+  // Der Dienst KENNT den Modus; die Ansicht dahinter ist nicht gebaut. Ein
+  // Modus, der stattdessen die Shorts-Seite ausliefert, waere schlimmer als
+  // einer, der sagt, dass er noch nichts zu zeigen hat.
+  const text = S.meldeLongformOhneSeite(AUFNAHME, '/w/data/freigaben/x.longform.sperre.json');
+  assert.match(text, /der Longform-Modus hat noch keine Seite/);
+  assert.ok(text.includes(AUFNAHME));
+  assert.match(text, /Es wurde nichts gelesen, nichts hochgeladen und keine Seite ausgeliefert/);
+
+  // Und im Ablauf: er steht NACH der Sperre und VOR dem Leser, und er geht ueber
+  // abbruch() -- also wird die Sperre wieder frei.
+  const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
+  const wo = (s) => mainRumpf.indexOf(s);
+  assert.ok(wo('meldeLongformOhneSeite(aufnahme, sperre.pfad)') > wo('nimmSperre({'),
+    'der Longform-Ausgang liegt hinter der Sperre');
+  assert.ok(wo('meldeLongformOhneSeite(aufnahme, sperre.pfad)') < wo('ruftLeser(aufnahme, wurzel)'),
+    'und vor dem Leser -- der laeuft im Longform-Modus nicht');
+  assert.match(mainRumpf, /abbruch\(meldeLongformOhneSeite\(aufnahme, sperre\.pfad\)\);/);
+});
+
+// ---------------------------------------------------------------------------
+// EI: der Kommentarblock der harten Linie 4 zaehlt eine Zahl
+// ---------------------------------------------------------------------------
+
+test('EI: die Zahl im Kommentar der harten Linie 4 stimmt mit der Liste darunter', () => {
+  // "Ein Kommentar, der eine Zahl nennt, steht im Bestiarium dieses Projekts."
+  // Die Zeile war schon zweimal falsch (DJ -> DJa -> DR), jedes Mal, weil sie
+  // von Hand nachgezogen werden musste. Ab hier zaehlt sie ein Test nach.
+  const ZAHLWORT = { EINE: 1, ZWEI: 2, DREI: 3, VIER: 4, FUENF: 5, SECHS: 6, SIEBEN: 7 };
+  const ueberschrift = QUELLTEXT.match(
+    /\/\/ 4\. DER DIENST SCHREIBT ([A-Z]+) DATEIEN, JEDE DURCH GENAU EINE FUNKTION\./);
+  assert.ok(ueberschrift, 'die Ueberschrift der harten Linie 4 steht noch da');
+  const behauptet = ZAHLWORT[ueberschrift[1]];
+  assert.ok(behauptet !== undefined, 'unbekanntes Zahlwort: ' + ueberschrift[1]);
+
+  // Gezaehlt werden die aufgezaehlten Ziele: Kommentarzeilen, die mit
+  // "//      data/" beginnen. Fortsetzungszeilen tun das nicht.
+  const block = QUELLTEXT.slice(QUELLTEXT.indexOf('// 4. DER DIENST SCHREIBT'),
+    QUELLTEXT.indexOf('//    NICHT GEZAEHLT SIND DIE KINDPROZESSE'));
+  const ziele = block.split('\n').filter((z) => /^\/\/ {6}data\//.test(z));
+  assert.equal(ziele.length, behauptet,
+    'der Kommentar behauptet ' + behauptet + ' Dateien und zaehlt ' + ziele.length +
+    ' auf:\n' + ziele.join('\n'));
+
+  // Und die beiden Sperrformen stehen beide darin.
+  assert.ok(ziele.some((z) => z.includes('<aufnahme>.sperre.json')), ziele.join('\n'));
+  assert.ok(ziele.some((z) => z.includes('<aufnahme>.<modus>.sperre.json')), ziele.join('\n'));
+
+  // Der Folgesatz nennt die naechste Zahl, und auch die wird nachgerechnet.
+  // Der Kommentar ist umbrochen -- erst die Praefixe weg, dann suchen.
+  const fliesstext = block.split('\n').map((z) => z.replace(/^\/\/\s*/, '')).join(' ')
+    .replace(/\s+/g, ' ');
+  const naechste = fliesstext.match(/Ein ([a-z]+)ter Ort kommt nicht dazu/);
+  assert.ok(naechste, 'der Satz ueber den naechsten Ort steht noch da');
+  const NAECHST = { fuenf: 5, sechs: 6, sieben: 7, ach: 8 };
+  assert.equal(NAECHST[naechste[1]], behauptet + 1,
+    'der Kommentar sagt "' + naechste[0] + '", zaehlt aber ' + behauptet + ' Ziele auf');
+});
+
+// ---------------------------------------------------------------------------
+// DJb: freie Argumente, Browser, Schleife, Sitzungsende
+// ---------------------------------------------------------------------------
 
 test('DJb: ein freies Argument bricht den Dienst mit 2 ab', () => {
   const r = rufeDienst(['--aufnahme=2026-08-29', '18-18-19']);
@@ -1466,8 +1848,11 @@ test('DJb: der Knopf sagt, was er tut, und fragt bei offenen Karten nach', () =>
 });
 
 test('unbekannte Argumente beenden den Aufruf, statt ignoriert zu werden', () => {
+  // EI: --modus= steht hinten. Die Reihenfolge ist die Reihenfolge, in der die
+  // Argumente entstanden sind, und der Shorts-Aufruf der Gegenseite kennt die
+  // ersten vier -- diese vier stehen unveraendert vorn.
   assert.deepEqual(S.ERLAUBTE_ARGUMENTE,
-    ['--aufnahme=', '--wurzel=', '--port=', '--no-browser']);
+    ['--aufnahme=', '--wurzel=', '--port=', '--no-browser', '--modus=']);
   const { unbekannteArgumente } = require('../src/publish/cli-args');
   assert.deepEqual(
     unbekannteArgumente(['node', 'x', '--aufnahme=a', '--nur-pruefen'], S.ERLAUBTE_ARGUMENTE),

@@ -1,5 +1,24 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 5 (EJ, 04.09.2026).** Eine Stelle, an der der Bau des zweiten
+Betriebsmodus (EI) den Vertrag zu eng gefunden hat — und nur diese eine. 2.13
+verlangte, die Longform-Sperrdatei trage "denselben Inhalt plus den Modus";
+woertlich gelesen hiesse das, sie weist sich in ihrem `artifact_type` als
+Shorts-Sperre aus. Der Bau ist davon abgewichen, und die Abweichung war die
+richtige: zwei verschiedene Zustaende unter derselben Selbstauskunft sind der
+Umriss jedes Fehlers dieser Reihe. Geaendert wurde deshalb der Vertrag und
+nicht der Bau. 2.13 sagt jetzt, welche Angaben ueber die Sitzung in beiden
+Sperrdateien gleich stehen, dass das Feld `modus` in **beiden** steht — damit
+"Feld fehlt" nicht heimlich "shorts" bedeutet —, dass der `artifact_type` den
+Modus nennt, und dass die `schema_version` auf `1.1` steigt, weil die Form
+sich geaendert hat. **Die Rangfolge, das Fenster, die Formatregel, die Sperre
+je Aufnahme und Modus selbst, die Tag-Regel und die vier offenen Punkte aus
+Abschnitt 11 sind unveraendert.** Insbesondere bleibt 11.1 offen: die Zusage
+zur Freigabe-Naht schuldet weiterhin eine neue Fassung, und die Meldungsform
+wird hier nicht nachgezogen. Wie diese Fassung entstanden ist, steht in den
+Berichten EI (der Bau, samt der Abweichung und ihrem Grund) und EJ (die
+Eintragung).
+
 **Fassung 4 (EH, 04.09.2026).** Vier Stellen, an denen der Bau des
 Beipackzettel-Lesers (EG) den Vertrag mit sich selbst uneins gefunden hat,
 sind geklaert — und nur diese vier. Erstens tragen die Matrixzeilen fuer
@@ -848,9 +867,31 @@ nicht beurteilt werden koennten.
   zur Freigabe-Naht beschreibt ihr Verhalten, die Uebersicht kennt ihre Form,
   und beides soll fuer den Shorts-Knopf unveraendert wahr bleiben. Wie die
   Longform-Sperrdatei heisst, ist nicht zugesagt (9); zugesagt ist, dass sie
-  neben der Shorts-Sperre liegt, denselben Inhalt traegt plus den Modus, und
-  ueber dieselbe Formpruefung entsteht (`sperrPfad` ueber `freigabePfad`,
-  keine zweite Stelle, an der ein Aufnahmename zu einem Dateinamen wird).
+  neben der Shorts-Sperre liegt und ueber dieselbe Formpruefung entsteht
+  (`sperrPfad` ueber `freigabePfad`, keine zweite Stelle, an der ein
+  Aufnahmename zu einem Dateinamen wird).
+
+  **Was in beiden Sperrdateien gleich steht:** die Angaben ueber die Sitzung —
+  die Aufnahme, die Prozessnummer, der Port, die Startzeit — und das Feld
+  `modus`. Das Feld steht in **beiden**, auch in der Shorts-Sperre, die es
+  bisher nicht trug. **Grund:** traegt es nur die zweite Sorte, dann bedeutet
+  "Feld fehlt" heimlich "shorts", und diese Regel muesste jeder kennen, der
+  die Datei aufmacht — sie steht dann in keiner Datei, sondern nur im Kopf
+  dessen, der sie geschrieben hat.
+
+  **Was verschieden steht:** der `artifact_type`. Er **nennt den Modus**; die
+  Longform-Sperre weist sich nicht als Shorts-Sperre aus. **Grund:** das waere
+  eine Unwahrheit in einem Feld, das heute niemand liest und morgen jemand —
+  und zwei verschiedene Zustaende unter derselben Selbstauskunft sind der
+  Umriss jedes Fehlers dieser Reihe. Der Wert der Shorts-Sperre bleibt dabei
+  woertlich, wie er ist; verschieden wird er dadurch, dass der zweite
+  danebentritt, nicht dadurch, dass der erste sich aendert.
+
+  Die `schema_version` der Sperrdatei steigt auf `1.1`. **Grund:** die Form
+  hat sich geaendert — ein Feld ist dazugekommen, und der `artifact_type`
+  haengt jetzt am Modus. Eine Fassungsnummer, die stehen bleibt, waehrend sich
+  die Form aendert, sagt dem naechsten Leser das Gegenteil dessen, wofuer sie
+  da ist.
 - Der Kommentarblock "der Dienst schreibt vier Dateien, jede durch genau eine
   Funktion" in `freigabe-server.js` und der Test
   `tests/freigabe-server.test.cjs:221` ("jeder Schreibaufruf steht in einer

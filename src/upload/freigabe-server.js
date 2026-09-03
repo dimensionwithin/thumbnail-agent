@@ -77,27 +77,40 @@
 //    sperre.oeffnen() im Leser -- und zwar woertlich dieselbe Funktion, sie
 //    wird von dort importiert, damit es nicht zwei Fassungen davon gibt.
 //
-// 4. DER DIENST SCHREIBT VIER DATEIEN, JEDE DURCH GENAU EINE FUNKTION.
+// 4. DER DIENST SCHREIBT FUENF DATEIEN, JEDE DURCH GENAU EINE FUNKTION.
 //
 //    Bis DJ hiess diese Zeile "ausschliesslich die Freigabedatei". Mit der
-//    Einzelinstanz-Sperre (DJa) wurden zwei daraus, mit der Kette (DR) vier.
-//    Die Zeile wird jedes Mal BERICHTIGT statt weiter behauptet -- eine
-//    Zusage, die man nachtraeglich zurechtbiegt, ist keine. Was sich NICHT
-//    aendert, ist ihre Form: eine aufgezaehlte Liste von Zielen, je Ziel genau
-//    eine Funktion, und jede andere Zeile faellt durch den Test.
+//    Einzelinstanz-Sperre (DJa) wurden zwei daraus, mit der Kette (DR) vier,
+//    mit dem zweiten Betriebsmodus (EI) fuenf. Die Zeile wird jedes Mal
+//    BERICHTIGT statt weiter behauptet -- eine Zusage, die man nachtraeglich
+//    zurechtbiegt, ist keine. Was sich NICHT aendert, ist ihre Form: eine
+//    aufgezaehlte Liste von Zielen, je Ziel genau eine Funktion, und jede
+//    andere Zeile faellt durch den Test.
 //
 //      data/freigaben/<aufnahme>.json          <- schreibeFreigaben()
 //      data/freigaben/<aufnahme>.sperre.json   <- nimmSperre() /
 //                                                 schreibeSperrinhalt() /
 //                                                 gibSperreFrei()
+//      data/freigaben/<aufnahme>.<modus>.sperre.json
+//                                              <- dieselben drei (EI)
 //      data/plaene/archiv/<aufnahme>.…json     <- archiviereAltenPlan()
 //      data/ermaechtigungen/ermaechtigung-….json
 //                                              <- schreibeErmaechtigung()
 //
-//    Alle liegen unter data/, und data/ steht in .gitignore. Ein fuenfter Ort
+//    DIE DRITTE ZEILE IST KEINE FUENFTE FUNKTION. Der zweite Betriebsmodus
+//    (EI, Vertrag 2.13) legt seine Sperre unter einem eigenen Dateinamen ab,
+//    aber durch DIESELBEN drei Funktionen: ein sperrPfad, ein 'wx', eine
+//    Verwaisten-Regel. Sie steht als eigene Zeile, weil ein zweiter DATEINAME
+//    entstehen kann -- nicht, weil eine zweite Stelle schreibt. Der Name der
+//    Shorts-Sperre bleibt woertlich <aufnahme>.sperre.json; die Zusage zur
+//    Freigabe-Naht und die Uebersicht kennen ihn.
+//
+//    Alle liegen unter data/, und data/ steht in .gitignore. Ein sechster Ort
 //    kommt nicht dazu. Das ist nachpruefbar, und tests/freigabe-server.test.cjs
 //    rechnet es bei jedem Lauf nach: JEDER Schreibaufruf dieser Datei muss im
-//    Rumpf einer dieser sechs Funktionen liegen, sonst faellt der Test.
+//    Rumpf einer dieser sechs Funktionen liegen, sonst faellt der Test -- und
+//    die Zahl in der Ueberschrift wird gegen die Liste darunter geprueft, damit
+//    ein Kommentar mit einer Zahl darin nicht unbemerkt falsch wird.
 //
 //    NICHT GEZAEHLT SIND DIE KINDPROZESSE. Der Planer schreibt
 //    data/plaene/<aufnahme>.json, der Uploader data/uploads/<aufnahme>.json
@@ -109,7 +122,7 @@ const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 
 // pruefeArgumenteStrikt als ALLERERSTE Anweisung -- vor jedem Lesen, vor jedem
 // Kindprozess, vor dem Oeffnen eines Ports (CY Teil B).
-const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port=', '--no-browser'];
+const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port=', '--no-browser', '--modus='];
 
 // DJb: pruefeKeineFreienArgumente kommt aus dem Leser und ist nicht nachgebaut
 // -- dieselbe Regel gehoert nicht zweimal ins Projekt, und die Abhaengigkeit in
@@ -172,6 +185,55 @@ const STROM_STUECK_BYTES = 1024 * 1024;
 // Lieferung, hier haelt sie den einzigen Wert fest, aus dem dieser Dienst je
 // einen Pfad baut (siehe freigabePfad).
 const AUFNAHME_FORM = /^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$/;
+
+// ---------------------------------------------------------------------------
+// DIE ZWEI BETRIEBSMODI (EI, Vertrag 2.13)
+// ---------------------------------------------------------------------------
+//
+// SHORTS IST DER STANDARD, UND ZWAR DURCH ABWESENHEIT. Der Knopf der
+// Gegenseite ruft heute ohne Modusangabe -- die Zusage zur Freigabe-Naht
+// (Abschnitt 1) zaehlt vier zulaessige Argumente auf, und keines davon ist ein
+// Modus. Faellt das Argument weg, muss WOERTLICH das herauskommen, was vorher
+// herauskam: derselbe Sperrdateiname, dieselbe Meldung, derselbe
+// Rueckgabewert. Der Vorgabewert ist deshalb MODUS_SHORTS und nicht "kein
+// Modus" -- ein dritter Zustand neben den zweien waere eine Stelle mehr, an
+// der man sich irren kann.
+//
+// WARUM --modus=<wert> UND NICHT --longform ALS FLAG: ein Flag haette dem
+// Shorts-Modus keinen Namen gegeben. Ein Modus ohne Namen laesst sich nicht
+// ausdruecklich verlangen, nicht in einer Meldung nennen und nicht in eine
+// Sperrdatei schreiben; man erkennt ihn nur an der Abwesenheit des anderen.
+// Und der dritte Modus braeuchte ein zweites Flag samt der Frage, was zwei
+// gesetzte Flags bedeuten sollen. Ein Wert stellt diese Frage nicht.
+//
+// Der Name des Modusarguments ist nicht zugesagt (Vertrag 9).
+const MODUS_SHORTS = 'shorts';
+const MODUS_LONGFORM = 'longform';
+const MODI = [MODUS_SHORTS, MODUS_LONGFORM];
+
+// Wie ein Modus in einem Satz heisst. Getrennt von den Werten oben, weil der
+// Wert in einen Dateinamen geht und die Bezeichnung in eine Meldung.
+//
+// KEINE ZWEI EINTRAEGE DUERFEN GLEICH SEIN. Fielen "es laeuft bereits eine
+// Shorts-Sitzung" und "es laeuft bereits eine Longform-Sitzung" zusammen,
+// suchte der Mensch ein Fenster des falschen Modus -- genau der Schaden, den
+// Vertrag 2.13 benennt. Der Test "die zwei Meldungen der Sperre sind
+// verschieden" schnappt darauf zu.
+const MODUS_BEZEICHNUNG = {
+  [MODUS_SHORTS]: 'Shorts',
+  [MODUS_LONGFORM]: 'Longform',
+};
+
+// Der Modus geht in einen DATEINAMEN (sperrPfad). Er wird deshalb genauso
+// hart geprueft wie der Aufnahmename und nicht weicher: was nicht in MODI
+// steht, wird kein Pfadbestandteil.
+function pruefeModus(modus) {
+  if (!MODI.includes(modus)) {
+    throw new Error('Unbekannter Betriebsmodus: ' + JSON.stringify(modus) +
+      '. Bekannt sind ' + MODI.join(', ') + '. Es wird kein Dateiname daraus gebaut.');
+  }
+  return modus;
+}
 
 // ---------------------------------------------------------------------------
 // Die einzige Pfadkonstruktion des Dienstes
@@ -478,10 +540,26 @@ function schreibeFreigaben(pfad, kopfDaten, eintraege) {
 // der Mensch sieht seine Entscheidung auf dem Schirm der einen Seite stehen und
 // nicht mehr in der Datei. Der Nachweis N2 des Berichts fuehrt genau das vor.
 //
-// EINE SPERRE JE AUFNAHME, NICHT JE RECHNER. Zwei Aufnahmen teilen sich keine
-// Freigabedatei; sie gleichzeitig zu bearbeiten schadet niemandem und ist
-// nuetzlich. Die Sperrdatei liegt darum NEBEN der Freigabedatei und traegt
-// deren Namen: <aufnahme>.sperre.json neben <aufnahme>.json.
+// EINE SPERRE JE AUFNAHME UND MODUS, NICHT JE RECHNER. Zwei Aufnahmen teilen
+// sich keine Freigabedatei; sie gleichzeitig zu bearbeiten schadet niemandem
+// und ist nuetzlich. Die Sperrdatei liegt darum NEBEN der Freigabedatei und
+// traegt deren Namen: <aufnahme>.sperre.json neben <aufnahme>.json.
+//
+// EI (Vertrag 2.13): und je MODUS. Eine Shorts-Sitzung und eine
+// Longform-Sitzung auf dieselbe Aufnahme schreiben keine gemeinsame Datei --
+// die eine die Freigabedatei und den Plan, die andere das Longform-
+// Gedaechtnis und ihre Ermaechtigungen. Eine Sperre, die beide gegeneinander
+// haelt, schuetzt vor keinem Schaden und kostet ein Longform-Warten von bis
+// zu 45 Minuten, in dem die Shorts derselben Aufnahme nicht beurteilt werden
+// koennten. Zwei Sitzungen DESSELBEN Modus auf dieselbe Aufnahme bleiben
+// ausgeschlossen -- dafuer ist die Sperre da.
+//
+// DER NAME DER SHORTS-SPERRE BLEIBT, WIE ER IST. Die Zusage zur Freigabe-Naht
+// beschreibt ihr Verhalten, die Uebersicht kennt ihre Form, und beides soll
+// fuer den Shorts-Knopf unveraendert wahr bleiben. Der zweite Modus bekommt
+// einen Einschub vor der Endung: <aufnahme>.<modus>.sperre.json. Damit endet
+// jede Sperrdatei auf .sperre.json -- wer in den Ordner sieht, erkennt beide
+// am selben Suffix, und der Modus steht davor statt dahinter.
 //
 // WARUM data/freigaben/ UND NICHT irgendwo sonst: dieses Repo ist oeffentlich.
 // /data/ steht in .gitignore (Zeile 10), die Sperrdatei taucht damit weder in
@@ -494,14 +572,33 @@ function schreibeFreigaben(pfad, kopfDaten, eintraege) {
 // Das Anlegen IST die Pruefung.
 
 const SPERRE_ARTIFACT_TYPE = 'adw_shorts_freigabe_sperre';
-const SPERRE_SCHEMA_VERSION = '1.0';
+
+// EI: je Modus ein eigener Artefakttyp. Der Shorts-Wert steht UNVERAENDERT
+// darueber und wird von hier aus verwiesen, damit man sieht, dass er derselbe
+// geblieben ist. Eine Longform-Sperre mit "adw_shorts_..." im Kopf waere eine
+// Luege in einem Feld, das heute niemand liest -- also genau die Sorte, die
+// der naechste Leser fuer wahr nimmt.
+const SPERRE_ARTIFACT_TYP_JE_MODUS = {
+  [MODUS_SHORTS]: SPERRE_ARTIFACT_TYPE,
+  [MODUS_LONGFORM]: 'adw_longform_freigabe_sperre',
+};
+
+// 1.1 und nicht mehr 1.0: der Inhalt traegt seit EI das Feld `modus`, und der
+// Artefakttyp haengt daran. Die Fassung steigt, wenn sich die Form aendert.
+const SPERRE_SCHEMA_VERSION = '1.1';
 
 // Zweite Verwendung derselben Formpruefung: sperrPfad geht ueber freigabePfad,
 // damit es nicht zwei Stellen gibt, an denen ein Aufnahmename zu einem
-// Dateinamen wird.
-function sperrPfad(projektwurzel, aufnahme) {
+// Dateinamen wird. EI: auch der Modus geht hier durch und nirgends sonst --
+// es gibt EINE Stelle, an der aus Aufnahme und Modus ein Sperrdateiname wird.
+//
+// OHNE MODUS IST SHORTS. Ein Aufruf, der den Modus weglaesst, bekommt Byte
+// fuer Byte den Namen von DJa zurueck; das ist die Zusage an den Shorts-Knopf.
+function sperrPfad(projektwurzel, aufnahme, modus = MODUS_SHORTS) {
+  pruefeModus(modus);
   const frei = freigabePfad(projektwurzel, aufnahme);
-  return path.join(path.dirname(frei), aufnahme + '.sperre.json');
+  const einschub = modus === MODUS_SHORTS ? '' : '.' + modus;
+  return path.join(path.dirname(frei), aufnahme + einschub + '.sperre.json');
 }
 
 // LEBT DER EINGETRAGENE PROZESS?
@@ -573,11 +670,16 @@ function leseSperre(pfad) {
   return { gelesen: true, daten };
 }
 
-function sperrinhalt({ aufnahme, pid, port, gestartet_am }) {
+// EI: `modus` steht auch in der SHORTS-Sperre, nicht nur in der zweiten. Ein
+// Feld, das nur die eine Sorte traegt, hiesse "fehlt = shorts" -- und diese
+// Regel muesste dann jeder kennen, der die Datei aufmacht.
+function sperrinhalt({ aufnahme, pid, port, gestartet_am, modus = MODUS_SHORTS }) {
+  pruefeModus(modus);
   return {
-    artifact_type: SPERRE_ARTIFACT_TYPE,
+    artifact_type: SPERRE_ARTIFACT_TYP_JE_MODUS[modus],
     schema_version: SPERRE_SCHEMA_VERSION,
     aufnahme,
+    modus,
     pid,
     port,
     gestartet_am,
@@ -597,15 +699,23 @@ function schreibeSperrinhalt(fd, inhalt) {
 }
 
 // Rueckgabe:
-//   { ok: true,  pfad, fd, inhalt, verwaist }   -- Sperre gehoert uns
-//   { ok: false, pfad, vorhanden, leben, port }  -- ein anderer haelt sie
+//   { ok: true,  pfad, modus, fd, inhalt, verwaist }   -- Sperre gehoert uns
+//   { ok: false, pfad, modus, vorhanden, leben, port }  -- ein anderer haelt sie
+//
+// EI: `modus` steht in BEIDEN Rueckgaben, weil meldeFremdeSperre ihn braucht
+// und ihn nicht aus dem Dateinamen zurueckrechnen soll. Er stammt aus dem
+// Aufruf und nicht aus der gefundenen Datei: was dort steht, hat ein anderer
+// Prozess geschrieben, und die Sperre gilt fuer den Modus, in dem WIR starten.
+// Beide sind ohnehin gleich -- der Pfad trennt sie ja --, aber die Meldung
+// soll von einer Angabe leben, die dieser Prozess selbst kennt.
 //
 // `verwaist` ist null oder beschreibt die uebernommene Leiche. Sie wird
 // AUSDRUECKLICH benannt und nicht stillschweigend ueberschrieben: eine
 // Sperrdatei, die einfach so verschwindet, ist eine Sperre, der niemand mehr
 // glaubt.
-function nimmSperre({ projektwurzel, aufnahme, pid = process.pid, jetzt = new Date() }) {
-  const pfad = sperrPfad(projektwurzel, aufnahme);
+function nimmSperre({ projektwurzel, aufnahme, modus = MODUS_SHORTS,
+  pid = process.pid, jetzt = new Date() }) {
+  const pfad = sperrPfad(projektwurzel, aufnahme, modus);
   fs.mkdirSync(path.dirname(pfad), { recursive: true });
   let verwaist = null;
 
@@ -627,7 +737,7 @@ function nimmSperre({ projektwurzel, aufnahme, pid = process.pid, jetzt = new Da
             ' -- wer sie geschrieben hat, ist dabei gestorben' };
       if (leben.lebt || versuch > 0) {
         return {
-          ok: false, pfad, vorhanden, leben,
+          ok: false, pfad, modus, vorhanden, leben,
           lauschtAufPort: vorhanden ? sperrePasstZumPort(vorhanden.pid, vorhanden.port) : null,
           wettlauf: versuch > 0,
         };
@@ -638,7 +748,7 @@ function nimmSperre({ projektwurzel, aufnahme, pid = process.pid, jetzt = new Da
       continue;
     }
     const inhalt = sperrinhalt({
-      aufnahme, pid, port: null, gestartet_am: jetzt.toISOString() });
+      aufnahme, pid, port: null, gestartet_am: jetzt.toISOString(), modus });
     try {
       schreibeSperrinhalt(fd, inhalt);
     } catch (e) {
@@ -646,7 +756,7 @@ function nimmSperre({ projektwurzel, aufnahme, pid = process.pid, jetzt = new Da
       try { fs.unlinkSync(pfad); } catch (x) { /* egal */ }
       throw e;
     }
-    return { ok: true, pfad, fd, inhalt, verwaist };
+    return { ok: true, pfad, modus, fd, inhalt, verwaist };
   }
   /* nicht erreichbar: beide Zweige der Schleife kehren zurueck */
   throw new Error('nimmSperre: unerreichbarer Zweig');
@@ -693,12 +803,21 @@ function gibSperreFrei(sperre, pid = process.pid) {
 }
 
 // "Damit der Mensch sie findet, statt zu raten."
+//
+// EI: der erste Satz bleibt WOERTLICH stehen. Die Zusage zur Freigabe-Naht
+// (Abschnitt 8) laesst den Knopf der Gegenseite genau nach ihm suchen, um den
+// Fall "Sitzung schon offen" von einem Fehlschlag zu unterscheiden. Der Modus
+// kommt als eigene Zeile dazu, nicht in diesen Satz hinein.
 function meldeFremdeSperre(ergebnis, aufnahme) {
   const v = ergebnis.vorhanden;
+  const modus = pruefeModus(ergebnis.modus === undefined ? MODUS_SHORTS : ergebnis.modus);
   const z = [];
   z.push('');
   z.push('ABBRUCH: Fuer die Aufnahme ' + aufnahme + ' laeuft bereits eine Freigabesitzung.');
   z.push('');
+  // Der Modus kommt aus dem PFAD dieses Starts, nicht aus der fremden Datei --
+  // er steht auch dann da, wenn die Sperrdatei unlesbar ist.
+  z.push('  Betriebsmodus:  ' + MODUS_BEZEICHNUNG[modus]);
   if (v) {
     z.push('  Prozessnummer:  ' + v.pid);
     z.push('  Port:           ' + (v.port === null || v.port === undefined
@@ -726,9 +845,25 @@ function meldeFremdeSperre(ergebnis, aufnahme) {
       'um Sekundenbruchteile schneller.');
   }
   z.push('');
-  z.push('Es wurde NICHTS in die Freigabedatei geschrieben und keine Seite ausgeliefert.');
-  z.push('Zwei Sitzungen auf DIESELBE Aufnahme wuerden sich die Urteile gegenseitig ' +
-    'ueberschreiben; zwei auf verschiedene Aufnahmen sind erlaubt und stoeren einander nicht.');
+  if (modus === MODUS_SHORTS) {
+    z.push('Es wurde NICHTS in die Freigabedatei geschrieben und keine Seite ausgeliefert.');
+    z.push('Zwei Shorts-Sitzungen auf DIESELBE Aufnahme wuerden sich die Urteile gegenseitig ' +
+      'ueberschreiben; zwei auf verschiedene Aufnahmen sind erlaubt und stoeren einander nicht.');
+  } else {
+    // Kein Wort ueber die Freigabedatei: in diesem Modus fasst der Dienst sie
+    // nicht an, und eine Auskunft ueber etwas, das gar nicht geschieht, ist
+    // keine Beruhigung, sondern eine Spur ins Falsche.
+    z.push('Es wurde NICHTS geschrieben und keine Seite ausgeliefert.');
+    z.push('Zwei ' + MODUS_BEZEICHNUNG[modus] + '-Sitzungen auf DIESELBE Aufnahme laesst ' +
+      'dieser Dienst nicht zu (docs/VERTRAG-longform.md, 2.13); zwei auf verschiedene ' +
+      'Aufnahmen sind erlaubt und stoeren einander nicht.');
+  }
+  // Der Satz, der die beiden Modi auseinanderhaelt: wer hier steht, soll nicht
+  // ein Fenster des anderen Modus suchen.
+  z.push('Die Sperre gilt je Aufnahme UND Modus. Was hier bereits laeuft, ist eine ' +
+    MODUS_BEZEICHNUNG[modus] + '-Sitzung; eine Sitzung in einem anderen Modus auf ' +
+    'dieselbe Aufnahme waere zulaessig -- sie braucht dann ihren eigenen --port=, ' +
+    'wie jede zweite Sitzung auf diesem Rechner.');
   z.push('');
   return z.join('\n');
 }
@@ -1946,6 +2081,78 @@ function oeffneImBrowser(url) {
 }
 
 // ---------------------------------------------------------------------------
+// DIE VERBINDUNGSPRUEFUNG (EI, Vertrag 3.1)
+// ---------------------------------------------------------------------------
+//
+// pruefeArgumenteStrikt prueft ZUGEHOERIGKEIT zu einer flachen Liste und sonst
+// nichts (ED F2): sie weiss, dass --wurzel= erlaubt ist, aber nicht, in welchem
+// Modus. Diese Pruefung hier ist die Verbindung zwischen Modus und Argument.
+// Sie liegt NACH der Listenpruefung und VOR der Sperre, und sie endet mit
+// demselben Wert wie die Listenpruefung (2), weil bis dorthin nichts angefasst
+// wurde: kein Leser, keine Sperre, kein Port.
+//
+// WARUM --wurzel= IM LONGFORM-MODUS ABGEWIESEN WIRD und nicht umgedeutet oder
+// verschluckt: --wurzel= bedeutet heute "die Wurzel, unter der die
+// Aufnahmeordner mit der Uebergabedatei liegen"; der Dienst reicht es
+// unveraendert an den Leser durch, und nur der Leser macht einen Pfad daraus.
+// Im Longform-Modus laeuft der Leser nicht, es gibt keine Uebergabedatei, und
+// die Videodatei kommt aus einer anderen Einstellung. Das Argument haette dort
+// also entweder keine Bedeutung -- dann wird es stillschweigend verschluckt,
+// und wer es mitgibt, glaubt, es wirke -- oder eine zweite, und dann bedeutet
+// ein Argument je Modus etwas anderes. Das ist die Form, die dieses Projekt
+// schon mehrfach gebissen hat. Abweisen ist das einzige, was beides vermeidet.
+//
+// Rueckgabe: null, wenn nichts dagegen spricht, sonst der fertige Meldungstext.
+function pruefeModusVerbindung(modus, argv) {
+  pruefeModus(modus);
+  const gegeben = (praefix) => argv.slice(2).some((a) => a.startsWith(praefix));
+  if (modus === MODUS_LONGFORM && gegeben('--wurzel=')) {
+    return [
+      '',
+      'Abbruch: --wurzel= gibt es im Longform-Modus nicht.',
+      '',
+      '  --wurzel= benennt die Wurzel, unter der die Aufnahmeordner mit der',
+      '  Uebergabedatei der Shorts-Linie liegen. Im Longform-Modus laeuft der Leser',
+      '  nicht, es gibt keine Uebergabedatei, und die Videodatei kommt aus einer',
+      '  anderen Einstellung.',
+      '',
+      '  Die Longform-Wurzel steht in der .env unter LONGFORM_RENDER_WURZEL, und',
+      '  nur dort. Ein Argument dafuer gibt es nicht und soll es nicht geben.',
+      '',
+      'Angenommen und ignoriert wird es nicht: wer es mitgibt, soll nicht glauben,',
+      'es wirke. Es wurde nichts gelesen, nichts geschrieben und kein Port geoeffnet.',
+      '',
+    ].join(String.fromCharCode(10));
+  }
+  return null;
+}
+
+// Was der Longform-Modus heute IST und was er nicht ist. Er steht hier als
+// eigene Meldung und nicht als halbe Seite: der Dienst kennt den Modus, die
+// Sperre und die Argumente -- die Ansicht und der Arbeiter dahinter sind nicht
+// gebaut. Ein Modus, der stattdessen die Shorts-Seite zeigte, waere schlimmer
+// als einer, der sagt, dass er noch nichts zu zeigen hat.
+function meldeLongformOhneSeite(aufnahme, sperrpfad) {
+  return [
+    '',
+    'ABBRUCH: der Longform-Modus hat noch keine Seite.',
+    '',
+    '  Aufnahme:       ' + aufnahme,
+    '  Sperrdatei:     ' + sperrpfad,
+    '',
+    '  Was steht: das Modusargument, die Sperre je Aufnahme und Modus, die Meldung',
+    '  mit dem Modus darin, und die Abweisung von --wurzel=. Diese Sitzung hat die',
+    '  Sperre genommen und gibt sie unmittelbar wieder frei.',
+    '',
+    '  Was fehlt: die Longform-Ansicht dieser Seite und der Arbeiter dahinter.',
+    '  Beides ist nicht gebaut, und dieser Dienst erfindet es nicht.',
+    '',
+    'Es wurde nichts gelesen, nichts hochgeladen und keine Seite ausgeliefert.',
+    '',
+  ].join(String.fromCharCode(10));
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -1962,6 +2169,23 @@ function main() {
   const keinBrowser = argv.includes('--no-browser');
   const projektwurzel = path.join(__dirname, '..', '..');
 
+  // DER MODUS ZUERST, weil von ihm abhaengt, welche der folgenden Pruefungen
+  // ueberhaupt gelten. Ohne Angabe: Shorts -- das ist der Aufruf des Knopfes
+  // der Gegenseite, und fuer ihn aendert sich hier nichts.
+  const modusRoh = wertVon(argv, '--modus=');
+  const modus = modusRoh === null ? MODUS_SHORTS : modusRoh;
+  if (!MODI.includes(modus)) {
+    console.error('\nAbbruch: --modus= ist ' + JSON.stringify(modus) + ' und keiner der ' +
+      'Betriebsmodi. Bekannt sind: ' + MODI.join(', ') + '.\nOhne --modus= laeuft der ' +
+      'Dienst im Modus ' + MODUS_SHORTS + '.\n');
+    process.exit(EXIT_AUFRUFFEHLER);
+  }
+  const verbindungsfehler = pruefeModusVerbindung(modus, argv);
+  if (verbindungsfehler) {
+    console.error(verbindungsfehler);
+    process.exit(EXIT_AUFRUFFEHLER);
+  }
+
   if (!aufnahme) {
     console.error('\nAbbruch: --aufnahme= fehlt. Beispiel: --aufnahme="2026-08-29 18-18-19"\n');
     process.exit(EXIT_AUFRUFFEHLER);
@@ -1971,7 +2195,11 @@ function main() {
       JSON.stringify(aufnahme) + '\n');
     process.exit(EXIT_AUFRUFFEHLER);
   }
-  if (!wurzel) {
+  // Nur im Shorts-Modus: die Wurzel geht an den LESER, und der laeuft im
+  // Longform-Modus nicht. Eine Shorts-Renderwurzel dort zu verlangen hiesse,
+  // einen Longform-Start an einer Einstellung scheitern zu lassen, die er nie
+  // anfasst.
+  if (modus === MODUS_SHORTS && !wurzel) {
     console.error('\nAbbruch: keine Wurzel. Setze SHORTS_RENDER_WURZEL in der .env ' +
       'oder gib --wurzel= an.\n');
     process.exit(EXIT_AUFRUFFEHLER);
@@ -1993,10 +2221,10 @@ function main() {
   // ersten Klick zurueckschreibt.
   let sperre;
   try {
-    sperre = nimmSperre({ projektwurzel, aufnahme });
+    sperre = nimmSperre({ projektwurzel, aufnahme, modus });
   } catch (e) {
     console.error('\nAbbruch: die Sperrdatei liess sich nicht anlegen (' +
-      (e.code || e.message) + '): ' + sperrPfad(projektwurzel, aufnahme) + '\n');
+      (e.code || e.message) + '): ' + sperrPfad(projektwurzel, aufnahme, modus) + '\n');
     process.exit(EXIT_ABBRUCH);
   }
   if (!sperre.ok) {
@@ -2012,6 +2240,16 @@ function main() {
     const frei = gibSperreFrei(sperre);
     if (!frei.geloescht) console.error('Sperrdatei blieb liegen: ' + frei.grund);
     process.exit(EXIT_ABBRUCH);
+  }
+
+  // HIER ENDET DER LONGFORM-MODUS HEUTE. Er hat die Sperre genommen -- das ist
+  // sein zugesagtes Verhalten, und es ist geprueft -- und gibt sie ueber
+  // abbruch() unmittelbar wieder frei. Weiter unten steht die SHORTS-Linie:
+  // der Leser, die Karten, die Seite. Nichts davon gilt fuer Longform, und
+  // nichts davon wird ihm untergeschoben.
+  if (modus === MODUS_LONGFORM) {
+    abbruch(meldeLongformOhneSeite(aufnahme, sperre.pfad));
+    return;
   }
 
   console.log('Rufe den Leser: ' + path.relative(projektwurzel, LESER) +
@@ -2115,6 +2353,7 @@ function main() {
     const freigebbar = sitzung.karten.filter((k) => k.freigebbar).length;
     const gesperrt = sitzung.karten.length - freigebbar;
     console.log('');
+    console.log('Betriebsmodus:  ' + MODUS_BEZEICHNUNG[modus]);
     console.log('Aufnahme:       ' + sitzung.aufnahme);
     console.log('Eintraege:      ' + sitzung.karten.length + ' -- ' + freigebbar +
       ' freigebbar, ' + gesperrt + ' vom Leser abgelehnt (angezeigt, nicht abspielbar)');
@@ -2172,13 +2411,15 @@ if (require.main === module) main();
 module.exports = {
   ERLAUBTE_ARGUMENTE, EXIT_OK, EXIT_ABBRUCH, EXIT_AUFRUFFEHLER,
   HOST, STANDARD_PORT, AUFNAHME_FORM,
+  MODUS_SHORTS, MODUS_LONGFORM, MODI, MODUS_BEZEICHNUNG, pruefeModus,
+  pruefeModusVerbindung, meldeLongformOhneSeite,
   FREIGABE_SCHEMA_VERSION, FREIGABE_ARTIFACT_TYPE,
   TITEL_MAX_ZEICHEN, NOTIZ_MAX_ZEICHEN, MAX_ANFRAGE_BYTES,
   freigabePfad, ruftLeser, baueKarten, pruefeTitel, pruefeNotiz,
   leseFreigaben, schreibeFreigaben, leseBereich,
   baueDienst, baueSitzung, sitzungsEintraege, sitzungsstand,
   haelterDesPorts, meldeBelegtenPort,
-  SPERRE_ARTIFACT_TYPE, SPERRE_SCHEMA_VERSION,
+  SPERRE_ARTIFACT_TYPE, SPERRE_ARTIFACT_TYP_JE_MODUS, SPERRE_SCHEMA_VERSION,
   sperrPfad, prozessLebt, sperrePasstZumPort, leseSperre, sperrinhalt,
   schreibeSperrinhalt, nimmSperre, traegeSperrePortNach, gibSperreFrei,
   meldeFremdeSperre, oeffneImBrowser,

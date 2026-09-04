@@ -1,5 +1,26 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 7 (EO, 04.09.2026).** Zwei Stellen, und nur diese zwei; beide sind
+Klarstellungen. Erstens sagte 3.3, keine Bilddatei werde geoeffnet, bevor ein
+Mensch bestaetigt hat. Der Satz nennt jetzt, fuer wen er gilt: fuer den
+**Arbeiter** woertlich weiter, denn er entscheidet nicht auf Bilddaten; der
+**Dienst** dagegen oeffnet die eine bestimmte Datei, um sie zu zeigen, damit
+ueberhaupt bestaetigt werden kann — was 4 Schritt 7 ohnehin verlangt. Der Satz
+sollte verhindern, dass ein Programm auf Bilddaten entscheidet, nicht, dass ein
+Mensch sie sieht; wer nur 3.3 las, musste die Bildroute des Dienstes fuer einen
+Verstoss halten. Zweitens ist der datierte Satz in 3.4 ueber die beiden
+`.env`-Schluessel **gestrichen** statt richtiggestellt: er stimmte in beiden
+Haelften nicht mehr, und zwar aus demselben Grund, aus dem der Kopf seit Fassung
+6 kein Commit-Kuerzel mehr nennt — eine Angabe, die von Hand mitwandern muss,
+wandert irgendwann nicht mit, und eine Momentaufnahme in einem Vertrag veraltet,
+waehrend der Vertrag gilt. Wer den Stand wirklich braucht, sieht in
+`.env.example` nach und nicht hier; die Zusage, dass das Sache des Baus ist,
+bleibt stehen. **Keine Zusage der Abschnitte 1 bis 8 aendert sich** — die
+Rangfolge, das Fenster, die Formatregel, die Sperre, die Tag-Regel und die vier
+offenen Punkte aus Abschnitt 11 bleiben, wie sie waren; die vier offenen Punkte
+bleiben vier. Wie diese Fassung entstanden ist, steht in den Berichten EN (der
+Fund) und EO (die Eintragung).
+
 **Fassung 6 (EM, 04.09.2026).** Nur Namen und ein Stand. Die
 Beschreibungsvorlage heisst seit `1623fc6` `config/beschreibung.txt`; 2.9
 nannte sie noch beim alten Namen, und die Tabelle in 3.4 trug den Zusatz
@@ -1093,7 +1114,19 @@ ist, anders als `data/uploads/`, kein Ordner dieses Werkzeugs, und dort darf
 anderes liegen. Fuer die Bilder ohne Zettel (Rang 3) werden die Dateien mit
 den Endungen `.jpg`, `.jpeg` und `.png` im selben Ordner angesehen, nach
 Namen, mtime und Groesse; keine wird geoeffnet, bevor der Mensch eine
-bestaetigt hat, ausser zum Rechnen der sha256 fuer die Vorschau.
+bestaetigt hat, ausser zum Rechnen der sha256 fuer die Vorschau — **das ist der
+Arbeiter; der Freigabedienst oeffnet die eine Datei, die der Arbeiter bestimmt
+hat, um sie anzuzeigen (4 Schritt 7).**
+
+**Warum dieser Halbsatz zwei Programme auseinanderhaelt.** Der Satz soll
+verhindern, dass ein Programm auf Bilddaten entscheidet — nicht, dass ein
+Mensch sie sieht. Fuer den Arbeiter gilt er darum woertlich weiter: er waehlt
+nach Namen, Zeitstempel, Groesse und Zettel, nie nach dem, was auf dem Bild zu
+sehen ist, und die sha256 rechnet er, ohne das Bild zu deuten. Der Dienst
+waehlt gar nichts; er liefert genau das eine bereits bestimmte Bild aus, damit
+der Mensch es sieht und dann bestaetigen kann — 4 Schritt 7 verlangt das
+ausdruecklich. Ohne diese Unterscheidung musste, wer nur 3.3 las, die
+Bildroute des Dienstes fuer einen Verstoss halten.
 
 **Ein ausgeschriebenes `"aufnahme_herkunft": null` macht den Zettel unlesbar.**
 Es ist weder einer der drei Werte noch ein fehlendes Feld; der Zettel wird
@@ -1123,9 +1156,10 @@ entfernt das Feld.
 Und die Schluessel in `.env`, die der Weg liest: `LONGFORM_RENDER_WURZEL`
 (3.2), `THUMBNAIL_EXPORT_DIR` (3.3), `SHORTS_FREIGABE_PORT` (Dienst), die
 YouTube-Schluessel wie beim Shorts-Uploader. `AUFNAHME_WURZEL` liest der
-Compositor, nicht der Arbeiter. Stand heute (ED F6): `AUFNAHME_WURZEL` steht
-in `.env`, aber nicht in `.env.example`; `LONGFORM_RENDER_WURZEL` in keinem
-von beiden. Beides ist Sache des Baus, nicht dieses Vertrags.
+Compositor, nicht der Arbeiter. Welcher dieser Schluessel gerade in `.env` und
+welcher in `.env.example` steht, sagt dieser Vertrag nicht: das ist Sache des
+Baus, und eine Momentaufnahme davon veraltet, waehrend der Vertrag gilt. Wer
+den Stand braucht, sieht in `.env.example` nach.
 
 ---
 

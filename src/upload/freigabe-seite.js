@@ -1109,7 +1109,7 @@ function baueSeite(sitzung) {
       'hinter dem Knopf &bdquo;Den gemeinsamen Teil aufklappen&ldquo;. Er muss einmal ' +
       'aufgeklappt gewesen sein, sonst bleibt Schritt 3 gesperrt: er steht unter ' +
       '<em>jedem</em> dieser Videos, und er aendert sich, sobald jemand ' +
-      '<code>config/shorts-beschreibung.txt</code> anfasst.</p>',
+      '<code>config/beschreibung.txt</code> anfasst.</p>',
     '</div>',
     '<p class="kettezeile" id="vorschauKopf"></p>',
     '<div class="vorschauBloecke" id="vorschauBloecke"></div>',

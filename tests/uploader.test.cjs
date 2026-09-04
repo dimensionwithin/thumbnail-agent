@@ -852,7 +852,7 @@ test('die Vorschau zeigt je Short Titel mit Zeichenzahl, fertige Beschreibung, H
   assert.ok(t.includes('Datei:                 ' + l.shorts[1].pfad));
   assert.match(t, /Pruefsumme:            stimmt/);
   assert.match(t, /#Bitcoin\s+Gruppe "Bitcoin", Stichwort "Bitcoin" im Titel/);
-  assert.match(t, /#Shorts\s+immer/);
+  assert.match(t, /#Shorts\s+nur fuer Shorts/);
   assert.match(t, /Beschreibung \(\d+ Zeichen, \d+ Bytes UTF-8\)/);
   // DPa: aus demselben Grund wie oben nur noch die abgeleiteten. Dass die
   // immer-dazu dahinter kommen, haelt DP2c fest; wie sie geschrieben werden,

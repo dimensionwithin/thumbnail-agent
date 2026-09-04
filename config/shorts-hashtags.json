@@ -8,6 +8,7 @@
     "REIHENFOLGE unter dem Short: erst die thematisch abgeleiteten (Gruppen, in der Reihenfolge dieser Datei), dann 'immer' in der Reihenfolge dieser Liste. Sie ist fest -- derselbe Titel ergibt zweimal dieselbe Zeile.",
     "DOPPELTE fallen heraus, Gross- und Kleinschreibung egal, und die ZUERST genannte Schreibweise gewinnt. Wer eine Schreibweise aendern will, aendert die ERSTE -- eine spaetere zu aendern bewirkt nichts.",
     "DPa: Joshuas sechs stehen deshalb VORN und klein geschrieben. Bis DPa standen 'Krypto', 'Crypto', 'Shorts' davor, und 'Krypto' gewann gegen sein 'krypto'; unter dem Short erschien '#Krypto'. Die Regel ist dieselbe geblieben, nur die Reihenfolge hat sich gedreht. 'Krypto' weiter unten ist seitdem WIRKUNGSLOS -- es steht nur noch da, weil es von Anfang an dastand. Wer es entfernt, aendert nichts an der Ausgabe.",
+    "EK: 'nur_shorts' ist die Liste, die NUR unter einen Short kommt. Sie haengt hinter 'immer' -- deshalb steht '#Shorts' unter einem Short an derselben Stelle wie vorher, als es das letzte Element von 'immer' war. Der Longform-Weg (docs/VERTRAG-longform.md, 2.9) nimmt Gruppen und 'immer' und NIE diese Liste: '#Shorts' unter einem Langformvideo waere falsch.",
     "Hoechstens 15 Hashtags je Short, denn ab dem sechzehnten ignoriert YouTube ALLE. Der Uploader zaehlt Titel und Beschreibung zusammen und bricht vorher ab.",
     "Diese Erklaerung wird vom Uploader nicht gelesen. Alles andere in dieser Datei schon."
   ],
@@ -19,7 +20,9 @@
     "okkulteskrypto",
     "finanzen",
     "Krypto",
-    "Crypto",
+    "Crypto"
+  ],
+  "nur_shorts": [
     "Shorts"
   ],
   "gruppen": [

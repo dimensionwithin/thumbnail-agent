@@ -197,7 +197,18 @@ const BESTAETIGUNGSWORT = 'HOCHLADEN';
 const MAX_NACHFRAGEN = 2;
 
 // Die Konfiguration, die ein Mensch bearbeitet (Teil 1).
-const BESCHREIBUNG_DATEI = path.join('config', 'shorts-beschreibung.txt');
+//
+// EK: DIE VORLAGE HEISST NICHT MEHR "shorts-". Sie hiess bis hierher
+// config/shorts-beschreibung.txt. Seit der Longform-Weg dieselbe Datei liest
+// (docs/VERTRAG-longform.md, 2.9), ist sie keine Shorts-Datei mehr, sondern die
+// KANALVORLAGE, und ein Name, der "shorts" sagt, luegt. Zwei Dateien mit
+// demselben Text waeren in einem Monat zwei Texte.
+//
+// Die Zuordnungsdatei behaelt ihren Namen: sie ist EINE Datei mit ZWEI Listen
+// (immer / nur_shorts), und ob ihr Name mitwandert, ist nicht zugesagt
+// (VERTRAG-longform 9). Ein Name, der heute noch stimmt, wird nicht auf Vorrat
+// geaendert.
+const BESCHREIBUNG_DATEI = path.join('config', 'beschreibung.txt');
 const HASHTAGS_DATEI = path.join('config', 'shorts-hashtags.json');
 const VEROEFFENTLICHUNG_DATEI = path.join('config', 'shorts-veroeffentlichung.json');
 
@@ -354,8 +365,20 @@ function fuelleBeschreibung(vorlage, titel, hashtags) {
 
 // Die Hashtag-Zuordnung. Streng gelesen: was nicht der bekannten Form
 // entspricht, wird abgelehnt, nicht zurechtgebogen. Gibt { fehler } oder
-// { fehler: [], immer, gruppen }.
+// { fehler: [], immer, gruppen, nur_shorts }.
 const HASHTAG_FORM = /^[\p{L}\p{N}_]+$/u;
+
+// EK: DIE DRITTE LISTE. "Shorts" stand bis hierher am Ende von `immer` und kam
+// damit unter JEDES Video, das durch diese Datei geht. Solange das nur Shorts
+// waren, war das richtig. Seit der Longform-Weg dieselbe Datei liest, ist es
+// falsch: #Shorts unter einem Langformvideo ist eine Unwahrheit, und Vertrag 7
+// verbietet sie ausdruecklich.
+//
+// EINE Datei, ZWEI Listen -- keine zweite Zuordnungsdatei. Zwei Dateien liefen
+// auseinander; DPa hat vorgefuehrt, wie schnell eine Liste ihre eigene Regel
+// vergisst.
+const HASHTAG_FELD_NUR_SHORTS = 'nur_shorts';
+const ERLAUBTE_HASHTAG_FELDER = ['erklaerung', 'immer', 'gruppen', HASHTAG_FELD_NUR_SHORTS];
 
 function leseHashtagKonfiguration(text) {
   const fehler = [];
@@ -367,9 +390,9 @@ function leseHashtagKonfiguration(text) {
     return { fehler: [HASHTAGS_DATEI + ' enthaelt kein Objekt.'] };
   }
   for (const k of Object.keys(d)) {
-    if (!['erklaerung', 'immer', 'gruppen'].includes(k)) {
+    if (!ERLAUBTE_HASHTAG_FELDER.includes(k)) {
       fehler.push(HASHTAGS_DATEI + ': unbekanntes Feld ' + JSON.stringify(k) +
-        '. Erlaubt sind erklaerung, immer, gruppen.');
+        '. Erlaubt sind ' + ERLAUBTE_HASHTAG_FELDER.join(', ') + '.');
     }
   }
   const pruefeHashtags = (liste, wo) => {
@@ -408,6 +431,19 @@ function leseHashtagKonfiguration(text) {
   };
 
   const immer = pruefeHashtags(d.immer, 'immer');
+  // EK: die dritte Liste. FEHLT SIE, ist sie leer -- kein Fehler.
+  //
+  // Grund, und er ist eine Abwaegung, keine Bequemlichkeit: diese Funktion wird
+  // auch mit von Hand gebauten Konfigurationen gerufen (die Tests tun es), und
+  // ein Pflichtfeld haette jede davon zu einem Fehler gemacht, ohne dass an
+  // ihnen etwas kaputt waere. Der Preis: wer nur_shorts aus der echten Datei
+  // entfernt, verliert #Shorts unter den Shorts. Das faellt nicht still aus --
+  // die Hashtag-Zeile steht in der Vorschau, und tests/longform-arbeiter.test.cjs
+  // nagelt fest, dass die ECHTE Datei die Liste traegt und dass "Shorts" darin
+  // und in keiner anderen Liste steht.
+  const nurShorts = Object.prototype.hasOwnProperty.call(d, HASHTAG_FELD_NUR_SHORTS)
+    ? pruefeHashtags(d[HASHTAG_FELD_NUR_SHORTS], HASHTAG_FELD_NUR_SHORTS)
+    : [];
   const gruppen = [];
   if (!Array.isArray(d.gruppen)) {
     fehler.push(HASHTAGS_DATEI + ': gruppen ist keine Liste.');
@@ -436,7 +472,7 @@ function leseHashtagKonfiguration(text) {
     });
   }
   if (fehler.length) return { fehler };
-  return { fehler: [], immer, gruppen };
+  return { fehler: [], immer, gruppen, nur_shorts: nurShorts };
 }
 
 // Woerter eines Textes: zusammenhaengende Buchstaben und Ziffern, klein
@@ -465,6 +501,13 @@ function stichwortTrifft(titelWoerter, stichwort) {
 // Herleitung sagt zu jedem Hashtag, woher er kommt -- das ist der Teil, den
 // der Trockenlauf einem Menschen zeigt.
 function zuordneHashtags(titel, konfig) {
+  return zuordnung(titel, konfig, false);
+}
+
+// EK: der gemeinsame Kern. EINE Zaehlweise, EINE Dublettenregel, EINE
+// Reihenfolge -- der einzige Unterschied zwischen den beiden Wegen ist die
+// dritte Liste am Ende, und er steht in genau einer Zeile.
+function zuordnung(titel, konfig, mitShortsListe) {
   const tw = woerter(titel);
   const hashtags = [];
   const herleitung = [];
@@ -482,7 +525,30 @@ function zuordneHashtags(titel, konfig) {
     for (const h of g.hashtags) nimm(h, 'Gruppe ' + JSON.stringify(g.name) + ', Stichwort ' + JSON.stringify(treffer) + ' im Titel');
   }
   for (const h of konfig.immer) nimm(h, 'immer');
+  if (mitShortsListe) {
+    for (const h of konfig[HASHTAG_FELD_NUR_SHORTS] || []) nimm(h, 'nur fuer Shorts');
+  }
   return { hashtags, herleitung };
+}
+
+// EK: DER SHORTS-WEG, UND NUR ER, HAENGT DIE DRITTE LISTE AN.
+//
+// Warum eine ZWEITE Funktion und kein Schalter an der ersten: ein Schalter mit
+// Vorgabewert entscheidet im Stillen, und die Vorgabe waere hier immer fuer
+// eine der beiden Seiten die falsche. Ein Longform-Weg, der den Schalter
+// vergisst, bekaeme #Shorts unter ein Langformvideo -- genau das, was Vertrag 7
+// verbietet. Zwei Namen koennen nicht vergessen werden; wer den falschen ruft,
+// hat es geschrieben.
+//
+// zuordneHashtags KENNT die Liste nicht. Das ist Absicht: der Longform-Weg ruft
+// sie, und was sie nicht kennt, kann sie nicht versehentlich anhaengen.
+//
+// DIE REIHENFOLGE IST DER GRUND, WARUM DIE ZEILE ZEICHENGLEICH BLEIBT: die
+// Liste haengt HINTER `immer`, und dort stand "Shorts" vorher als letztes
+// Element von `immer`. Dieselbe Zaehlweise, dieselbe Dublettenregel, dieselbe
+// Stelle -- nur die Herkunftsangabe in der Herleitung sagt jetzt die Wahrheit.
+function zuordneHashtagsFuerShorts(titel, konfig) {
+  return zuordnung(titel, konfig, true);
 }
 
 // Die Felder, die fuer alle Shorts gleich sind.
@@ -543,7 +609,11 @@ function ladeKonfiguration(projektwurzel) {
   return {
     fehler: [],
     beschreibung: vorlage,
-    hashtags: { immer: hashtags.immer, gruppen: hashtags.gruppen },
+    hashtags: {
+      immer: hashtags.immer,
+      gruppen: hashtags.gruppen,
+      nur_shorts: hashtags.nur_shorts,
+    },
     veroeffentlichung: veroeffentlichung.felder,
   };
 }
@@ -607,7 +677,10 @@ function pruefeGrenzen({ kennung, titel, beschreibung }) {
 
 // Alles, was fuer einen Termin an YouTube ginge -- aus Plan und Konfiguration.
 function baueMetadaten(termin, konfig) {
-  const z = zuordneHashtags(termin.titel, konfig.hashtags);
+  // Der Shorts-Weg: mit der Shorts-Liste. Der Longform-Weg baut seine
+  // Metadaten selbst (src/upload/longform-arbeiter.js) und ruft dort
+  // zuordneHashtags ohne sie.
+  const z = zuordneHashtagsFuerShorts(termin.titel, konfig.hashtags);
   const beschreibung = fuelleBeschreibung(konfig.beschreibung.vorlage, termin.titel, z.hashtags);
   return {
     titel: termin.titel,
@@ -2250,7 +2323,8 @@ module.exports = {
   GEDAECHTNIS_ARTIFACT_TYPE, GEDAECHTNIS_SCHEMA_VERSION,
   GESPERRTE_AUFNAHMEN, pruefeSperrliste, sperreFuer,
   leseBeschreibungsvorlage, fuelleBeschreibung, leseHashtagKonfiguration, woerter, stichwortTrifft,
-  zuordneHashtags, leseVeroeffentlichung, ladeKonfiguration,
+  zuordneHashtags, zuordneHashtagsFuerShorts, leseVeroeffentlichung, ladeKonfiguration,
+  HASHTAG_FELD_NUR_SHORTS, ERLAUBTE_HASHTAG_FELDER,
   zaehleHashtags, pruefeGrenzen, baueMetadaten, zaehleTitelZeichen,
   ERMAECHTIGUNG_ARTIFACT_TYPE, ERMAECHTIGUNG_SCHEMA_VERSION, ERMAECHTIGUNG_GUELTIG_MS,
   ERMAECHTIGUNG_ZUKUNFT_MS, ZUFALL_FORM, VERBRAUCHT_MAX,

@@ -217,7 +217,7 @@ const AUSNAHMEN = [
     //
     // WENN JOSHUA DEN LINK AENDERT, greift die Ausnahme nicht mehr und der
     // Check meldet. Das ist Absicht: eine neue ID ist eine neue Entscheidung.
-    datei: 'config/shorts-beschreibung.txt',
+    datei: 'config/beschreibung.txt',
     muster: ['Kanal-ID'],
     nurSha256: ['0072c49e0bd6c0d316273e8c65a0e0ad845920a89afccf02791e86b457c2af16'],
     grund:

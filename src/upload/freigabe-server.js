@@ -161,6 +161,11 @@ const { baueSeite, baueLongformSeite } = require('./freigabe-seite');
 // Die Pfadsperre kommt aus dem Leser. Eine eigene waere eine zweite Fassung
 // derselben Regel, und zwei Fassungen einer Regel sind auf Dauer eineinhalb.
 const { neueSperre } = require('./uebergabe-leser');
+// EN: dieselbe Pruefung "liegt unterhalb", die der Arbeiter fuer die
+// Videodatei und der Beipackzettel-Leser fuer das Bild verwendet. Eine eigene
+// waere die zweite Fassung einer Regel, an der genau ein Zeichen falsch sein
+// muesste, damit ein Pfad durchginge.
+const { pfadLiegtUnter } = require('./uebergabe-leser');
 
 // DNa Punkt 2c: die Zahlen stehen an EINER Stelle -- in der Tabelle EXIT_CODES
 // in uebergabe-leser.js. Die drei Namen hier bleiben, weil sie die Faelle
@@ -1252,14 +1257,25 @@ function leseBereich(kopf, dateiGroesse) {
 // Handler unten und kennt den Modus nicht. Ein Modus, der sich seine eigenen
 // Sicherungen baut, hat sie beim naechsten Mal anders gebaut.
 //
-// DER LONGFORM-MODUS HAT GENAU EINE ROUTE UND KEINE EINZIGE MIT POST.
+// DER LONGFORM-MODUS HAT ZWEI LESENDE ROUTEN UND KEINE EINZIGE MIT POST.
 //
-// Das ist nicht Sparsamkeit, sondern die Zusage selbst: die Ansicht zeigt den
+// Die leere POST-Liste ist die Zusage selbst: die Ansicht zeigt den
 // Trockenlauf und hoert dort auf. Sie holt keinen Stand nach, spielt kein
 // Video ab, startet nichts und schickt nichts zurueck -- ihre Seite traegt
 // darum auch kein fetch, kein Formular und keinen Knopf (EL). Eine leere
 // POST-Liste laesst sich in einem Blick pruefen; "der eine Knopf schreibt ja
 // nichts" muss man glauben.
+//
+// EN: '/bild' KOMMT DAZU, UND SIE IST LESEND. Vertrag 4, Schritt 7 verlangt,
+// dass der Mensch das Thumbnail sieht, bevor er urteilt; ein Bild, das er
+// nicht sieht, kann er nicht beurteilen. Die Route liefert GENAU die eine
+// Datei aus, die der Arbeiter in seiner Befundzeile benannt hat, und sie
+// NIMMT DAZU NICHTS ENTGEGEN -- kein i, kein p, keinen Namen, keinen Pfad.
+// Was sie ausliefert, stand fest, bevor die erste Anfrage kam.
+//
+// Die Zusage "kein Weg zurueck zum Dienst" bleibt damit wahr: ein <img src>
+// ist eine Anzeige und kein Aufruf. Die Seite traegt weiterhin kein fetch,
+// kein Formular, keinen Knopf und kein Ereignis.
 //
 // WAS DAS KOSTET, und es wird nicht wegdefiniert: der Longform-Modus hat
 // keinen Knopf "Sitzung beenden". Er wird mit Strg+C in dem Terminal
@@ -1268,7 +1284,7 @@ function leseBereich(kopf, dateiGroesse) {
 // Schritte 8 bis 17), kommt die POST-Route mit ihm und nicht vorher.
 const ROUTEN_GET = {
   [MODUS_SHORTS]: new Set(['/', '/video', '/stand', '/kette', '/lauf']),
-  [MODUS_LONGFORM]: new Set(['/']),
+  [MODUS_LONGFORM]: new Set(['/', '/bild']),
 };
 const ROUTEN_POST = {
   [MODUS_SHORTS]: new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']),
@@ -1397,6 +1413,7 @@ function baueDienst(sitzung) {
       // ankommen (routenGet kennt dort nur '/'), aber "kann nicht vorkommen" ist
       // keine Sicherung, sondern eine Erwartung.
       if (pfad === '/video') { liefereVideo(req, res, abfrage); return; }
+      if (pfad === '/bild') { liefereBild(req, res, abfrage); return; }
       fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.');
       return;
     }
@@ -1491,6 +1508,113 @@ function baueDienst(sitzung) {
     if (req.method === 'HEAD') { res.end(); return; }
     const strom = fs.createReadStream(woertlich,
       { start: von, end: bis, highWaterMark: STROM_STUECK_BYTES });
+    strom.on('error', () => res.destroy());
+    res.on('close', () => strom.destroy());
+    strom.pipe(res);
+  }
+
+  // -------------------------------------------------------------------------
+  // GET /bild   (EN, Vertrag 4 Schritt 7)
+  // -------------------------------------------------------------------------
+  //
+  // SIE NIMMT NICHTS ENTGEGEN. Das ist die ganze Bauart, und sie ist der Grund,
+  // warum diese Route nicht die Stelle ist, ueber die jemand die Platte
+  // ausliest: es gibt keinen Wert, den ein Browser hierher schicken koennte und
+  // der irgendetwas an der Auslieferung aendern wuerde.
+  //
+  // Die Schwesterroute /video nimmt einen INDEX in eine beim Start gebaute
+  // Liste -- sie muss, denn drueben liegen viele Videos. Hier liegt genau ein
+  // Bild; der naechstschwaechere Entwurf waere ein Index in eine Liste der
+  // Laenge eins gewesen, und der haette einen Parameter eingefuehrt, den
+  // niemand braucht. Ein Parameter, den niemand braucht, ist ein Parameter,
+  // den eines Tages jemand benutzt.
+  //
+  // EIN MITGESCHICKTER PARAMETER IST EIN FEHLER UND WIRD ALS SOLCHER GEMELDET,
+  // statt still uebergangen zu werden. Ein "?p=..\..\irgendwas", das eine 200
+  // mit dem richtigen Bild bekommt, sieht fuer den, der es probiert, aus wie
+  // ein Treffer -- und fuer den, der die Antwort spaeter liest, wie ein Weg,
+  // den es gibt. "Wirkungslos" und "abgewiesen" sind zwei Zustaende, und die
+  // duerfen hier so wenig gleich aussehen wie sonst irgendwo in diesem Weg.
+  const NUR_TOKEN = 't';
+
+  function liefereBild(req, res, abfrage) {
+    for (const name of abfrage.keys()) {
+      if (name === NUR_TOKEN) continue;
+      fehler(res, 400, 'bildroute_nimmt_nichts_entgegen',
+        'Diese Route hat den Parameter ' + JSON.stringify(name) + ' bekommen. Sie nimmt ' +
+        'keinen entgegen -- weder einen Pfad noch einen Dateinamen noch einen Index. Sie ' +
+        'liefert genau die eine Datei aus, die der Arbeiter beim Start dieser Sitzung ' +
+        'benannt hat; ein mitgeschickter Wert kann daran nichts aendern und wird darum ' +
+        'nicht angenommen, sondern gemeldet.');
+      return;
+    }
+
+    const bild = sitzung.bild;
+    if (!bild || !bild.da) {
+      fehler(res, 409, 'kein_bild_bestimmt',
+        'Diese Sitzung hat kein Bild zu zeigen. ' + ((bild && bild.grund) || '') +
+        ' Es wird kein anderes gesucht und keines geraten.');
+      return;
+    }
+
+    // DER TORWAECHTER. Der Wert kam gerade aus der Sitzung und muss beim
+    // Bauen registriert worden sein; ist er es nicht, wirft die Sperre, und es
+    // wird nichts geoeffnet. Wortgleich der Weg, den /video geht.
+    let woertlich;
+    try {
+      woertlich = sitzung.sperre.oeffnen(bild.pfad);
+    } catch (e) {
+      fehler(res, 500, 'pfadsperre', e.message);
+      return;
+    }
+
+    let stat;
+    try {
+      stat = fs.statSync(woertlich);
+    } catch (e) {
+      fehler(res, 404, 'datei_weg',
+        'Das Bild ist seit dem Start des Dienstes nicht mehr lesbar (' + e.code + '). Der ' +
+        'Weg zurueck ist ein neuer Start: der Arbeiter bestimmt das Bild dabei neu.');
+      return;
+    }
+    if (!stat.isFile()) {
+      fehler(res, 409, 'keine_datei',
+        'Der benannte Pfad ist keine regulaere Datei mehr.');
+      return;
+    }
+    // Der Arbeiter hat die Groesse gemessen und gegen den Beipackzettel
+    // gehalten. Weicht sie jetzt ab, ist die Datei seither ersetzt worden --
+    // dann wird nicht ausgeliefert, sondern gemeldet. Genau derselbe Handgriff
+    // wie bei /video, aus genau demselben Grund: ein Mensch, der ein Bild
+    // beurteilt, soll nicht ueber ein anderes urteilen als das, dessen sha256
+    // ihm daneben angezeigt wird.
+    if (bild.bytes !== null && stat.size !== bild.bytes) {
+      fehler(res, 409, 'datei_veraendert',
+        'Das Bild ist jetzt ' + stat.size + ' Bytes gross, beim Trockenlauf waren es ' +
+        bild.bytes + '. Es wurde seither ersetzt; die sha256 auf der Seite gehoert dann ' +
+        'nicht mehr zu diesen Bytes. Starte den Dienst neu.');
+      return;
+    }
+
+    // KEIN ZWISCHENSPEICHERN, KEINE KOPIE, KEIN STANDBILD. Was hier passiert,
+    // ist ein Lesestrom von der Platte in die Antwort und sonst nichts; diese
+    // Sitzung schreibt weiterhin genau eine Datei, ihre Sperre.
+    //
+    // Kein Accept-Ranges und keine Bereichsanfrage: ein Bild wird nicht
+    // gespult. /video braucht beides, ein <img> braucht keines, und was
+    // niemand braucht, wird nicht "zur Sicherheit" mitgebaut.
+    res.writeHead(200, {
+      'Content-Type': bild.typ,
+      'Content-Length': stat.size,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      // Ein Bild, das dieser Dienst ausliefert, wird angezeigt und nicht in
+      // eine fremde Seite eingebettet. Beides kostet nichts und schliesst je
+      // einen Weg, auf dem diese Antwort woanders landen koennte.
+      'Content-Disposition': 'inline',
+    });
+    if (req.method === 'HEAD') { res.end(); return; }
+    const strom = fs.createReadStream(woertlich, { highWaterMark: STROM_STUECK_BYTES });
     strom.on('error', () => res.destroy());
     res.on('close', () => strom.destroy());
     strom.pipe(res);
@@ -2243,17 +2367,68 @@ const LONGFORM_ARBEITER = path.join(__dirname, 'longform-arbeiter.js');
 // stdout, wenn der Lauf durchkommt, und auf stderr, wenn er mit einem Befund
 // endet. Sie hier zusammenzuruehren hiesse, eine Reihenfolge zu erfinden, die
 // es zwischen zwei Stroemen nicht gibt.
+//
+// EN: --befund-json KOMMT DAZU, UND ZWAR NUR HIER. Ein Mensch, der den
+// Arbeiter im Terminal aufruft, tippt es nicht und sieht die Zeile nie; dieser
+// Dienst tippt es, weil er den Bildpfad braucht. Ohne das Argument ist die
+// Ausgabe des Arbeiters woertlich, was sie vorher war -- auf beiden Stroemen.
 function ruftLongformTrocken(aufnahme) {
-  const argumente = [LONGFORM_ARBEITER, '--aufnahme=' + aufnahme];
+  const argumente = [LONGFORM_ARBEITER, '--aufnahme=' + aufnahme, '--befund-json'];
   const lauf = spawnSync(process.execPath, argumente, {
     encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 170000,
   });
+  // Die eine Zeile wird HIER aus dem Strom genommen, sofort beim Einsammeln,
+  // und nicht erst irgendwo weiter unten. Was ab hier `err` heisst, ist das,
+  // was ein Mensch zu sehen bekommt -- es gibt keine Stelle dazwischen, an der
+  // jemand versehentlich den ungetrennten Strom weiterreicht.
+  const getrennt = trenneBefundzeile(lauf.stderr || '');
   return {
     befehl: 'node ' + path.relative(PROJEKTWURZEL, LONGFORM_ARBEITER) +
       ' --aufnahme="' + aufnahme + '"',
     code: lauf.status, fehler: lauf.error ? lauf.error.message : null,
-    aus: lauf.stdout || '', err: lauf.stderr || '',
+    aus: lauf.stdout || '', err: getrennt.text,
+    befund: getrennt.daten,
   };
+}
+
+// DIE BEFUNDZEILE AUS DEM STROM NEHMEN -- Finden und Herausnehmen in EINER
+// Funktion.
+//
+// Der Shorts-Dienst SUCHT die Zeile nur (findeVorschauJson); er zeigt stderr
+// gar nicht an, also stoert sie dort niemanden. Die Longform-Ansicht zeigt
+// BEIDE Stroeme in voller Laenge (EL) -- eine Zeile JSON mittendrin waere
+// genau das, was diese Ansicht nicht sein soll: etwas, das ein Mensch liest
+// und nicht versteht.
+//
+// Zwei getrennte Funktionen -- eine, die sucht, und eine, die kuerzt -- waeren
+// zwei Vorstellungen davon, welche Zeile gemeint ist. Eines Tages faende die
+// eine sie und die andere nicht, und dann stuende sie auf dem Schirm.
+//
+// GESUCHT WIRD NACH DEM artifact_type UND NICHT NACH DER POSITION: stderr
+// kann auch Warnungen von node tragen, und die stehen mal davor und mal
+// dahinter. Genau derselbe Grund wie beim Shorts-Dienst.
+const LONGFORM_BEFUND_TYPE = 'adw_longform_befund';
+
+function trenneBefundzeile(roh) {
+  const zeilen = String(roh).split(/\r?\n/);
+  let daten = null;
+  const bleiben = [];
+  for (const zeile of zeilen) {
+    const t = zeile.trim();
+    if (daten === null && t.startsWith('{')) {
+      let d = null;
+      try { d = JSON.parse(t); } catch (e) { d = null; }
+      if (d && d.artifact_type === LONGFORM_BEFUND_TYPE) { daten = d; continue; }
+    }
+    bleiben.push(zeile);
+  }
+  // KEIN ZWEITES KUERZEN. Die Zeile aus der Liste zu nehmen entfernt genau
+  // einen Zeilenumbruch -- denselben, den console.error hinter sie gesetzt
+  // hat. Der erste Entwurf hat danach noch ein '\n' abgeschnitten "damit es
+  // aufgeht"; EN-N1 hat das gefangen, weil stderr danach um ein Byte kuerzer
+  // war als ohne das Argument. Ein Vergleich, der Byte fuer Byte prueft,
+  // verzeiht auch das eine Byte nicht, und genau dafuer ist er da.
+  return { daten, text: bleiben.join('\n') };
 }
 
 // BEI WELCHEM RUECKGABEWERT ES ETWAS ZU ZEIGEN GIBT.
@@ -2305,18 +2480,28 @@ function longformAusgang(trocken) {
 }
 
 // Die Sitzung des Longform-Modus. Sie traegt ABSICHTLICH weniger als die des
-// Shorts-Modus: keine Karten, keine Freigabedatei, keinen Stand, keine Kette,
-// keine Videoliste und keine Pfadsperre. Was sie nicht hat, kann keine Route
-// anfassen -- und es gibt in diesem Modus auch keine, die es versuchte.
+// Shorts-Modus: keine Karten, keine Freigabedatei, keinen Stand und keine
+// Kette. Was sie nicht hat, kann keine Route anfassen -- und es gibt in diesem
+// Modus auch keine, die es versuchte.
 //
-// `trocken` ist das Ergebnis von ruftLongformTrocken(), unveraendert. Es wird
-// hier nicht ausgewertet, nicht zerlegt und nicht umsortiert; die Seite setzt
-// die beiden Stroeme ueber textContent in den Baum, und das ist der ganze Weg
-// von der Ausgabe des Arbeiters bis vor die Augen eines Menschen.
+// EN: SIE TRAEGT JETZT EINE PFADSPERRE, mit GENAU EINEM Eintrag. Der Satz
+// darueber hiess bis EN "keine Videoliste und keine Pfadsperre", und er wandert
+// hier mit, statt weiter behauptet zu werden: seit die Ansicht das Thumbnail
+// zeigt, geht ein Weg von einer Anfrage auf die Platte, und der bekommt
+// denselben Torwaechter wie der Weg zum Video im Shorts-Modus -- nicht einen
+// zweiten, der spaeter anders gebaut ist.
+//
+// `trocken` ist das Ergebnis von ruftLongformTrocken(). Seine beiden Stroeme
+// werden hier NICHT ausgewertet, nicht zerlegt und nicht umsortiert; die Seite
+// setzt sie ueber textContent in den Baum, und das ist der ganze Weg von der
+// Ausgabe des Arbeiters bis vor die Augen eines Menschen. Ausgewertet wird
+// allein `trocken.befund` -- die Zeile, die der Arbeiter AUSDRUECKLICH fuer
+// diesen Dienst herausgibt, damit niemand den Bildpfad aus dem Text schneidet.
 function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
   if (!AUFNAHME_FORM.test(String(aufnahme))) {
     throw new Error('baueLongformSitzung: die Aufnahme hat nicht die feste Form.');
   }
+  const sperre = neueSperre();
   return {
     modus: MODUS_LONGFORM,
     aufnahme,
@@ -2325,8 +2510,97 @@ function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
     token: crypto.randomBytes(32).toString('hex'),
     trocken,
     ausgang: longformAusgang(trocken),
+    sperre,
+    bild: nimmBildAuf(trocken.befund, sperre),
   };
 }
+
+// DAS EINE BILD DIESER SITZUNG -- oder keines, mit dem Grund.
+//
+// HIER STEHT DIE GANZE SICHERUNG DER BILDROUTE, und sie steht hier und nicht
+// dort, weil sie EINMAL beim Start greift und nicht bei jeder Anfrage. Eine
+// Pruefung, die je Anfrage laeuft, ist eine Pruefung, die je Anfrage umgangen
+// werden kann; eine, die den Pfad ueberhaupt nur einmal in die Sitzung laesst,
+// hat danach nichts mehr zu tun.
+//
+// DREI HUERDEN, und jede faengt etwas anderes:
+//
+//   1. Der Pfad muss unter dem Export-Ordner liegen, den DIESER Dienst in
+//      seiner eigenen Umgebung stehen hat -- nicht unter dem, den der Befund
+//      selbst nennt. Sonst prueft der Fuchs den Fuchs.
+//   2. Sein letzter Teil muss woertlich der Dateiname aus dem Befund sein.
+//      Damit ist ein "..", ein zweiter Ordner oder ein angehaengtes Stueck im
+//      Pfad kein Pfad mehr, der hier durchkommt.
+//   3. Er wird in der Pfadsperre registriert. Ab da ist ER es, der geoeffnet
+//      wird -- woertlich, unveraendert -, und alles andere wirft.
+//
+// WAS DIESE FUNKTION NICHT TUT: die Datei anfassen. Kein stat, kein open, kein
+// Hash. Ob sie noch daliegt, prueft die Route beim Ausliefern; hier geht es
+// allein darum, ob dieser Pfad ueberhaupt in die Sitzung darf.
+function nimmBildAuf(befund, sperre) {
+  const ohne = (grund) => ({ da: false, grund });
+  if (!befund) {
+    return ohne('Der Arbeiter hat keine Befundzeile ausgegeben. Ohne sie gibt es keinen ' +
+      'Bildpfad -- und aus seiner Vorschau wird keiner herausgeschnitten.');
+  }
+  if (!befund.bild) {
+    return ohne(befund.ohne_bild_weil ||
+      'Der Arbeiter hat kein einzelnes Bild bestimmt.');
+  }
+  const b = befund.bild;
+  const exportOrdner = process.env.THUMBNAIL_EXPORT_DIR || null;
+  if (!exportOrdner) {
+    return ohne('THUMBNAIL_EXPORT_DIR steht nicht in der Umgebung dieses Dienstes. Ohne den ' +
+      'Ordner gibt es nichts, wogegen der Bildpfad zu pruefen waere, und ein ungepruefter ' +
+      'Pfad wird nicht ausgeliefert.');
+  }
+  if (typeof b.pfad !== 'string' || typeof b.dateiname !== 'string' ||
+      b.pfad === '' || b.dateiname === '') {
+    return ohne('Die Befundzeile traegt keinen brauchbaren Bildpfad.');
+  }
+  if (!pfadLiegtUnter(exportOrdner, b.pfad)) {
+    return ohne('Der Bildpfad aus der Befundzeile liegt nicht unter dem Export-Ordner ' +
+      'dieses Dienstes. Es wird nichts ausgeliefert, was ausserhalb liegt.');
+  }
+  if (path.basename(b.pfad) !== b.dateiname) {
+    return ohne('Der letzte Teil des Bildpfads ist nicht der Dateiname, den die Befundzeile ' +
+      'nennt. Zwei Angaben ueber dieselbe Datei, die auseinandergehen, werden nicht ' +
+      'aufgeloest, sondern abgewiesen.');
+  }
+  if (!ERLAUBTE_BILDTYPEN.includes(b.typ)) {
+    return ohne('Die Befundzeile nennt als Inhaltstyp ' + JSON.stringify(b.typ || null) +
+      '. Ausgeliefert werden nur ' + ERLAUBTE_BILDTYPEN.join(' und ') + '.');
+  }
+  sperre.ausDatei(b.pfad);
+  return {
+    da: true,
+    grund: null,
+    pfad: b.pfad,
+    dateiname: b.dateiname,
+    bytes: typeof b.bytes === 'number' ? b.bytes : null,
+    sha256: typeof b.sha256 === 'string' ? b.sha256 : null,
+    sha256_herkunft: b.sha256_herkunft || null,
+    typ: b.typ,
+    rang: b.rang === undefined ? null : b.rang,
+    art: b.art || null,
+    zettel: b.zettel || null,
+    weitere_im_rang: typeof b.weitere_im_rang === 'number' ? b.weitere_im_rang : 0,
+    hinweise: Array.isArray(befund.hinweise) ? befund.hinweise : [],
+  };
+}
+
+// EINE FREIGABELISTE, KEINE ZWEITE ZUORDNUNG.
+//
+// Welche Endung welchen Inhaltstyp ergibt, steht im Arbeiter (BILDTYP_JE_ENDUNG)
+// und geht von dort in die Befundzeile -- dieselbe Tabelle, die auch den Typ
+// des zweiten schreibenden Aufrufs bestimmt (Vertrag 2.10). Sie hier ein
+// zweites Mal hinzuschreiben hiesse, sie eines Tages anders zu haben.
+//
+// GEPRUEFT WIRD SIE TROTZDEM, und das ist kein Widerspruch: der Wert kommt aus
+// der Ausgabe eines Kindprozesses und geht in eine Kopfzeile der Antwort. Was
+// in eine Kopfzeile geht, wird gegen eine feste Liste gehalten und nicht
+// durchgereicht, gleich wie vertrauenswuerdig die Quelle heute ist.
+const ERLAUBTE_BILDTYPEN = Object.freeze(['image/jpeg', 'image/png']);
 
 // Der eine Ausgang des Longform-Modus, der KEINE Seite hat: der Arbeiter kam
 // nicht bis zum Lesen. Sein Text wird unveraendert durchgereicht -- er hat
@@ -2745,6 +3019,8 @@ module.exports = {
   pruefeModusVerbindung, meldeLongformOhneVorschau,
   LONGFORM_ARBEITER, LONGFORM_CODES_MIT_SEITE, LONGFORM_ZUSATZ,
   ruftLongformTrocken, longformAusgang, baueLongformSitzung,
+  LONGFORM_BEFUND_TYPE, ERLAUBTE_BILDTYPEN, trenneBefundzeile, nimmBildAuf,
+  ROUTEN_GET, ROUTEN_POST,
   FREIGABE_SCHEMA_VERSION, FREIGABE_ARTIFACT_TYPE,
   TITEL_MAX_ZEICHEN, NOTIZ_MAX_ZEICHEN, MAX_ANFRAGE_BYTES,
   freigabePfad, ruftLeser, baueKarten, pruefeTitel, pruefeNotiz,

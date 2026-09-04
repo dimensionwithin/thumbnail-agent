@@ -80,7 +80,7 @@ const { pruefeArgumenteStrikt, EXIT_ARGUMENTFEHLER } = require('../publish/cli-a
 // baut. Sie bekommen darum unten ihre EIGENE Meldung: erkannt, benannt, nicht
 // gebaut. Das ist etwas anderes als "unbekanntes Argument", und es soll auch
 // anders aussehen.
-const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--zettel='];
+const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--zettel=', '--befund-json'];
 const NOCH_NICHT_GEBAUTE_ARGUMENTE = ['--bestaetigt-durch=', '--execute'];
 
 if (require.main === module) {
@@ -963,6 +963,229 @@ function umbrucheIn(zeilen, einzug, text, folgeEinzug) {
 }
 
 // ---------------------------------------------------------------------------
+// DIE BEFUNDZEILE (EN, Vertrag 4 Schritt 7)
+// ---------------------------------------------------------------------------
+//
+// EINE Zeile JSON auf stderr, nach dem Muster von --vorschau-json beim
+// Shorts-Uploader. Sie sagt AUSDRUECKLICH, welches Bild dieser Lauf bestimmt
+// hat -- damit der Freigabedienst es zeigen kann, ohne es aus der Vorschau
+// herauszulesen.
+//
+// WARUM SIE UEBERHAUPT DA IST, und das ist der ganze Grund: die Ansicht zeigt
+// den Text des Arbeiters woertlich und zerlegt ihn nicht (EL). Ein Dienst, der
+// den Bildpfad aus diesem Text herausschnitte, waere der zweite
+// Darstellungsweg, den die Ansicht gerade vermeidet -- und er stuende beim
+// naechsten Satzumbau still auf dem falschen Wort. Also gibt der Arbeiter den
+// Pfad heraus, statt dass ihn jemand errechnet.
+//
+// SIE IST NICHT DIE ZWEITE WAHRHEIT, und daran haengt alles. Jedes Feld unten
+// kommt aus DEMSELBEN `befund`, aus dem auch vorschau() ihre Saetze bildet.
+// Diese Funktion liest den Befund und rechnet nicht nach: sie oeffnet keine
+// Datei, sie liest kein Verzeichnis, sie prueft keine Pruefsumme und sie legt
+// die Matrix nicht ein zweites Mal aus. tests/longform-arbeiter.test.cjs haelt
+// das mit scharfgestellten LESENDEN fs-Funktionen fest -- ein Griff auf die
+// Platte an dieser Stelle waere genau die zweite Auslegung, die dieser Vertrag
+// durchgehend verbietet. Der einzige Weg, an dem sie etwas ZUSAMMENSETZT, ist
+// der Bildpfad aus Export-Ordner und Dateiname, und beide stehen im Befund.
+//
+// SIE GEHT AUF stderr, wie beim Shorts-Uploader und aus demselben Grund: der
+// Trockenlauf hat GENAU EINE Ausgabe fuer Menschen, und die soll ohne dieses
+// Argument Byte fuer Byte bleiben, was sie ist. Anders als drueben zeigt die
+// Longform-Ansicht aber BEIDE Stroeme -- also nimmt der Dienst die Zeile
+// wieder heraus, bevor er den Strom anzeigt (freigabe-server.js,
+// trenneBefundzeile). Ohne dieses Herausnehmen laese ein Mensch JSON.
+const BEFUND_ARTIFACT_TYPE = 'adw_longform_befund';
+const BEFUND_SCHEMA_VERSION = '1.0';
+
+// WAS RANG UND ART FUER DEN MENSCHEN BEDEUTEN, der das Bild gleich ansieht.
+// Ein Bild aus Rang 2 sieht auf dem Schirm genauso aus wie eines aus Rang 1;
+// der Unterschied ist, ob es ohne Rueckfrage genommen wird oder nie. Das ist
+// die eine Auskunft, die neben dem Bild stehen muss, und Vertrag 2.7 sagt sie
+// in einem Satz: "Rang 2 und 3 werden nie zur Regel."
+//
+// WAS HIER AUSDRUECKLICH NICHT STEHT: warum der Leser diesen Rang vergeben
+// hat. Das ist die Zustandsmatrix, sie steht in genau einem Modul, und ihre
+// Meldung zu dieser Zelle steht als naechster Hinweis direkt darunter -- in
+// den Worten des Lesers. Der erste Anlauf dieser Tabelle hat den Grund
+// nacherzaehlt; tests/longform-arbeiter.test.cjs (EK-T2) hat das gefangen, und
+// zwar zu Recht: eine Nacherzaehlung ist eine zweite Auslegung, sobald sich
+// die erste aendert.
+const RANG_ART = Object.freeze({
+  1: {
+    art: 'regel',
+    satz: 'Rang 1 -- REGEL: dieses Bild wird ohne Rueckfrage genommen. Der Grund steht im ' +
+      'naechsten Hinweis, in den Worten des Beipackzettel-Lesers.',
+  },
+  2: {
+    art: 'vorschlag',
+    satz: 'Rang 2 -- VORSCHLAG und keine Regel: dieses Bild wird nie ohne Rueckfrage ' +
+      'genommen, auch dann nicht, wenn der Vorschlag zehnmal hintereinander richtig lag. ' +
+      'Der Grund steht im naechsten Hinweis.',
+  },
+  3: {
+    art: 'vorschlag',
+    satz: 'Rang 3 -- VORSCHLAG aus einer Bilddatei OHNE Beipackzettel: ueber dieses Bild ist ' +
+      'nichts aufgeschrieben, kein Titel, kein Datum, kein Format. Sein Dateiname sieht ' +
+      'vielleicht aus, als truege er eines; er wird gezeigt und nicht gedeutet.',
+  },
+});
+
+// Der Inhaltstyp aus der ENDUNG, aus DERSELBEN Tabelle, aus der ihn der
+// zweite schreibende Aufruf nimmt (Vertrag 2.10). Der Freigabedienst setzt ihn
+// in die Kopfzeile der Bildantwort; haette er dafuer eine eigene Tabelle,
+// gaebe es zwei Wege von einer Endung zu einem Typ, und einer davon waere
+// eines Tages der falsche. Eine unbekannte Endung ergibt null -- und ein Bild
+// ohne bekannten Typ wird nicht ausgeliefert, statt einen geratenen zu
+// bekommen.
+function bildtypVon(dateiname) {
+  return BILDTYP_JE_ENDUNG[path.extname(String(dateiname)).toLowerCase()] || null;
+}
+
+// Das EINE Bild, das dieser Lauf bestimmt hat -- oder keines.
+//
+// Die drei Faelle sind die drei Raenge, und sie stehen hier in derselben
+// Reihenfolge wie in der Rangfolge des Vertrags. Wo der Beipackzettel-Leser
+// NICHT gewaehlt hat -- zwei Kandidaten, ein ungueltiges Kandidatenbild, gar
+// kein Kandidat -- gibt es kein Bild, und dann steht hier null und nicht das
+// erstbeste. Ein Bild, das der Arbeiter nicht bestimmt hat, darf die Seite
+// nicht zeigen: sie zeigte sonst eine Wahl, die niemand getroffen hat.
+function bestimmtesBild(thumbnail) {
+  if (!thumbnail) return null;
+  const zt = gewaehlterZettel(thumbnail);
+  if (zt) {
+    const bb = zt.bildbefund || {};
+    return {
+      rang: thumbnail.rang,
+      dateiname: zt.bild.dateiname,
+      typ: bildtypVon(zt.bild.dateiname),
+      // Die GEMESSENE Groesse und die GEMESSENE Pruefsumme, nicht die Angaben
+      // des Zettels: was ausgeliefert wird, sind die Bytes auf der Platte.
+      // Dass beide uebereinstimmen, hat der Leser vorher geprueft -- taeten
+      // sie es nicht, gaebe es hier keinen Kandidaten mehr (BILD_UNGUELTIG).
+      bytes: typeof bb.gemessen_bytes === 'number' ? bb.gemessen_bytes : null,
+      sha256: typeof bb.gemessen_sha256 === 'string' ? bb.gemessen_sha256 : null,
+      sha256_herkunft: typeof bb.gemessen_sha256 === 'string'
+        ? 'gemessen und gegen den Beipackzettel geprueft'
+        : 'nicht gerechnet',
+      zettel: zt.dateiname,
+      matrixzeile: zt.zeile,
+      weitere_im_rang: 0,
+    };
+  }
+  // Rang 3: eine Bilddatei ohne Zettel. Der Lauf bricht trotzdem ab (kein
+  // Zettel, kein Titel, 2.8) -- das Bild ist davon unberuehrt und steht in der
+  // Liste. Vertrag 2.7 nennt das ausdruecklich zwei Ebenen und keinen
+  // Widerspruch: "Bild gefunden" und "Upload moeglich" duerfen nicht gleich
+  // aussehen.
+  if (thumbnail.rang === 3 && Array.isArray(thumbnail.vorschlaege) &&
+      thumbnail.vorschlaege.length > 0) {
+    // Das ERSTE der Liste, juengstes zuerst -- dasselbe, dessen Dateinamen der
+    // Knopf spaeter traegt (Vertrag 2.7, "Mehrere Bilder ohne Zettel").
+    const b = thumbnail.vorschlaege[0];
+    return {
+      rang: 3,
+      dateiname: b.dateiname,
+      typ: bildtypVon(b.dateiname),
+      bytes: typeof b.bytes === 'number' ? b.bytes : null,
+      // KEINE PRUEFSUMME, UND DAS WIRD GESAGT. Der Beipackzettel-Leser rechnet
+      // sie nur fuer Kandidaten MIT Zettel (Vertrag 3.3: es wird keine Datei
+      // geoeffnet ausser zum Rechnen der sha256 fuer die Vorschau). Sie hier
+      // nachzurechnen waere eine Messung, die in der Vorschau daneben nicht
+      // steht -- also die zweite Quelle. Ein null mit Grund ist ehrlicher als
+      // eine Zahl, die nur diese Zeile kennt.
+      sha256: null,
+      sha256_herkunft: 'nicht gerechnet: Bild ohne Beipackzettel (Rang 3). Der ' +
+        'Beipackzettel-Leser rechnet die Pruefsumme nur fuer Kandidaten mit Zettel; es ' +
+        'gibt hier nichts, wogegen sie zu pruefen waere.',
+      zettel: null,
+      matrixzeile: b.zeile,
+      weitere_im_rang: thumbnail.vorschlaege.length - 1,
+    };
+  }
+  return null;
+}
+
+// Die Hinweise, die zu DIESEM Bild gehoeren. Jeder einzelne ist ein Satz aus
+// dem Befund -- die Meldung seiner Matrixzelle, der Befund seiner Bilddatei,
+// der Satz des Fensters, der Grund des Abbruchs. Diese Funktion formuliert
+// keinen davon um und erfindet keinen dazu; der einzige Satz, der von hier
+// stammt, ist der des Rangs (RANG_ART oben), und der benennt eine Zahl, die
+// der Leser gesetzt hat.
+function bildhinweise(thumbnail, bild, abbruch) {
+  const h = [];
+  if (!thumbnail || !bild) return h;
+  const art = RANG_ART[bild.rang];
+  if (art) h.push(art.satz);
+  const zt = gewaehlterZettel(thumbnail);
+  if (zt) {
+    h.push(zt.meldung);
+    if (zt.bildbefund && zt.bildbefund.satz) h.push(zt.bildbefund.satz);
+    if (zt.durch_weitung) h.push(thumbnail.fenster.satz);
+  } else if (bild.rang === 3) {
+    const b = thumbnail.vorschlaege[0];
+    h.push(b.meldung);
+    if (b.durch_weitung) h.push(thumbnail.fenster.satz);
+    if (bild.weitere_im_rang > 0) {
+      h.push('Es liegen ' + (bild.weitere_im_rang + 1) + ' Bilder ohne Zettel im Fenster, ' +
+        'juengstes zuerst; dieses ist das juengste. Der Weg zu einem anderen ist der ' +
+        'Compositor: neu exportieren, dann liegt ein Zettel daneben. Ein Argument fuer eine ' +
+        'Bilddatei gibt es nicht.');
+    }
+  }
+  // Der Abbruch gehoert zum Bild, wenn es trotz Abbruch eines gibt -- genau
+  // der Rang-3-Fall. Ohne ihn saehe das Bild aus, als koennte man es nehmen.
+  if (abbruch) {
+    h.push('Dieser Lauf endet trotzdem mit einem Befund (' + abbruch.code + ', Vertrag ' +
+      abbruch.nach + '): ' + abbruch.satz);
+  }
+  return h;
+}
+
+function befundJson(befund) {
+  const bild = bestimmtesBild(befund.thumbnail);
+  const art = bild ? RANG_ART[bild.rang] : null;
+  return {
+    artifact_type: BEFUND_ARTIFACT_TYPE,
+    schema_version: BEFUND_SCHEMA_VERSION,
+    aufnahme: befund.aufnahme,
+    export_ordner: befund.export_ordner,
+    // Der Rang steht AUCH ausserhalb von `bild`, und zwar mit dem Wert des
+    // Leser-Befunds: es gibt Laeufe mit einem Rang und ohne Bild (zwei
+    // Kandidaten, ungueltiges Kandidatenbild). "Kein Bild" und "kein Rang"
+    // sind zwei Zustaende.
+    rang: befund.thumbnail ? befund.thumbnail.rang : null,
+    art: art ? art.art : null,
+    bild: bild === null ? null : {
+      // Der Pfad wird aus zwei Werten des Befunds zusammengesetzt und aus
+      // keiner dritten Stelle geholt. Er ist der einzige Grund, aus dem diese
+      // Zeile ueberhaupt existiert.
+      pfad: path.join(befund.export_ordner, bild.dateiname),
+      dateiname: bild.dateiname,
+      typ: bild.typ,
+      bytes: bild.bytes,
+      sha256: bild.sha256,
+      sha256_herkunft: bild.sha256_herkunft,
+      rang: bild.rang,
+      art: art ? art.art : null,
+      zettel: bild.zettel,
+      matrixzeile: bild.matrixzeile,
+      weitere_im_rang: bild.weitere_im_rang,
+    },
+    hinweise: bildhinweise(befund.thumbnail, bild, befund.abbruch),
+    // WARUM ES KEIN BILD GIBT, wenn es keines gibt. Ohne diesen Satz saehe
+    // "der Lauf hat keines bestimmt" aus wie "die Zeile hat es vergessen".
+    ohne_bild_weil: bild !== null ? null
+      : (befund.abbruch
+        ? 'Der Lauf endet mit ' + befund.abbruch.code + ' (Vertrag ' + befund.abbruch.nach +
+          '), und dabei hat der Beipackzettel-Leser kein einzelnes Bild bestimmt. ' +
+          befund.abbruch.satz
+        : 'Der Beipackzettel-Leser hat kein Bild bestimmt.'),
+    abbruch: befund.abbruch === null ? null
+      : { code: befund.abbruch.code, nach: befund.abbruch.nach },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -1016,6 +1239,16 @@ function main() {
       JSON.stringify(aufnahme) + '\n');
     process.exit(EXIT_AUFRUFFEHLER);
   }
+  // Ein Schalter ohne Wert, WOERTLICH verglichen und nicht mit startsWith.
+  //
+  // Eine eigene Meldung fuer "--befund-json=irgendwas" braucht es hier NICHT,
+  // und der erste Entwurf hatte trotzdem eine: pruefeArgumenteStrikt vergleicht
+  // Eintraege ohne "=" woertlich und weist die Fassung mit Wert schon vor
+  // dieser Zeile ab, mit der Liste der zulaessigen Argumente darunter. Der
+  // Nachbau war toter Code -- er stand da, sah nach Sorgfalt aus und ist nie
+  // gelaufen. Gefunden hat ihn der Test, der ihn ausloesen wollte.
+  const befundZeileGewuenscht = process.argv.slice(2).includes('--befund-json');
+
   const zettel = wertVon(process.argv, '--zettel=');
   if (zettel !== null && (zettel.trim() === '' || path.basename(zettel) !== zettel)) {
     console.error('\nAbbruch: --zettel= ist ' + JSON.stringify(zettel) + ' und kein blosser');
@@ -1049,15 +1282,42 @@ function main() {
     process.exit(EXIT_AUFRUFFEHLER);
   }
 
+  // BEIDE AUSGABEN AUS EINEM BEFUND, und zwar sichtbar aus einem: die Vorschau
+  // steht schon in befund.saetze, die Zeile wird hier daneben gebildet -- aus
+  // derselben Veraenderlichen, in derselben Zeile Code. Zwei Aufrufe an zwei
+  // Stellen weiter unten waeren zwei Gelegenheiten, an einer davon einen
+  // anderen Befund zu erwischen.
+  //
+  // Sie wird IMMER gebildet, auch ohne das Argument. Eine Zeile, die nur
+  // gebaut wird, wenn jemand sie sehen will, ist eine Zeile, die im Test
+  // gruen ist und im Ernstfall zum ersten Mal laeuft.
   const text = befund.saetze.join('\n');
+  const zeile = befundJson(befund);
   if (befund.abbruch) {
     // Der Befund geht auf stderr, damit der Freigabedienst ihn durchreichen
     // kann, ohne ihn von der Vorschau trennen zu muessen (Vertrag 6).
     console.error(text);
+    schreibeBefundzeile(befundZeileGewuenscht, zeile);
     process.exit(befund.abbruch.wert);
   }
   console.log(text);
+  schreibeBefundzeile(befundZeileGewuenscht, zeile);
   process.exit(EXIT_OK);
+}
+
+// NACH der Vorschau und auf stderr -- beides absichtlich.
+//
+// Auf stderr, weil stdout die Vorschau fuer Menschen ist und ohne dieses
+// Argument Byte fuer Byte bleiben soll, was sie ist (dasselbe Argument wie
+// beim Shorts-Uploader, DR).
+//
+// NACH der Vorschau, weil im Abbruchfall beide in DENSELBEN Strom gehen: die
+// Vorschau steht dann zuerst und vollstaendig da, und die eine Zeile haengt
+// hinten dran. Ein Mensch im Terminal, der das Argument selbst gar nicht
+// tippt, sieht sie nie; der Dienst, der es tippt, nimmt sie wieder heraus.
+function schreibeBefundzeile(gewuenscht, zeile) {
+  if (!gewuenscht) return;
+  console.error(JSON.stringify(zeile));
 }
 
 if (require.main === module) main();
@@ -1072,4 +1332,6 @@ module.exports = {
   videoDateiname, befundeVideodatei, vergleicheGroesse,
   leiteTagsAb, leiteTagsAbVertauscht, hinweiseZuTags, baueLongformMetadaten,
   trockenlauf, gewaehlterZettel, vorschau, umbrucheIn,
+  BEFUND_ARTIFACT_TYPE, BEFUND_SCHEMA_VERSION, RANG_ART,
+  bestimmtesBild, bildhinweise, befundJson,
 };

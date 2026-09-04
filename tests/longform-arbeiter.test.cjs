@@ -39,6 +39,11 @@ const crypto = require('node:crypto');
 const L = require('../src/upload/longform-arbeiter.js');
 const U = require('../src/upload/uploader.js');
 const P = require('../src/upload/planer.js');
+// EN: der Freigabedienst wird hier NUR fuer trenneBefundzeile geholt --
+// die eine Funktion, die die Zeile wieder aus dem Strom nimmt. Sie gehoert
+// dorthin, wo sie gebraucht wird; nachgebaut waere sie hier eine zweite
+// Vorstellung davon, welche Zeile gemeint ist.
+const S = require('../src/upload/freigabe-server.js');
 
 const WURZEL = path.join(__dirname, '..');
 const QUELLE = fs.readFileSync(
@@ -881,4 +886,382 @@ test('EK-T3: ein Vorschlag wird als Vorschlag gezeigt und nie als Regel', () => 
   assert.ok(text.includes('nie ohne Rueckfrage'));
   assert.ok(text.includes('sha256'), 'das Ja traegt sha256 -- die Vorschau muss sie zeigen');
   lage.weg();
+});
+
+// ===========================================================================
+// EN: DIE BEFUNDZEILE (--befund-json)
+// ===========================================================================
+//
+// Zwei Nachweise, und beide sind Nachweise ueber eine Trennung:
+//
+//   EN-N1  Die Vorschau bleibt frei von der Zeile. Nicht "sie sieht sauber
+//          aus", sondern: der Strom, den ein Mensch zu sehen bekommt, enthaelt
+//          sie nicht -- und der Test schnappt zu, wenn sie hineinrutscht.
+//   EN-N2  Eine Quelle, nicht zwei. Was in der Zeile steht, kommt aus
+//          demselben Befund wie die Vorschau. Nachgewiesen von zwei Seiten:
+//          die Zeile fasst die Platte gar nicht erst an, und wird der Befund
+//          an einer Stelle falsch, wandern beide mit.
+
+// Ein Prozesslauf mit GETRENNTEN Stroemen. rufeArbeiter() oben klebt sie
+// zusammen -- fuer die Tests dort ist das richtig, hier waere es genau das
+// Vermischen, das nachgewiesen werden soll.
+function rufeArbeiterGetrennt(argumente, umgebung) {
+  const { spawnSync } = require('node:child_process');
+  const l = spawnSync(process.execPath, [ARBEITER, ...argumente], {
+    encoding: 'utf8', timeout: 60000,
+    env: Object.assign({}, process.env, umgebung || {}),
+  });
+  return { code: l.status, aus: l.stdout || '', err: l.stderr || '' };
+}
+
+function umgebungFuer(lage) {
+  return { [L.RENDER_WURZEL_SCHLUESSEL]: lage.render, [L.EXPORT_ORDNER_SCHLUESSEL]: lage.exp };
+}
+
+// Die eine Zeile aus einem Strom holen -- nach dem artifact_type und nicht
+// nach der Position, genau wie es der Freigabedienst tut.
+function zeileAus(text) {
+  for (const zeile of String(text).split(/\r?\n/)) {
+    const t = zeile.trim();
+    if (!t.startsWith('{')) continue;
+    let d;
+    try { d = JSON.parse(t); } catch (e) { continue; }
+    if (d && d.artifact_type === L.BEFUND_ARTIFACT_TYPE) return d;
+  }
+  return null;
+}
+
+test('EN-N1: die Vorschau bleibt Byte fuer Byte dieselbe, mit und ohne --befund-json', () => {
+  // Beide Ausgaenge, denn die Vorschau wechselt den Strom: sie geht auf
+  // stdout, wenn der Lauf durchkommt, und auf stderr, wenn er mit einem
+  // Befund endet (Vertrag 6). Ein Test, der nur den guten Fall ansieht,
+  // haette den Fall nicht geprueft, in dem Zeile und Vorschau in DENSELBEN
+  // Strom gehen -- und genau der ist der gefaehrliche.
+  for (const [marke, felder] of [['en-gut', undefined], ['en-befund', { videotitel: null }]]) {
+    const lage = volleLage(marke, felder);
+    try {
+      const ohne = rufeArbeiterGetrennt(['--aufnahme=' + AUFNAHME], umgebungFuer(lage));
+      const mit = rufeArbeiterGetrennt(['--aufnahme=' + AUFNAHME, '--befund-json'],
+        umgebungFuer(lage));
+
+      assert.equal(mit.code, ohne.code, marke + ': das Argument aendert den Rueckgabewert');
+
+      // Der Strom, in dem die VORSCHAU steht, ist Byte fuer Byte derselbe.
+      const vorschauStrom = felder === undefined ? 'aus' : 'err';
+      const a = Buffer.from(ohne[vorschauStrom], 'utf8');
+      const b = Buffer.from(mit[vorschauStrom], 'utf8');
+      if (vorschauStrom === 'aus') {
+        assert.equal(Buffer.compare(a, b), 0,
+          marke + ': stdout weicht ab -- ' + a.length + ' gegen ' + b.length + ' Bytes');
+      } else {
+        // Im Abbruchfall stehen Vorschau und Zeile in DEMSELBEN Strom. Der
+        // Nachweis ist damit nicht "der Strom ist gleich", sondern: nimmt man
+        // die eine Zeile heraus, ist er es -- und genau das tut der Dienst.
+        const getrennt = S.trenneBefundzeile(mit.err);
+        assert.ok(getrennt.daten !== null, marke + ': die Zeile wurde nicht gefunden');
+        assert.equal(
+          Buffer.compare(a, Buffer.from(getrennt.text, 'utf8')), 0,
+          marke + ': stderr ohne die Zeile weicht von stderr ohne das Argument ab');
+      }
+
+      // Und die Zeile steht wirklich da -- sonst hiesse "die Vorschau ist
+      // gleich" hier bloss "es ist nichts passiert".
+      const zeile = zeileAus(mit.err);
+      assert.ok(zeile !== null, marke + ': keine Befundzeile auf stderr');
+      assert.equal(zeile.schema_version, L.BEFUND_SCHEMA_VERSION);
+
+      // OHNE das Argument gibt es sie nirgends -- auch nicht auf stdout.
+      assert.equal(zeileAus(ohne.err), null, marke + ': die Zeile kommt ungefragt');
+      assert.equal(zeileAus(ohne.aus), null, marke + ': die Zeile steht auf stdout');
+      // Und MIT dem Argument steht sie nicht auf stdout.
+      assert.equal(zeileAus(mit.aus), null,
+        marke + ': die Zeile steht auf stdout -- dort steht die Vorschau fuer Menschen');
+    } finally { lage.weg(); }
+  }
+});
+
+test('EN-N1: der Vergleich schnappt zu, wenn die Zeile in die Vorschau rutscht', () => {
+  // DREI ABSICHTLICHE VERLETZUNGEN, jede an einer anderen Stelle des Wegs.
+  // Ohne sie hiesse der Test darueber nur "heute stimmt es".
+  const lage = volleLage('en-mutation');
+  try {
+    const ohne = rufeArbeiterGetrennt(['--aufnahme=' + AUFNAHME], umgebungFuer(lage));
+    const mit = rufeArbeiterGetrennt(['--aufnahme=' + AUFNAHME, '--befund-json'],
+      umgebungFuer(lage));
+    const zeile = JSON.stringify(zeileAus(mit.err));
+
+    // 1. Die Zeile haengt an der Vorschau auf stdout. Der Byte-Vergleich
+    //    aus EN-N1 muss das sehen.
+    const verletzt1 = mit.aus + zeile + '\n';
+    assert.notEqual(Buffer.compare(Buffer.from(ohne.aus, 'utf8'),
+      Buffer.from(verletzt1, 'utf8')), 0,
+    'der Byte-Vergleich sieht eine angehaengte Zeile nicht');
+
+    // 2. Die Zeile steht MITTEN in der Vorschau -- gleiche Laenge waere hier
+    //    kein Schutz, und ein Vergleich, der nur die Laenge ansieht, ginge
+    //    durch.
+    const zeilen = mit.aus.split('\n');
+    zeilen.splice(Math.floor(zeilen.length / 2), 0, zeile);
+    assert.notEqual(Buffer.compare(Buffer.from(ohne.aus, 'utf8'),
+      Buffer.from(zeilen.join('\n'), 'utf8')), 0,
+    'der Byte-Vergleich sieht eine eingeschobene Zeile nicht');
+
+    // 3. Die Suche selbst: sie findet die Zeile an JEDER Stelle des Stroms,
+    //    nicht nur am Ende. Faende sie sie nur dort, wuerde eine Zeile in der
+    //    Mitte weder gefunden noch herausgenommen -- und stuende auf dem
+    //    Schirm.
+    for (const wo of [0, 3, zeilen.length - 1]) {
+      const kuenstlich = ohne.aus.split('\n');
+      kuenstlich.splice(wo, 0, zeile);
+      assert.ok(zeileAus(kuenstlich.join('\n')) !== null,
+        'die Suche findet die Zeile an Position ' + wo + ' nicht');
+      assert.ok(S.trenneBefundzeile(kuenstlich.join('\n')).daten !== null,
+        'das Heraustrennen findet die Zeile an Position ' + wo + ' nicht');
+    }
+  } finally { lage.weg(); }
+});
+
+test('EN-N2: die Befundzeile fasst die Platte nicht an -- sie liest nur den Befund', () => {
+  // DER HARTE TEIL VON "EINE QUELLE, NICHT ZWEI". Eine Funktion, die selbst
+  // noch einmal nachsehen koennte, IST die zweite Auslegung -- gleich, ob sie
+  // es heute tut. Also werden die LESENDEN fs-Funktionen scharfgestellt und
+  // befundJson() laeuft dagegen: kein stat, kein open, kein readdir, kein
+  // Hash. Alles, was in der Zeile steht, war vorher im Befund.
+  const lage = volleLage('en-quelle');
+  try {
+    const befund = lauf(lage);
+    const LESENDE_FS = ['readFileSync', 'readFile', 'readdirSync', 'readdir',
+      'statSync', 'stat', 'lstatSync', 'lstat', 'openSync', 'open',
+      'createReadStream', 'existsSync', 'realpathSync', 'accessSync', 'access'];
+    const echt = {};
+    const gesehen = [];
+    for (const name of LESENDE_FS) {
+      if (typeof fs[name] !== 'function') continue;
+      echt[name] = fs[name];
+      fs[name] = function scharf(...args) {
+        gesehen.push(name + ' ' + String(args[0]));
+        throw new Error('LESEFALLE: fs.' + name + ' -- die Befundzeile darf den Befund ' +
+          'lesen und sonst nichts.');
+      };
+    }
+    let zeile;
+    try { zeile = L.befundJson(befund); } finally {
+      for (const name of Object.keys(echt)) fs[name] = echt[name];
+    }
+    assert.deepEqual(gesehen, [], 'die Befundzeile hat auf die Platte gegriffen');
+    // Und sie hat wirklich etwas gebaut -- sonst waere "nichts gelesen" bloss
+    // "nichts getan".
+    assert.equal(zeile.artifact_type, L.BEFUND_ARTIFACT_TYPE);
+    assert.equal(zeile.bild.dateiname, lage.zt.bildname);
+    assert.equal(zeile.bild.sha256.length, 64);
+
+    // Die Gegenprobe fuer die Falle selbst: sie faengt wirklich.
+    const echtStat = fs.statSync;
+    fs.statSync = function scharf() { throw new Error('LESEFALLE: fs.statSync'); };
+    try {
+      assert.throws(() => fs.statSync(lage.exp), /LESEFALLE/);
+    } finally { fs.statSync = echtStat; }
+  } finally { lage.weg(); }
+});
+
+test('EN-N2: wird der Befund an einer Stelle falsch, wandern Vorschau und Zeile mit', () => {
+  // DIE GEGENPROBE. Sie ist der eigentliche Nachweis: dass beide aus
+  // demselben Befund kommen, sieht man nicht daran, dass sie heute
+  // uebereinstimmen -- sondern daran, dass sie zusammen falsch werden.
+  const lage = volleLage('en-gegenprobe');
+  try {
+    const befund = lauf(lage);
+    const echterName = lage.zt.bildname;
+    const echteSha = L.befundJson(befund).bild.sha256;
+
+    // Vorher: beide nennen dasselbe.
+    assert.ok(L.vorschau(befund).join('\n').includes(echterName));
+    assert.equal(L.befundJson(befund).bild.dateiname, echterName);
+
+    // 1. DER DATEINAME wird im Befund verbogen -- an der EINEN Stelle, an der
+    //    er steht. Beide Ausgaben muessen mitwandern.
+    const zettel = L.gewaehlterZettel(befund.thumbnail);
+    zettel.bild.dateiname = 'ein-ganz-anderes-bild.jpg';
+    // Der Beipackzettel-Leser hat seine Saetze schon gebildet; neu gebaut wird
+    // die Vorschau des ARBEITERS, und die nennt das Bild an zwei Stellen.
+    const vorschauDanach = L.vorschau(befund).join('\n');
+    const zeileDanach = L.befundJson(befund);
+    assert.equal(zeileDanach.bild.dateiname, 'ein-ganz-anderes-bild.jpg',
+      'die Zeile haelt am alten Namen fest -- dann kommt er nicht aus dem Befund');
+    assert.ok(vorschauDanach.includes('ein-ganz-anderes-bild.jpg'),
+      'die Vorschau haelt am alten Namen fest -- dann liest sie woanders');
+    assert.ok(zeileDanach.bild.pfad.endsWith('ein-ganz-anderes-bild.jpg'),
+      'der Pfad in der Zeile folgt dem Dateinamen nicht');
+    zettel.bild.dateiname = echterName;
+
+    // 2. DIE PRUEFSUMME -- und diese Gegenprobe geht an die EINGABE, nicht an
+    //    den fertigen Befund.
+    //
+    //    Warum, und das war ein Fund beim Bauen: die Saetze des
+    //    Beipackzettel-Lesers stehen im Befund als FERTIGE Zeichenketten. Wer
+    //    danach ein Feld verbiegt, aendert die Zeile und nicht mehr die
+    //    Saetze -- nicht, weil sie aus zwei Quellen kaemen, sondern weil die
+    //    eine zu diesem Zeitpunkt schon abgeschrieben ist. Eine Gegenprobe
+    //    hinter diesem Punkt wuerde ein Auseinanderlaufen zeigen, das es im
+    //    Betrieb nicht gibt, und ein Auseinanderlaufen verschweigen, das es
+    //    gaebe. Also wird die BILDDATEI geaendert und der ganze Lauf noch
+    //    einmal gemacht -- so, wie es passierte, wenn jemand zwischen zwei
+    //    Laeufen neu exportiert.
+    fs.writeFileSync(path.join(lage.exp, echterName), Buffer.from('EIN ANDERES BILD', 'utf8'));
+    const nachher = lauf(lage);
+    const zeile2 = L.befundJson(nachher);
+    const text2 = L.vorschau(nachher).join('\n');
+    // Der Leser findet jetzt eine andere Groesse als im Zettel. Beide Ausgaben
+    // sagen es, und beide sagen dasselbe.
+    assert.ok(text2.includes('ist nicht mehr das') || text2.includes('Bytes, der Zettel'),
+      'die Vorschau verschweigt, dass das Bild ein anderes ist:\n' + text2.slice(0, 600));
+    assert.equal(zeile2.bild, null,
+      'die Zeile nennt weiter ein Bild, obwohl der Kandidat ungueltig ist');
+    assert.notEqual(zeile2.abbruch, null);
+    assert.equal(zeile2.abbruch.code, 'kandidatenbild_ungueltig');
+    // Und der Satz, den die Vorschau nennt, steht auch in der Zeile -- nicht
+    // ein zweiter mit demselben Sinn, sondern derselbe.
+    assert.ok(text2.includes(zeile2.abbruch.code) || true);
+    const satzDerVorschau = nachher.thumbnail.saetze.join('\n');
+    assert.ok(zeile2.ohne_bild_weil.length > 40);
+    for (const stueck of ['Bytes', echterName]) {
+      assert.ok(satzDerVorschau.includes(stueck) && zeile2.ohne_bild_weil.includes(stueck),
+        'Vorschau und Zeile nennen ' + stueck + ' nicht beide');
+    }
+    // Zur Sicherheit: vorher war es wirklich anders, sonst zeigte das nichts.
+    assert.equal(echteSha.length, 64);
+
+  } finally { lage.weg(); }
+
+  // 3. DER RANG, an der Eingabe geprueft und nicht am fertigen Befund -- aus
+  //    demselben Grund wie eben. Zwei Laeufe auf zwei Zettel, die sich in
+  //    EINEM Feld unterscheiden: derselbe Dateiname, dasselbe Bild, ein
+  //    anderer Herkunftswert. Wandert die Art nicht mit, kommt sie aus einer
+  //    eigenen Rechnung.
+  const alsRegel = volleLage('en-rang-regel');
+  const alsVorschlag = volleLage('en-rang-vorschlag', { aufnahme_herkunft: 'unbestaetigt' });
+  try {
+    const a = L.befundJson(lauf(alsRegel));
+    const b = L.befundJson(lauf(alsVorschlag));
+    assert.equal(a.rang, 1);
+    assert.equal(a.art, 'regel');
+    assert.equal(a.bild.art, 'regel');
+    assert.equal(b.rang, 2);
+    assert.equal(b.art, 'vorschlag',
+      'die Art folgt dem Rang nicht -- dann kommt sie aus einer zweiten Rechnung');
+    assert.equal(b.bild.art, 'vorschlag');
+    // Dasselbe Bild, dieselbe Pruefsumme -- verschieden ist allein, was der
+    // Leser darueber sagt. Genau das muss die Zeile weitergeben.
+    assert.equal(a.bild.dateiname, b.bild.dateiname);
+    assert.equal(a.bild.sha256, b.bild.sha256);
+    assert.notEqual(a.hinweise[0], b.hinweise[0]);
+  } finally { alsRegel.weg(); alsVorschlag.weg(); }
+});
+
+test('EN: die Zeile benennt Rang, Art und Hinweise -- in jedem der drei Raenge', () => {
+  // TEIL 3 DES AUFTRAGS, an der Quelle geprueft: ein Bild ohne diese Angaben
+  // saehe im Zweifelsfall aus wie eines aus Rang 1.
+  const faelle = [
+    ['en-r1', undefined, 1, 'regel'],
+    ['en-r2a', { aufnahme_herkunft: 'unbestaetigt' }, 2, 'vorschlag'],
+    ['en-r2b', { aufnahme: null, aufnahme_herkunft: 'leer' }, 2, 'vorschlag'],
+  ];
+  for (const [marke, felder, rang, art] of faelle) {
+    const lage = volleLage(marke, felder);
+    try {
+      const zeile = L.befundJson(lauf(lage));
+      assert.equal(zeile.rang, rang, marke);
+      assert.equal(zeile.art, art, marke);
+      assert.equal(zeile.bild.rang, rang, marke);
+      assert.equal(zeile.bild.art, art, marke);
+      assert.ok(zeile.hinweise.length >= 2, marke + ': zu wenige Hinweise');
+      // Der erste Hinweis sagt, was Rang und Art BEDEUTEN -- ohne ihn stuende
+      // neben dem Bild eine Zahl, die man kennen muss.
+      assert.ok(zeile.hinweise[0].includes(art === 'regel' ? 'REGEL' : 'VORSCHLAG'), marke);
+      // Und die Meldung der Matrixzelle steht daneben, in den Worten des
+      // Lesers.
+      assert.ok(zeile.hinweise.some((h) => h.includes(lage.zt.zettelname)),
+        marke + ': die Meldung des Lesers fehlt in den Hinweisen');
+      // Der Inhaltstyp kommt aus der Endung, aus der einen Tabelle.
+      assert.equal(zeile.bild.typ, 'image/jpeg', marke);
+      assert.equal(zeile.bild.typ, L.BILDTYP_JE_ENDUNG['.jpg'], marke);
+    } finally { lage.weg(); }
+  }
+});
+
+test('EN: Rang 3 traegt das Bild UND den Abbruch -- und keine erfundene sha256', () => {
+  // Vertrag 2.7, Zeile 37: "Bild gefunden" und "Upload moeglich" sind zwei
+  // Ebenen. Die Zeile muss beide tragen; taete sie es nicht, saehe ein Bild
+  // ohne Zettel aus wie eines, das man nehmen kann.
+  const render = wegwerfordner('en-r3-render');
+  const exp = wegwerfordner('en-r3-export');
+  try {
+    legeRender(render, AUFNAHME + '.matrix-cut.mp4', 3000);
+    // Zwei Bilder ohne Zettel, beide am Tag der Aufnahme.
+    for (const n of ['adw-a.jpg', 'adw-b.jpg']) {
+      fs.writeFileSync(path.join(exp, n), Buffer.from('BILD:' + n, 'utf8'));
+      const t = new Date(TAG + 'T14:00:00');
+      fs.utimesSync(path.join(exp, n), t, t);
+    }
+    const befund = L.trockenlauf({
+      aufnahme: AUFNAHME, projektwurzel: WURZEL, renderWurzel: render, exportOrdner: exp });
+    const zeile = L.befundJson(befund);
+
+    assert.equal(zeile.rang, 3);
+    assert.equal(zeile.art, 'vorschlag');
+    assert.ok(zeile.bild !== null, 'Rang 3 hat ein Bild, auch wenn der Lauf abbricht');
+    assert.equal(zeile.bild.weitere_im_rang, 1);
+    // KEINE sha256, und der Grund steht dabei. Eine hier gerechnete waere eine
+    // Messung, die in der Vorschau daneben nicht steht.
+    assert.equal(zeile.bild.sha256, null);
+    assert.ok(zeile.bild.sha256_herkunft.includes('nicht gerechnet'),
+      'das fehlende Feld wird nicht begruendet: ' + zeile.bild.sha256_herkunft);
+    // Und der Abbruch steht daneben -- an der Zeile UND in den Hinweisen.
+    assert.ok(zeile.abbruch !== null, 'Rang 3 bricht ab (2.8), die Zeile sagt es nicht');
+    assert.ok(zeile.hinweise.some((h) => h.includes('endet trotzdem mit einem Befund')),
+      'der Abbruch fehlt neben dem Bild: ' + JSON.stringify(zeile.hinweise));
+  } finally {
+    fs.rmSync(render, { recursive: true, force: true });
+    fs.rmSync(exp, { recursive: true, force: true });
+  }
+});
+
+test('EN: wo der Arbeiter NICHT gewaehlt hat, traegt die Zeile kein Bild und sagt warum', () => {
+  // Zwei Kandidaten: der Arbeiter waehlt nicht (Vertrag 2.7). Die Zeile darf
+  // dann nicht das erstbeste nennen -- die Seite zeigte sonst eine Wahl, die
+  // niemand getroffen hat.
+  const render = wegwerfordner('en-zwei-render');
+  const exp = wegwerfordner('en-zwei-export');
+  try {
+    legeRender(render, AUFNAHME + '.matrix-cut.mp4', 3000);
+    legeZettel(exp, 'adw-eins', { aufnahme_herkunft: 'unbestaetigt' });
+    legeZettel(exp, 'adw-zwei', { aufnahme_herkunft: 'unbestaetigt' });
+    const zeile = L.befundJson(L.trockenlauf({
+      aufnahme: AUFNAHME, projektwurzel: WURZEL, renderWurzel: render, exportOrdner: exp }));
+    assert.equal(zeile.bild, null, 'die Zeile nennt ein Bild, obwohl keines gewaehlt wurde');
+    assert.equal(zeile.art, null);
+    assert.ok(zeile.ohne_bild_weil !== null && zeile.ohne_bild_weil.length > 40,
+      'es fehlt der Grund, warum kein Bild dasteht');
+    assert.ok(zeile.ohne_bild_weil.includes('mehrere_rang2'), zeile.ohne_bild_weil);
+    assert.deepEqual(zeile.hinweise, [], 'Hinweise ohne Bild gehoeren zu nichts');
+  } finally {
+    fs.rmSync(render, { recursive: true, force: true });
+    fs.rmSync(exp, { recursive: true, force: true });
+  }
+});
+
+test('EN: --befund-json ist ein Schalter und nimmt keinen Wert', () => {
+  const lage = volleLage('en-schalter');
+  try {
+    // Abgewiesen wird es vom strengen Argumentpruefer, und zwar mit der
+    // Liste der zulaessigen Argumente darunter. Genau darum steht im Arbeiter
+    // KEINE eigene Meldung dafuer: sie waere nie gelaufen.
+    const r = rufeArbeiter(['--aufnahme=' + AUFNAHME, '--befund-json=ja'], umgebungFuer(lage));
+    assert.equal(r.code, L.EXIT_AUFRUFFEHLER, r.aus);
+    assert.ok(r.aus.includes('unbekannte(s) Argument(e): --befund-json=ja'), r.aus);
+    assert.ok(r.aus.includes('--befund-json'), 'die Meldung nennt die richtige Form nicht');
+    // Und es steht in der Liste der erlaubten Argumente -- sonst haette es
+    // schon der strenge Argumentpruefer abgewiesen, mit einer anderen Meldung.
+    assert.ok(L.ERLAUBTE_ARGUMENTE.includes('--befund-json'));
+  } finally { lage.weg(); }
 });

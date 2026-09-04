@@ -348,11 +348,32 @@ test('EL-N2a: die Ansicht kennt keinen Feldnamen und kein Befundwort des Arbeite
     // die Videodatei (3.2)
     'matrix-cut', 'Groessenvergleich', 'LONGFORM_RENDER_WURZEL', '.partial',
     // das Bild und seine Grenze (2.10)
-    'THUMBNAIL_EXPORT_DIR', 'sha256', 'MiB',
+    'THUMBNAIL_EXPORT_DIR', 'MiB',
     // Beschreibung, Hashtags, Tags (2.9) und der Upload (2.5, 2.14)
     'Hashtag', 'hashtag', 'Codepunkte', 'privacyStatus', 'notifySubscribers',
     'publishAt', 'videos.insert', 'thumbnails.set',
   ];
+  // EN: "sha256" IST AUS DER LISTE HERAUSGENOMMEN, und das ist eine Aenderung
+  // an der Zusage und keine Aufweichung. Sie ist es aus einem Grund, der
+  // benannt gehoert:
+  //
+  // Bis EN hatte die Ansicht ueber den Arbeiter nur EINE Auskunft -- seinen
+  // Text -, und alles, was sie ueber seinen INHALT wusste, konnte sie nur aus
+  // diesem Text geschnitten haben. Deshalb war jedes seiner Woerter hier ein
+  // Verstoss.
+  //
+  // Seit EN gibt es eine ZWEITE Auskunft: die Befundzeile, die der Arbeiter
+  // AUSDRUECKLICH fuer diesen Dienst herausgibt (longform-arbeiter.js,
+  // --befund-json). Ihre Feldnamen zu kennen ist kein Auslegen seines Textes,
+  // sondern das Gegenteil davon -- sie sind gerade dafuer da, dass niemand im
+  // Text nach dem Bildpfad sucht.
+  //
+  // Damit die Zusage nicht am Wort "sha256" haengenbleibt, waehrend die Sache
+  // dahinter aufweicht, steht sie ab hier SCHAERFER da als vorher: kein Wort
+  // des Arbeiters darf in der ausgelieferten Seite stehen, das nicht der
+  // Arbeiter selbst geschrieben hat -- geprueft am Text UND an der
+  // Befundzeile, weiter unten in EN-N2a.
+  const AUS_DER_BEFUNDZEILE = ['sha256'];
   // Geprueft wird zweierlei, und die Trennung ist beim Bau von EL noetig
   // geworden: der CODE dieser Ansicht -- was sie TUT --, und die
   // AUSGELIEFERTE Seite -- was ueber die Leitung geht. Die Begruendungen in
@@ -375,6 +396,15 @@ test('EL-N2a: die Ansicht kennt keinen Feldnamen und kein Befundwort des Arbeite
     assert.ok(!ausgeliefert.includes(wort),
       'Das Wort "' + wort + '" steht in der ausgelieferten Seite, obwohl der Arbeiter ' +
       'es nicht geschrieben hat.');
+  }
+  // Der Gegenbeweis fuer die Ausnahme: das eine herausgenommene Wort steht
+  // wirklich in der Ansicht -- sonst waere die Liste oben eine Erlaubnis fuer
+  // etwas, das gar nicht vorkommt, und der Test darunter (EN-N2a) haette
+  // nichts zu pruefen.
+  for (const wort of AUS_DER_BEFUNDZEILE) {
+    assert.ok(nurCode.includes(wort),
+      'die Ansicht kennt "' + wort + '" gar nicht -- dann gehoert es nicht in die ' +
+      'Ausnahmeliste, sondern zurueck in VERBOTEN');
   }
   // Und der Gegenbeweis, dass hier ueberhaupt etwas steht.
   assert.ok(LONGFORM_TEIL.length > 5000, 'der Longform-Teil wurde gefunden');
@@ -542,6 +572,28 @@ const SCHREIBENDE_FS = [
 // einem erlaubten openSync hat herausgehen sehen. Ein writeSync auf einen
 // fremden fd faellt damit genauso auf wie ein writeFileSync auf einen
 // fremden Pfad; ohne diese Buchfuehrung waere jede fd-Fassung ein Loch.
+// EN: EIN OEFFNEN ZUM LESEN IST KEIN SCHREIBEN.
+//
+// openSync/open stehen in der Liste oben, weil ein Oeffnen der erste Schritt
+// zu einem Schreiben sein kann. Seit EN geht aber auch ein LESESTROM durch
+// diese Tuer: die Bildroute oeffnet das Thumbnail mit createReadStream, und
+// node ruft dafuer fs.open(pfad, 'r'). Die Falle hat das zuerst als
+// Schreibversuch gefangen -- der Test starb mit einem abgerissenen Socket
+// statt mit einer Aussage.
+//
+// Die Antwort darauf ist NICHT, das Bild freizugeben (dann waere die Tuer
+// offen), sondern die Flags anzusehen. 'r' und der Vorgabewert sind lesend;
+// alles andere -- 'w', 'a', 'r+', 'wx' und jede numerische Fassung, die nicht
+// O_RDONLY ist -- faellt weiter. Damit ist die Falle nach EN SCHAERFER als
+// vorher: sie unterscheidet, was sie bisher zusammengeworfen hat.
+function oeffnetNurZumLesen(flags) {
+  if (flags === undefined || flags === null) return true;      // Vorgabe ist 'r'
+  if (typeof flags === 'string') return flags === 'r';
+  if (Number.isInteger(flags)) return flags === fsKonstanten.O_RDONLY;
+  return false;
+}
+const fsKonstanten = fs.constants;
+
 function stelleScharf(erlaubtePfade) {
   const echt = {};
   const gesehen = [];
@@ -553,6 +605,12 @@ function stelleScharf(erlaubtePfade) {
     fs[name] = function scharf(...args) {
       const a = args[0];
       const alsPfad = typeof a === 'string' ? a : (Buffer.isBuffer(a) ? a.toString() : null);
+      // Ein Lese-open geht durch, OHNE seinen fd in eigeneFds einzutragen: ein
+      // spaeteres writeSync auf ihn faellt damit weiter auf, denn er kam nicht
+      // aus einem ERLAUBTEN openSync im Sinn dieser Buchfuehrung.
+      if ((name === 'openSync' || name === 'open') && oeffnetNurZumLesen(args[1])) {
+        return echt[name].apply(fs, args);
+      }
       if (alsPfad !== null) {
         if (!pfadErlaubt(alsPfad)) {
           throw new Error('SCHREIBFALLE: fs.' + name + '(' + JSON.stringify(alsPfad) +
@@ -671,6 +729,19 @@ test('EL-N3: die Schreibfalle schnappt zu, wenn man sie verletzt', () => {
     fs.mkdirSync(path.dirname(sperrpfad), { recursive: true });
     fs.writeFileSync(sperrpfad, '{}');
     assert.ok(fs.existsSync(sperrpfad));
+
+    // EN: und die neue Unterscheidung faengt weiterhin, was sie fangen soll.
+    // Ein Oeffnen ZUM LESEN geht durch -- ein Oeffnen zum Schreiben nicht,
+    // auch nicht auf denselben Pfad. Ohne diese Gegenprobe waere die Lockerung
+    // von oben eine offene Tuer, die niemand mehr nachprueft.
+    const nurLesen = fs.openSync(sperrpfad, 'r');
+    fs.closeSync(nurLesen);
+    for (const flag of ['w', 'a', 'r+', 'wx']) {
+      assert.throws(() => fs.openSync(path.join(ordner, 'fremd.txt'), flag),
+        /SCHREIBFALLE: fs\.openSync/, 'openSync mit ' + flag + ' kommt durch');
+    }
+    assert.throws(() => fs.openSync(path.join(ordner, 'fremd.txt'), fs.constants.O_WRONLY),
+      /SCHREIBFALLE: fs\.openSync/, 'das numerische O_WRONLY kommt durch');
   } finally {
     falle.zurueck();
     fs.rmSync(ordner, { recursive: true, force: true });
@@ -704,12 +775,21 @@ test('EL-N3: die ausgelieferte Seite traegt kein Element, das etwas schicken koe
 test('EL-N3: der Longform-Modus hat keine einzige POST-Route', () => {
   // Nicht "die POST-Routen schreiben nichts", sondern: es gibt keine. Das
   // laesst sich in einem Blick pruefen, das andere muesste man glauben.
+  // DIESE HAELFTE DER ZUSAGE IST VON EN UNBERUEHRT und bleibt woertlich.
   assert.match(SERVER_NURCODE, /\[MODUS_LONGFORM\]: new Set\(\[\]\),/);
   const von = SERVER_NURCODE.indexOf('const ROUTEN_GET = {');
   const bis = SERVER_NURCODE.indexOf('};', SERVER_NURCODE.indexOf('const ROUTEN_POST = {'));
   const tabellen = SERVER_NURCODE.slice(von, bis);
-  assert.ok(tabellen.includes("[MODUS_LONGFORM]: new Set(['/']),"),
-    'der Longform-Modus hat mehr oder weniger als die eine GET-Route');
+  // EN: aus der einen GET-Route sind ZWEI geworden, und die zweite ist die
+  // Bildroute. Der Test zaehlt sie weiterhin ab, statt nur "mindestens /" zu
+  // pruefen -- eine dritte, die sich eines Tages dazustellt, soll hier
+  // auffallen und nicht durchrutschen.
+  assert.ok(tabellen.includes("[MODUS_LONGFORM]: new Set(['/', '/bild']),"),
+    'der Longform-Modus hat mehr oder weniger als die zwei lesenden GET-Routen');
+  // Und die zweite ist wirklich lesend: sie steht in KEINER POST-Tabelle.
+  const postTeil = SERVER_NURCODE.slice(SERVER_NURCODE.indexOf('const ROUTEN_POST = {'), bis);
+  assert.ok(!postTeil.includes('/bild'),
+    'die Bildroute steht in einer POST-Tabelle -- sie ist lesend und nur lesend');
 });
 
 // ===========================================================================
@@ -912,8 +992,14 @@ test('EL: der Ausgang mit 2 bekommt keine Seite, sondern eine Meldung', () => {
 test('EL: der Dienst ruft den Arbeiter auf, statt ihn nachzubauen', () => {
   // Derselbe Riegel wie beim Leser: hier steht ein spawnSync auf seine Datei
   // und kein Nachbau seiner Regeln. Kein --execute, kein --bestaetigt-durch=.
+  //
+  // EN: --befund-json kommt dazu, und der Test zaehlt die Argumente weiterhin
+  // einzeln ab. Es ist LESEND -- es aendert am Lauf des Arbeiters nichts und
+  // legt nur eine Zeile mehr auf stderr; dass es hier ausdruecklich stehen
+  // muss, ist der Punkt: ein Argument, das sich unbemerkt dazustellen kann,
+  // ist eines, das eines Tages --execute heisst.
   assert.match(SERVER_NURCODE,
-    /const argumente = \[LONGFORM_ARBEITER, '--aufnahme=' \+ aufnahme\];/);
+    /const argumente = \[LONGFORM_ARBEITER, '--aufnahme=' \+ aufnahme, '--befund-json'\];/);
   // --execute und --bestaetigt-durch= gibt es im Dienst -- fuer den SHORTS-
   // Uploader, seit DR, mit Knopf und Ermaechtigung. Geprueft wird darum der
   // Longform-Weg: von ruftLongformTrocken bis zum Ende von starteLongform
@@ -938,3 +1024,797 @@ test('EL: der Dienst ruft den Arbeiter auf, statt ihn nachzubauen', () => {
       'der Longform-Startweg fasst ' + wort + ' an');
   }
 });
+
+// ===========================================================================
+// EN: DAS BILD (Vertrag 4, Schritt 7)
+// ===========================================================================
+//
+//   EN-N2a  Was in der Seite steht, hat der Arbeiter geschrieben -- geprueft
+//           am Text UND an der Befundzeile.
+//   EN-N3   Die Bildroute liefert nichts anderes aus. Sechs Angriffe, jeder
+//           mit einer Meldung, die den Fall benennt; und die Abwehr schnappt
+//           zu, wenn man sie loechrig macht.
+//   EN-N4   Auch die neue Route schreibt nichts.
+//   EN-N5   Die Shorts-Ansicht ist Byte fuer Byte die von a00cdab.
+
+const AUFNAHME_EN = AUFNAHME;
+const BILDNAME = 'adw-standard-ep-18.jpg';
+const ANDERES_BILD = 'adw-livestream-30-08.jpg';
+
+// Eine Lage mit einem ECHTEN Bild auf der Platte und einer ECHTEN Befundzeile.
+// Die Zeile wird nicht von Hand geschrieben, sondern von befundJson() gebaut:
+// eine hier abgetippte waere die zweite Vorstellung davon, wie sie aussieht,
+// und der Test liefe dann gegen sich selbst statt gegen den Arbeiter.
+function bildLage(besonders) {
+  const exp = wegwerfordner();
+  const inhalt = Buffer.from('BILDBYTES-' + 'x'.repeat(200), 'utf8');
+  fs.writeFileSync(path.join(exp, BILDNAME), inhalt);
+  // Ein ZWEITES Bild im selben Ordner. Es ist der Angriff "ein anderes Bild
+  // desselben Ordners": es liegt am selben Ort, ist lesbar und geht die Route
+  // trotzdem nichts an.
+  fs.writeFileSync(path.join(exp, ANDERES_BILD), Buffer.from('NICHT DIESES BILD', 'utf8'));
+
+  const befund = Object.assign({
+    artifact_type: 'adw_longform_befund',
+    schema_version: '1.0',
+    aufnahme: AUFNAHME_EN,
+    export_ordner: exp,
+    rang: 2,
+    art: 'vorschlag',
+    bild: {
+      pfad: path.join(exp, BILDNAME),
+      dateiname: BILDNAME,
+      typ: 'image/jpeg',
+      bytes: inhalt.length,
+      sha256: require('node:crypto').createHash('sha256').update(inhalt).digest('hex'),
+      sha256_herkunft: 'gemessen und gegen den Beipackzettel geprueft',
+      rang: 2,
+      art: 'vorschlag',
+      zettel: 'adw-standard-ep-18.json',
+      matrixzeile: 25,
+      weitere_im_rang: 0,
+    },
+    hinweise: ['MARKE-HINWEIS-RANG', 'MARKE-HINWEIS-ZELLE', 'MARKE-HINWEIS-BILD'],
+    ohne_bild_weil: null,
+    abbruch: null,
+  }, besonders || {});
+
+  const vorher = process.env.THUMBNAIL_EXPORT_DIR;
+  process.env.THUMBNAIL_EXPORT_DIR = exp;
+  let sitzung;
+  try {
+    sitzung = S.baueLongformSitzung({
+      aufnahme: AUFNAHME_EN, projektwurzel: exp, port: 0,
+      trocken: Object.assign(erfundenerTrockenlauf(), { befund }),
+    });
+  } finally {
+    if (vorher === undefined) delete process.env.THUMBNAIL_EXPORT_DIR;
+    else process.env.THUMBNAIL_EXPORT_DIR = vorher;
+  }
+  sitzung.wegwerfordner = exp;
+  sitzung.probeInhalt = inhalt;
+  sitzung.probeBefund = befund;
+  return sitzung;
+}
+
+// Wie `anfrage`, aber die Antwort kommt als Puffer zurueck -- ein Bild
+// ueber toString('utf8') zu vergleichen waere kein Byte-Vergleich.
+function anfrageRoh(port, { methode = 'GET', pfad = '/', kopf = {} } = {}) {
+  return new Promise((fertig, schiefgegangen) => {
+    const zusammen = Object.assign({ host: S.HOST + ':' + port }, kopf);
+    for (const k of Object.keys(zusammen)) if (zusammen[k] === undefined) delete zusammen[k];
+    const req = http.request({
+      host: S.HOST, port, method: methode, path: pfad, headers: zusammen,
+    }, (res) => {
+      const teile = [];
+      res.on('data', (d) => teile.push(d));
+      res.on('end', () => fertig({
+        status: res.statusCode, kopf: res.headers, leib: Buffer.concat(teile),
+      }));
+    });
+    req.on('error', schiefgegangen);
+    req.end();
+  });
+}
+
+// ===========================================================================
+// EN-N2a: WAS IN DER SEITE STEHT, HAT DER ARBEITER GESCHRIEBEN
+// ===========================================================================
+
+test('EN-N2a: kein Wort in der Seite, das nicht vom Arbeiter kommt', () => {
+  // Die schaerfere Fassung der Zusage aus EL-N2a. Dort war jedes Wort des
+  // Arbeiters in der Seite ein Verstoss, weil es nur aus seinem Text stammen
+  // konnte. Seit es die Befundzeile gibt, lautet die Frage anders und
+  // schaerfer: steht das Wort in der Seite, muss es in DEM stehen, was der
+  // Arbeiter geliefert hat -- in einem der beiden Stroeme oder in der Zeile.
+  const sitzung = bildLage();
+  try {
+    const html = SEITE.baueLongformSeite(sitzung);
+    const vomArbeiter = sitzung.trocken.aus + '\n' + sitzung.trocken.err + '\n' +
+      JSON.stringify(sitzung.trocken.befund);
+    // Jeder Hinweis, der auf der Seite steht, steht auch in dem, was der
+    // Arbeiter geschickt hat -- woertlich und nicht sinngemaess.
+    for (const h of sitzung.probeBefund.hinweise) {
+      assert.ok(html.includes(h), 'der Hinweis fehlt in der Seite: ' + h);
+      assert.ok(vomArbeiter.includes(h), 'der Hinweis kommt nicht vom Arbeiter: ' + h);
+    }
+    assert.ok(html.includes(sitzung.probeBefund.bild.sha256),
+      'die sha256 steht nicht auf der Seite -- dann kann niemand pruefen, worueber er urteilt');
+    assert.ok(vomArbeiter.includes(sitzung.probeBefund.bild.sha256));
+    assert.ok(html.includes(BILDNAME));
+
+    // DER PFAD STEHT NICHT IN DER SEITE. Der Browser braucht ihn nicht, die
+    // Route nimmt ihn nicht entgegen -- ein Pfad, der im Baum liegt, ist die
+    // Einladung, ihn eines Tages zu benutzen.
+    assert.ok(!html.includes(sitzung.probeBefund.bild.pfad),
+      'der Bildpfad steht in der ausgelieferten Seite');
+    assert.ok(!html.includes(sitzung.wegwerfordner),
+      'der Export-Ordner steht in der ausgelieferten Seite');
+    // Und das ANDERE Bild des Ordners kommt in der Seite nicht vor.
+    assert.ok(!html.includes(ANDERES_BILD),
+      'die Seite nennt ein Bild, das dieser Lauf nicht bestimmt hat');
+  } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
+});
+
+test('EN-N2a: die Seite benennt Rang und Art -- ein Bild ohne sie waere ein anderes Bild', () => {
+  for (const [rang, art, wort] of [[1, 'regel', 'Regel'], [2, 'vorschlag', 'Vorschlag']]) {
+    const sitzung = bildLage();
+    sitzung.bild.rang = rang;
+    sitzung.bild.art = art;
+    try {
+      const baum = fuehreSkriptAus(SEITE.baueLongformSeite(sitzung));
+      assert.equal(baum.get('bildArt').textContent, wort,
+        'die Art steht nicht neben dem Bild');
+      assert.equal(baum.get('bildRang').textContent, 'Rang ' + rang);
+      assert.equal(baum.get('bildKasten').hidden, false, 'der Bildkasten bleibt zu');
+      assert.equal(baum.get('bildName').textContent, BILDNAME);
+      assert.equal(baum.get('bildSha').textContent, sitzung.bild.sha256);
+      // Die Hinweise stehen vollstaendig da, jeder einzeln.
+      for (const h of sitzung.probeBefund.hinweise) {
+        assert.ok(baum.get('bildHinweise').textContent.includes(h),
+          'ein Hinweis fehlt im Baum: ' + h);
+      }
+      // Und die Adresse traegt das Token dieser Sitzung -- ohne es kaeme das
+      // Bild nicht an.
+      assert.equal(baum.get('bild').src, '/bild?t=' + sitzung.token);
+    } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
+  }
+});
+
+test('EN-N2a: ohne bestimmtes Bild zeigt die Seite keines und sagt warum', () => {
+  const sitzung = bildLage({ bild: null, rang: null, art: null, hinweise: [],
+    ohne_bild_weil: 'MARKE-KEIN-BILD-WEIL: zwei Zettel kommen in Frage.',
+    abbruch: { code: 'mehrere_rang2', nach: '2.7' } });
+  try {
+    const html = SEITE.baueLongformSeite(sitzung);
+    const baum = fuehreSkriptAus(html);
+    assert.equal(baum.get('bildKasten').hidden, true, 'der Bildkasten steht offen ohne Bild');
+    assert.equal(baum.get('keinBild').hidden, false);
+    assert.ok(baum.get('keinBild').textContent.includes('MARKE-KEIN-BILD-WEIL'),
+      'der Grund fehlt: ' + baum.get('keinBild').textContent);
+    // Kein <img src> in der Seite und keine Adresse in der Nutzlast.
+    assert.ok(!html.includes('/bild?t='),
+      'die Seite traegt eine Bildadresse, obwohl es kein Bild gibt');
+  } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
+});
+
+// ===========================================================================
+// EN-N3: DIE BILDROUTE LIEFERT NICHTS ANDERES AUS
+// ===========================================================================
+
+test('EN-N3: die Route liefert genau die benannte Datei -- Byte fuer Byte', async () => {
+  const sitzung = bildLage();
+  let lauf = null;
+  try {
+    lauf = await starte(sitzung);
+    const a = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+    assert.equal(a.status, 200);
+    assert.equal(Buffer.compare(a.leib, sitzung.probeInhalt), 0,
+      'die ausgelieferten Bytes sind nicht die der Datei');
+    assert.equal(a.kopf['content-type'], 'image/jpeg');
+    assert.equal(a.kopf['x-content-type-options'], 'nosniff');
+    assert.equal(a.kopf['cache-control'], 'no-store');
+    // KEIN Accept-Ranges: ein Bild wird nicht gespult.
+    assert.equal(a.kopf['accept-ranges'], undefined);
+    // HEAD liefert die Kopfzeilen und keinen Leib.
+    const h = await anfrageRoh(lauf.port, { methode: 'HEAD', pfad: '/bild?t=' + sitzung.token });
+    assert.equal(h.status, 200);
+    assert.equal(h.leib.length, 0);
+  } finally {
+    if (lauf) await lauf.schliesse();
+    fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true });
+  }
+});
+
+test('EN-N3: JEDER Versuch, etwas anderes zu holen, scheitert mit einer eigenen Meldung',
+  async () => {
+    const sitzung = bildLage();
+    let lauf = null;
+    try {
+      lauf = await starte(sitzung);
+      const t = sitzung.token;
+      const ordner = sitzung.wegwerfordner;
+
+      // DIE SECHS ANGRIFFE. Jeder bekommt seinen eigenen Fehlercode -- eine
+      // gemeinsame Meldung "geht nicht" waere sechs Zustaende unter einer
+      // Selbstauskunft, und genau das ist der Umriss jedes Fehlers dieser
+      // Reihe.
+      const ANGRIFFE_BILD = [
+        // 1. Ein anderes Bild DESSELBEN Ordners -- lesbar, erlaubt gelegen,
+        //    und geht die Route trotzdem nichts an.
+        { was: 'anderes Bild desselben Ordners',
+          pfad: '/bild?t=' + t + '&datei=' + encodeURIComponent(ANDERES_BILD),
+          status: 400, code: 'bildroute_nimmt_nichts_entgegen' },
+        // 2. Mit ".." im Pfad.
+        { was: 'punkt-punkt im Parameter',
+          pfad: '/bild?t=' + t + '&p=' + encodeURIComponent('..' + path.sep + '..' +
+            path.sep + 'irgendwas.ini'),
+          status: 400, code: 'bildroute_nimmt_nichts_entgegen' },
+        // 3. Ein absoluter Pfad. Er steht hier NICHT als Zeichenkette im
+        //    Quelltext -- der Freigabe-Check dieses oeffentlichen Repos
+        //    verbietet absolute Laufwerkspfade, und er hat recht. Er wird aus
+        //    dem Wegwerfordner dieses Laufs gebaut, und der ist einer.
+        { was: 'absoluter Pfad',
+          pfad: '/bild?t=' + t + '&p=' + encodeURIComponent(path.join(ordner, ANDERES_BILD)),
+          status: 400, code: 'bildroute_nimmt_nichts_entgegen' },
+        // 4. Ausserhalb des Export-Ordners.
+        { was: 'ausserhalb des Export-Ordners',
+          pfad: '/bild?t=' + t + '&p=' + encodeURIComponent(path.join(ordner, '..', 'x.jpg')),
+          status: 400, code: 'bildroute_nimmt_nichts_entgegen' },
+        // 5. Ein Index, wie ihn die Schwesterroute nimmt -- auch der ist hier
+        //    keiner.
+        { was: 'ein Index wie bei /video',
+          pfad: '/bild?t=' + t + '&i=0',
+          status: 400, code: 'bildroute_nimmt_nichts_entgegen' },
+        // 6. Der Pfad IM PFAD statt im Parameter. Er trifft keinen Routennamen.
+        { was: 'Pfad im Anfragepfad',
+          pfad: '/bild/../../windows/win.ini?t=' + t,
+          status: 404, code: 'unbekannte_route' },
+      ];
+      for (const a of ANGRIFFE_BILD) {
+        const r = await anfrageRoh(lauf.port, { pfad: a.pfad });
+        assert.equal(r.status, a.status, a.was + ' -> ' + r.status);
+        const d = JSON.parse(r.leib.toString('utf8'));
+        assert.equal(d.fehler, a.code, a.was + ': Fehlercode ' + d.fehler);
+        // Die Meldung benennt den Fall. Bei den Parametern ist sie lang und
+        // sagt, warum nichts entgegengenommen wird; bei einem Pfad, der gar
+        // keine Route trifft, ist sie die geerbte kurze -- und das ist
+        // richtig so: der Weg endet dort, wo jeder unbekannte Name endet,
+        // und nicht in einem Zweig, der Pfade auslegt.
+        assert.ok(d.meldung.length >= (a.code === 'unbekannte_route' ? 10 : 40),
+          a.was + ': die Meldung benennt den Fall nicht -- ' + d.meldung);
+        // UND: nichts von dem anderen Bild ist mitgekommen.
+        assert.ok(!r.leib.includes(Buffer.from('NICHT DIESES BILD', 'utf8')),
+          a.was + ': die Antwort traegt Bytes des anderen Bildes');
+      }
+
+      // 7. OHNE SITZUNGSTOKEN -- der Torwaechter, geerbt und nicht nachgebaut.
+      const ohne = await anfrageRoh(lauf.port, { pfad: '/bild' });
+      assert.equal(ohne.status, 403);
+      assert.equal(JSON.parse(ohne.leib.toString('utf8')).fehler, 'token_fehlt_oder_falsch');
+      // Ein FALSCHES Token derselben Laenge -- der Vergleich ist kein
+      // startsWith.
+      const falsch = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + 'a'.repeat(t.length) });
+      assert.equal(falsch.status, 403);
+
+      // 8. MIT FREMDEM URSPRUNG.
+      const fremd = await anfrageRoh(lauf.port, {
+        pfad: '/bild?t=' + t, kopf: { origin: 'http://boese.example' } });
+      assert.equal(fremd.status, 403);
+      assert.equal(JSON.parse(fremd.leib.toString('utf8')).fehler, 'fremder_ursprung');
+      // 9. UND MIT FREMDEM HOST -- localhost statt der Zahl.
+      const fremderHost = await anfrageRoh(lauf.port, {
+        pfad: '/bild?t=' + t, kopf: { host: 'localhost:' + lauf.port } });
+      assert.equal(fremderHost.status, 403);
+      assert.equal(JSON.parse(fremderHost.leib.toString('utf8')).fehler, 'fremder_host');
+
+      // Und danach geht der richtige Aufruf immer noch -- eine Abwehr, die
+      // alles abweist, weist auch das Richtige ab und beweist dann nichts.
+      const gut = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + t });
+      assert.equal(gut.status, 200);
+      assert.equal(Buffer.compare(gut.leib, sitzung.probeInhalt), 0);
+    } finally {
+      if (lauf) await lauf.schliesse();
+      fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true });
+    }
+  });
+
+test('EN-N3: ein Bildpfad, der nicht unter dem Export-Ordner liegt, kommt gar nicht in ' +
+  'die Sitzung', () => {
+  // DIE ZWEITE HUERDE, an ihrer eigenen Stelle geprueft. Die Route nimmt
+  // nichts entgegen -- aber der PFAD kommt aus der Ausgabe eines
+  // Kindprozesses, und was von dort kommt, wird geprueft, bevor es in die
+  // Sitzung darf. Hier wird der Kindprozess also gespielt, und zwar boese.
+  const exp = wegwerfordner();
+  const daneben = wegwerfordner();
+  const vorher = process.env.THUMBNAIL_EXPORT_DIR;
+  process.env.THUMBNAIL_EXPORT_DIR = exp;
+  try {
+    fs.writeFileSync(path.join(exp, BILDNAME), 'x');
+    fs.writeFileSync(path.join(daneben, 'geheim.jpg'), 'GEHEIM');
+
+    const gut = { pfad: path.join(exp, BILDNAME), dateiname: BILDNAME, typ: 'image/jpeg',
+      bytes: 1, sha256: null, sha256_herkunft: 'x', rang: 1, art: 'regel',
+      zettel: null, matrixzeile: 1, weitere_im_rang: 0 };
+
+    const FAELLE = [
+      ['ein anderer Ordner', { pfad: path.join(daneben, 'geheim.jpg'), dateiname: 'geheim.jpg' },
+        'nicht unter dem Export-Ordner'],
+      ['punkt-punkt hinaus', { pfad: path.join(exp, '..', 'geheim.jpg') },
+        'nicht unter dem Export-Ordner'],
+      ['punkt-punkt und zurueck, aber anderer Name',
+        { pfad: path.join(exp, '..', path.basename(daneben), 'geheim.jpg') },
+        'nicht unter dem Export-Ordner'],
+      ['Pfad und Dateiname gehen auseinander',
+        { pfad: path.join(exp, ANDERES_BILD), dateiname: BILDNAME },
+        'nicht der Dateiname'],
+      ['ein Typ, der keiner ist', { typ: 'text/html' }, 'Ausgeliefert werden nur'],
+      ['gar kein Typ', { typ: null }, 'Ausgeliefert werden nur'],
+      ['leerer Pfad', { pfad: '' }, 'keinen brauchbaren Bildpfad'],
+    ];
+    for (const [was, abweichung, erwartet] of FAELLE) {
+      const sperre = S.neueSperre ? S.neueSperre() : null;
+      const b = S.nimmBildAuf(
+        { bild: Object.assign({}, gut, abweichung), hinweise: [] },
+        { ausDatei() { assert.fail(was + ': der Pfad wurde registriert, obwohl er ' +
+          'abgewiesen gehoert'); } });
+      assert.equal(b.da, false, was + ': durchgekommen');
+      assert.ok(b.grund.includes(erwartet),
+        was + ': die Meldung benennt den Fall nicht -- ' + b.grund);
+      assert.equal(sperre, sperre);
+    }
+
+    // Und der gute Fall kommt durch UND wird registriert -- sonst wiese die
+    // Pruefung oben nur alles ab.
+    let registriert = null;
+    const ok = S.nimmBildAuf({ bild: gut, hinweise: ['H'] },
+      { ausDatei(w) { registriert = w; } });
+    assert.equal(ok.da, true, ok.grund);
+    assert.equal(registriert, gut.pfad, 'der Pfad wurde nicht in der Pfadsperre registriert');
+    assert.deepEqual(ok.hinweise, ['H']);
+  } finally {
+    if (vorher === undefined) delete process.env.THUMBNAIL_EXPORT_DIR;
+    else process.env.THUMBNAIL_EXPORT_DIR = vorher;
+    fs.rmSync(exp, { recursive: true, force: true });
+    fs.rmSync(daneben, { recursive: true, force: true });
+  }
+});
+
+test('EN-N3: die Abwehr schnappt zu, wenn man sie loechrig macht', async () => {
+  // DREI LOECHER, jedes an einer anderen Huerde. Ohne sie hiesse EN-N3 nur
+  // "heute kommt nichts durch".
+
+  // LOCH 1: die Route ignoriert mitgeschickte Parameter, statt sie
+  // abzuweisen. Nachgebaut wird genau dieser eine Handgriff -- die Schleife
+  // ueber die Parameter faellt weg.
+  const loechrig = (abfrage) => {
+    // (die gebaute Fassung weist hier ab; diese tut es nicht)
+    return { abgewiesen: false, name: [...abfrage.keys()].find((k) => k !== 't') || null };
+  };
+  const scharf = (abfrage) => {
+    for (const name of abfrage.keys()) {
+      if (name === 't') continue;
+      return { abgewiesen: true, name };
+    }
+    return { abgewiesen: false, name: null };
+  };
+  const mitParameter = new URLSearchParams('t=abc&p=..%2F..%2Fwin.ini');
+  assert.equal(scharf(mitParameter).abgewiesen, true,
+    'die gebaute Fassung weist den Parameter nicht ab');
+  assert.equal(loechrig(mitParameter).abgewiesen, false,
+    'die loechrige Fassung weist ab -- dann ist sie nicht loechrig, und der ' +
+    'Vergleich zeigt nichts');
+  // Und der Beweis, dass der Unterschied im ECHTEN Dienst ankommt: dort ist
+  // die scharfe Fassung eingebaut, und der Test darueber misst sie.
+  assert.match(SERVER_NURCODE, /bildroute_nimmt_nichts_entgegen/);
+  assert.match(SERVER_NURCODE, /for \(const name of abfrage\.keys\(\)\) \{/);
+
+  // LOCH 2: die Pfadpruefung faellt weg. nimmBildAuf ohne pfadLiegtUnter
+  // liesse einen Pfad aus einem fremden Ordner durch -- gezeigt daran, dass
+  // die gebaute Fassung ihn abweist und eine Fassung ohne die Huerde ihn
+  // naehme.
+  const exp = wegwerfordner();
+  const daneben = wegwerfordner();
+  const vorher = process.env.THUMBNAIL_EXPORT_DIR;
+  process.env.THUMBNAIL_EXPORT_DIR = exp;
+  try {
+    const fremd = { pfad: path.join(daneben, 'geheim.jpg'), dateiname: 'geheim.jpg',
+      typ: 'image/jpeg', bytes: 1, sha256: null, sha256_herkunft: 'x', rang: 1,
+      art: 'regel', zettel: null, matrixzeile: 1, weitere_im_rang: 0 };
+    const echt = S.nimmBildAuf({ bild: fremd, hinweise: [] }, { ausDatei() {} });
+    assert.equal(echt.da, false, 'die gebaute Fassung nimmt einen fremden Ordner an');
+    // Die loechrige Fassung: nur Name und Typ, keine Ordnerpruefung.
+    const ohneHuerde = (b) => path.basename(b.pfad) === b.dateiname &&
+      S.ERLAUBTE_BILDTYPEN.includes(b.typ);
+    assert.equal(ohneHuerde(fremd), true,
+      'auch ohne die Ordnerpruefung faellt der fremde Pfad -- dann prueft die ' +
+      'Ordnerpruefung nichts');
+  } finally {
+    if (vorher === undefined) delete process.env.THUMBNAIL_EXPORT_DIR;
+    else process.env.THUMBNAIL_EXPORT_DIR = vorher;
+    fs.rmSync(exp, { recursive: true, force: true });
+    fs.rmSync(daneben, { recursive: true, force: true });
+  }
+
+  // LOCH 3: der Torwaechter der Pfadsperre wird umgangen. Wird ein anderer
+  // Pfad angefragt, als beim Start registriert wurde, MUSS sie werfen.
+  const sitzung = bildLage();
+  let lauf = null;
+  try {
+    lauf = await starte(sitzung);
+    // Der registrierte Pfad geht durch.
+    assert.equal(sitzung.sperre.oeffnen(sitzung.bild.pfad), sitzung.bild.pfad);
+    // Das andere Bild desselben Ordners nicht -- obwohl es daneben liegt.
+    assert.throws(
+      () => sitzung.sperre.oeffnen(path.join(sitzung.wegwerfordner, ANDERES_BILD)),
+      /Pfadsperre/, 'die Pfadsperre laesst ein zweites Bild desselben Ordners durch');
+    // Und ein ANDERS GESCHRIEBENER Pfad auf dieselbe Datei auch nicht: die
+    // Sperre vergleicht WOERTLICH und nicht aufgeloest. (path.join haette
+    // hier nichts gezeigt -- es normalisiert das '.' weg und ergibt wieder
+    // genau den registrierten Pfad. Der Test hat das im ersten Anlauf
+    // uebersehen und ist daran gescheitert; er baut den Umweg jetzt selbst.)
+    const umweg = sitzung.wegwerfordner + path.sep + '.' + path.sep + BILDNAME;
+    assert.notEqual(umweg, sitzung.bild.pfad, 'der Umweg ist gar keiner');
+    assert.throws(() => sitzung.sperre.oeffnen(umweg), /Pfadsperre/,
+      'die Pfadsperre loest Pfade auf, statt sie woertlich zu vergleichen');
+  } finally {
+    if (lauf) await lauf.schliesse();
+    fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true });
+  }
+});
+
+test('EN-N3: der Torwaechter der Pfadsperre greift, wenn der Pfad NACH dem Start ' +
+  'ein anderer wird', async () => {
+  // DIESER TEST IST EIN FUND DES MUTATIONSLAUFS ZU EN, und er stand vorher
+  // nicht da. Baut man das `sitzung.sperre.oeffnen(bild.pfad)` der Bildroute
+  // aus und oeffnet stattdessen bild.pfad geradeheraus, blieb der ganze Baum
+  // gruen: in jedem anderen Test IST der angefragte Pfad der registrierte, und
+  // eine Sperre, die nie etwas abzulehnen hat, wird auch nie gemessen.
+  //
+  // Der Fall, gegen den sie gebaut ist, ist der, in dem beide auseinandergehen
+  // -- weil spaeter jemand ein Feld setzt, ein Argument durchreicht oder einen
+  // Pfad "korrigiert". Der Test fuehrt genau das herbei: er verbiegt
+  // sitzung.bild.pfad NACH dem Bauen der Sitzung, also hinter allen Pruefungen
+  // von nimmBildAuf. Ab da ist der Torwaechter die einzige Sicherung, die noch
+  // steht -- und sie muss halten.
+  const sitzung = bildLage();
+  let lauf = null;
+  try {
+    lauf = await starte(sitzung);
+    // Erst der Beweis, dass es vorher geht.
+    const vorher = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+    assert.equal(vorher.status, 200);
+
+    // Jetzt zeigt die Sitzung auf das ANDERE Bild desselben Ordners -- lesbar,
+    // erlaubt gelegen, und nie registriert.
+    const registriert = sitzung.bild.pfad;
+    sitzung.bild.pfad = path.join(sitzung.wegwerfordner, ANDERES_BILD);
+    sitzung.bild.bytes = fs.statSync(sitzung.bild.pfad).size;
+    const a = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+    assert.equal(a.status, 500, 'die Route hat einen nie registrierten Pfad geoeffnet');
+    const d = JSON.parse(a.leib.toString('utf8'));
+    assert.equal(d.fehler, 'pfadsperre');
+    assert.ok(d.meldung.includes('Pfadsperre'), d.meldung);
+    // Und keine Bytes des anderen Bildes sind mitgekommen.
+    assert.ok(!a.leib.includes(Buffer.from('NICHT DIESES BILD', 'utf8')),
+      'die Antwort traegt Bytes des Bildes, das nie registriert wurde');
+
+    // Auch ein anders GESCHRIEBENER Pfad auf dieselbe Datei faellt: die Sperre
+    // vergleicht woertlich und loest nicht auf.
+    sitzung.bild.pfad = sitzung.wegwerfordner + path.sep + '.' + path.sep + BILDNAME;
+    const b = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+    assert.equal(b.status, 500, 'ein aufloesbarer Umweg kam durch');
+    assert.equal(JSON.parse(b.leib.toString('utf8')).fehler, 'pfadsperre');
+
+    // Zurueck auf den registrierten Pfad -- und es geht wieder. Eine Sperre,
+    // die ab jetzt alles abweist, beweist nichts.
+    sitzung.bild.pfad = registriert;
+    sitzung.bild.bytes = sitzung.probeInhalt.length;
+    const c = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+    assert.equal(c.status, 200);
+    assert.equal(Buffer.compare(c.leib, sitzung.probeInhalt), 0);
+  } finally {
+    if (lauf) await lauf.schliesse();
+    fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true });
+  }
+});
+
+test('EN-N3: verschwindet oder aendert sich die Datei, wird gemeldet statt ausgeliefert',
+  async () => {
+    const sitzung = bildLage();
+    let lauf = null;
+    try {
+      lauf = await starte(sitzung);
+      // Die Datei wird groesser -- sie ist damit eine andere als die, deren
+      // sha256 auf der Seite steht.
+      fs.writeFileSync(path.join(sitzung.wegwerfordner, BILDNAME),
+        Buffer.concat([sitzung.probeInhalt, Buffer.from('MEHR', 'utf8')]));
+      const a = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+      assert.equal(a.status, 409);
+      assert.equal(JSON.parse(a.leib.toString('utf8')).fehler, 'datei_veraendert');
+
+      // Und weg ist weg.
+      fs.unlinkSync(path.join(sitzung.wegwerfordner, BILDNAME));
+      const b = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+      assert.equal(b.status, 404);
+      assert.equal(JSON.parse(b.leib.toString('utf8')).fehler, 'datei_weg');
+    } finally {
+      if (lauf) await lauf.schliesse();
+      fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true });
+    }
+  });
+
+test('EN-N3: ohne bestimmtes Bild liefert die Route nichts, mit dem Grund', async () => {
+  const sitzung = bildLage({ bild: null, rang: null, art: null, hinweise: [],
+    ohne_bild_weil: 'MARKE-GRUND: der Arbeiter hat nicht gewaehlt.', abbruch: null });
+  let lauf = null;
+  try {
+    lauf = await starte(sitzung);
+    const a = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + sitzung.token });
+    assert.equal(a.status, 409);
+    const d = JSON.parse(a.leib.toString('utf8'));
+    assert.equal(d.fehler, 'kein_bild_bestimmt');
+    assert.ok(d.meldung.includes('MARKE-GRUND'), d.meldung);
+  } finally {
+    if (lauf) await lauf.schliesse();
+    fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true });
+  }
+});
+
+test('EN-N3: im Shorts-Modus gibt es die Bildroute nicht', async () => {
+  // Die Routentabellen haengen am Modus. Was der Longform-Modus dazubekommen
+  // hat, hat der Shorts-Modus NICHT dazubekommen -- und das ist keine
+  // Nebensache: ueber den Shorts-Weg sind 21 Shorts hochgeladen worden.
+  const ordner = wegwerfordner();
+  let lauf = null;
+  try {
+    const sitzung = shortsSitzungFuerVergleich(ordner);
+    lauf = await starte(sitzung);
+    const a = await anfrageRoh(lauf.port, {
+      pfad: '/bild', kopf: { 'x-freigabe-token': sitzung.token } });
+    assert.equal(a.status, 404);
+    assert.equal(JSON.parse(a.leib.toString('utf8')).fehler, 'unbekannte_route');
+  } finally {
+    if (lauf) await lauf.schliesse();
+    fs.rmSync(ordner, { recursive: true, force: true });
+  }
+});
+
+// ===========================================================================
+// EN-N4: AUCH DIE NEUE ROUTE SCHREIBT NICHTS
+// ===========================================================================
+
+test('EN-N4: der volle Durchlauf MIT der Bildroute schreibt nichts ausser der Sperre',
+  async () => {
+    // Wie EL-N3, aber der Durchlauf holt jetzt auch das Bild -- mehrfach, mit
+    // GET und HEAD, richtig und falsch. Kein Zwischenspeichern, keine Kopie,
+    // kein Standbild.
+    const exp = wegwerfordner();
+    const inhalt = Buffer.from('BILDBYTES-N4', 'utf8');
+    fs.writeFileSync(path.join(exp, BILDNAME), inhalt);
+    const vorher = process.env.THUMBNAIL_EXPORT_DIR;
+    process.env.THUMBNAIL_EXPORT_DIR = exp;
+
+    const ordner = wegwerfordner();
+    const sperrpfad = S.sperrPfad(ordner, AUFNAHME_EN, S.MODUS_LONGFORM);
+    let falle = null;
+    let lauf = null;
+    let sperre = null;
+    try {
+      const sitzung = S.baueLongformSitzung({
+        aufnahme: AUFNAHME_EN, projektwurzel: ordner, port: 0,
+        trocken: Object.assign(erfundenerTrockenlauf(), {
+          befund: {
+            artifact_type: 'adw_longform_befund', schema_version: '1.0',
+            aufnahme: AUFNAHME_EN, export_ordner: exp, rang: 1, art: 'regel',
+            bild: { pfad: path.join(exp, BILDNAME), dateiname: BILDNAME, typ: 'image/jpeg',
+              bytes: inhalt.length, sha256: 'a'.repeat(64), sha256_herkunft: 'x',
+              rang: 1, art: 'regel', zettel: null, matrixzeile: 1, weitere_im_rang: 0 },
+            hinweise: ['H'], ohne_bild_weil: null, abbruch: null,
+          },
+        }),
+      });
+      assert.equal(sitzung.bild.da, true, sitzung.bild.grund);
+
+      // Die Falle wird ERST JETZT scharf gestellt -- das Anlegen der
+      // Wegwerfordner und der Sitzung gehoert nicht zu dem, was gemessen wird.
+      falle = stelleScharf([sperrpfad, path.dirname(sperrpfad)]);
+      sperre = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME_EN,
+        modus: S.MODUS_LONGFORM });
+      assert.equal(sperre.ok, true);
+      lauf = await starte(sitzung);
+      S.traegeSperrePortNach(sperre, lauf.port);
+
+      const t = sitzung.token;
+      for (let i = 0; i < 3; i++) {
+        const a = await anfrageRoh(lauf.port, { pfad: '/bild?t=' + t });
+        assert.equal(a.status, 200);
+        assert.equal(Buffer.compare(a.leib, inhalt), 0);
+        const h = await anfrageRoh(lauf.port, { methode: 'HEAD', pfad: '/bild?t=' + t });
+        assert.equal(h.status, 200);
+      }
+      // Und die abgewiesenen Faelle schreiben erst recht nichts.
+      for (const p of ['/bild', '/bild?t=' + t + '&p=x', '/bild?t=falsch',
+        '/bild/../etwas?t=' + t]) {
+        await anfrageRoh(lauf.port, { pfad: p });
+      }
+      await lauf.schliesse();
+      lauf = null;
+
+      const frei = S.gibSperreFrei(sperre);
+      assert.equal(frei.geloescht, true, frei.grund);
+      sperre = null;
+
+      assert.ok(falle.gesehen.length > 0, 'die Falle hat gar keinen Schreibaufruf gesehen');
+      for (const eintrag of falle.gesehen) {
+        const aufDenEigenenFd = /^\w+ fd (\d+)$/.exec(eintrag);
+        assert.ok(eintrag.includes(path.dirname(sperrpfad)) ||
+          (aufDenEigenenFd && falle.eigeneFds.has(Number(aufDenEigenenFd[1]))),
+        'ein erlaubter Aufruf ging woanders hin: ' + eintrag);
+      }
+      assert.ok(falle.gesehen.some((e) => e.includes(sperrpfad)),
+        'die Sperrdatei wurde gar nicht angefasst');
+      // UND: im Export-Ordner ist nichts entstanden. Kein Standbild, keine
+      // Kopie, keine Zwischendatei.
+      assert.deepEqual(fs.readdirSync(exp).sort(), [BILDNAME],
+        'im Export-Ordner liegt jetzt mehr als vorher');
+    } finally {
+      if (falle) falle.zurueck();
+      if (lauf) await lauf.schliesse();
+      if (sperre) S.gibSperreFrei(sperre);
+      if (vorher === undefined) delete process.env.THUMBNAIL_EXPORT_DIR;
+      else process.env.THUMBNAIL_EXPORT_DIR = vorher;
+      fs.rmSync(ordner, { recursive: true, force: true });
+      fs.rmSync(exp, { recursive: true, force: true });
+    }
+  });
+
+test('EN-N4: der Weg zum Bild kennt keine schreibende Funktion', () => {
+  // Nicht "er ruft heute keine", sondern: die Woerter kommen im Abschnitt
+  // nicht vor. Das laesst sich in einem Blick pruefen.
+  const von = SERVER_NURCODE.indexOf('function liefereBild(');
+  const bis = SERVER_NURCODE.indexOf('function nimmUrteil(', von);
+  assert.ok(von > 0 && bis > von, 'der Abschnitt der Bildroute wurde gefunden');
+  const abschnitt = SERVER_NURCODE.slice(von, bis);
+  assert.ok(abschnitt.length > 800, 'der Abschnitt ist verdaechtig kurz');
+  for (const wort of ['writeFile', 'appendFile', 'mkdir', 'createWriteStream', 'copyFile',
+    'rename', 'unlink', 'rmSync', 'spawn', 'exec', 'ffmpeg', 'Buffer.concat']) {
+    assert.ok(!abschnitt.includes(wort),
+      'die Bildroute kennt ' + wort + ' -- dann kann sie schreiben oder zwischenspeichern');
+  }
+  // Sie liest als STROM und laedt das Bild nicht in den Speicher: ein Puffer
+  // waere der erste Schritt zu einer Kopie.
+  assert.ok(abschnitt.includes('createReadStream'));
+  assert.ok(!abschnitt.includes('readFileSync'));
+});
+
+// ===========================================================================
+// EN-N5: DIE SHORTS-ANSICHT IST UNVERAENDERT, BYTE FUER BYTE
+// ===========================================================================
+//
+// Derselbe Vergleich wie EL-N1, nur gegen den Stand VOR EN. Er wird nicht
+// durch EL-N1 miterledigt: der prueft gegen d09095f, und alles, was zwischen
+// d09095f und a00cdab an der Shorts-Seite haette passieren koennen, waere
+// dort schon eingebacken. Zwei Staende, zwei Vergleiche.
+//
+// Ueber diesen Weg sind 21 Shorts hochgeladen worden. Jede Abweichung ist ein
+// Fund und keine Nebensache.
+
+const STAND_VOR_EN = 'a00cdab';
+
+function fassungAusGit(stand, datei) {
+  const g = spawnSync('git', ['show', stand + ':' + datei],
+    { cwd: WURZEL, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  if (g.status !== 0) return null;
+  return g.stdout;
+}
+
+test('EN-N5: die Shorts-Seite ist Byte fuer Byte die von ' + STAND_VOR_EN, () => {
+  const alt = fassungAusGit(STAND_VOR_EN, 'src/upload/freigabe-seite.js');
+  if (alt === null) {
+    // LAUT uebersprungen, nie still. Der Test, der die 21 Uploads deckt, darf
+    // nicht gruen aussehen, wenn er nichts geprueft hat.
+    assert.fail('Der Stand ' + STAND_VOR_EN + ' ist aus git nicht zu holen. Dieser Test ' +
+      'kann so nicht laufen, und er wird nicht als bestanden gezaehlt.');
+  }
+  const ordner = wegwerfordner();
+  try {
+    const altDatei = path.join(ordner, 'seite-vor-en.cjs');
+    fs.writeFileSync(altDatei, alt);
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    const ALT = require(altDatei);
+
+    const sitzung = shortsSitzungFuerVergleich(ordner);
+    const vorher = Buffer.from(ALT.baueSeite(sitzung), 'utf8');
+    const nachher = Buffer.from(SEITE.baueSeite(sitzung), 'utf8');
+
+    assert.equal(nachher.length, vorher.length,
+      'die Shorts-Seite ist ' + nachher.length + ' Bytes gross, vor EN waren es ' +
+      vorher.length);
+    if (!nachher.equals(vorher)) {
+      let i = 0;
+      while (i < vorher.length && vorher[i] === nachher[i]) i++;
+      assert.fail('Die Shorts-Seite weicht ab Byte ' + i + ' ab.\n' +
+        '  vorher:  ' + JSON.stringify(vorher.toString('utf8', Math.max(0, i - 60), i + 60)) +
+        '\n  nachher: ' + JSON.stringify(nachher.toString('utf8', Math.max(0, i - 60), i + 60)));
+    }
+
+    // GEGENPROBE: der Vergleich schnappt zu.
+    const verletzt = alt.replace('Shorts-Freigabe</title>', 'Shorts-Freigabe.</title>');
+    assert.notEqual(verletzt, alt, 'die Gegenprobe hat wirklich etwas geaendert');
+    const verletztDatei = path.join(ordner, 'seite-vor-en-verletzt.cjs');
+    fs.writeFileSync(verletztDatei, verletzt);
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    const KAPUTT = require(verletztDatei);
+    assert.ok(!Buffer.from(KAPUTT.baueSeite(sitzung), 'utf8').equals(nachher),
+      'ein geaendertes Zeichen kam durch den Vergleich -- dann prueft er nichts');
+  } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+});
+
+test('EN-N5: auch der Weg zur Shorts-Seite ist der von ' + STAND_VOR_EN, async () => {
+  // Die Seite koennte gleich sein und der Dienst sie anders ausliefern. Und
+  // die Routentabelle hat sich in DIESEM Auftrag geaendert -- also wird sie
+  // hier gegen den alten Stand gehalten, Eintrag fuer Eintrag.
+  const altServer = fassungAusGit(STAND_VOR_EN, 'src/upload/freigabe-server.js');
+  assert.ok(altServer !== null, 'der Stand ' + STAND_VOR_EN + ' ist aus git nicht zu holen');
+
+  // Die Shorts-Zeilen der beiden Routentabellen, aus dem alten Quelltext
+  // gelesen und gegen den heutigen gehalten. Kein Nachbau: beide Male steht
+  // dieselbe Zeile da oder eben nicht.
+  for (const zeile of [
+    "  [MODUS_SHORTS]: new Set(['/', '/video', '/stand', '/kette', '/lauf']),",
+    "  [MODUS_SHORTS]: new Set(['/urteil', '/beenden', '/planen', '/archivieren', " +
+      "'/hochladen']),",
+  ]) {
+    assert.ok(altServer.includes(zeile), 'so stand es vor EN gar nicht: ' + zeile);
+    assert.ok(SERVERTEXT.includes(zeile),
+      'die Shorts-Routen haben sich geaendert -- erwartet:\n' + zeile);
+  }
+
+  const ordner = wegwerfordner();
+  let lauf = null;
+  try {
+    const sitzung = shortsSitzungFuerVergleich(ordner);
+    lauf = await starte(sitzung);
+    const t = { 'x-freigabe-token': sitzung.token };
+    const seite = await anfrage(lauf.port, { pfad: '/', kopf: t });
+    assert.equal(seite.status, 200);
+    assert.equal(seite.kopf['content-type'], 'text/html; charset=utf-8');
+    assert.equal(seite.text, SEITE.baueSeite(sitzung));
+    for (const pfad of ['/stand', '/kette', '/lauf']) {
+      const a = await anfrage(lauf.port, { pfad, kopf: t });
+      assert.ok(a.status === 200 || a.status === 400, pfad + ' -> ' + a.status);
+    }
+    // Und die neue Route gibt es hier NICHT.
+    const b = await anfrage(lauf.port, { pfad: '/bild', kopf: t });
+    assert.equal(b.status, 404, 'die Bildroute ist im Shorts-Modus erreichbar');
+  } finally {
+    if (lauf) await lauf.schliesse();
+    fs.rmSync(ordner, { recursive: true, force: true });
+  }
+});
+
+test('EN-N5: auch der Shorts-Arbeiter wird unveraendert aufgerufen', () => {
+  // Der Aufruf des LONGFORM-Arbeiters hat ein Argument dazubekommen. Der des
+  // Shorts-Uploaders nicht -- und das steht hier, damit es auffiele.
+  const altServer = fassungAusGit(STAND_VOR_EN, 'src/upload/freigabe-server.js');
+  assert.ok(altServer !== null);
+  for (const marke of ['function ruftUploaderTrocken(', 'function starteUploaderLauf(',
+    'function ruftPlaner(', 'function ruftLeser(']) {
+    const alteFassung = ausschnitt(altServer, marke);
+    const neueFassung = ausschnitt(SERVERTEXT, marke);
+    assert.ok(alteFassung.length > 100, 'nicht gefunden im alten Stand: ' + marke);
+    assert.equal(neueFassung, alteFassung,
+      marke + ' hat sich geaendert -- das ist der Shorts-Weg, und er sollte unberuehrt sein');
+  }
+});
+
+// Ein Ausschnitt von einer Funktionsmarke bis zur naechsten Leerzeile vor
+// einem neuen Zeilenanfang auf Spalte 0 -- reicht, um eine Funktion ganz zu
+// fassen, ohne einen Parser zu bauen.
+function ausschnitt(text, marke) {
+  const von = text.indexOf(marke);
+  if (von < 0) return '';
+  const bis = text.indexOf('\n}\n', von);
+  return bis < 0 ? text.slice(von) : text.slice(von, bis + 3);
+}

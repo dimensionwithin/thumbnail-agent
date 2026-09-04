@@ -1230,6 +1230,41 @@ pre.lf-strom { margin: 0; padding: 12px 14px;
 .lf-ende b { color: #e6e8ec; }
 .lf-ende code { background: #12141a; border: 1px solid #262b33; border-radius: 4px;
   padding: 1px 5px; }
+
+/* EN: DAS BILD UND SEINE ANGABEN.
+   Das Bild steht LINKS und die Angaben RECHTS DANEBEN, nicht darunter: wer
+   scrollen muss, um zu sehen, ob das Bild eine Regel oder ein Vorschlag ist,
+   sieht es beim zweiten Mal nicht mehr. Auf schmalem Schirm bricht die Spalte
+   um -- dann stehen die Angaben ZUERST und das Bild darunter, aus demselben
+   Grund. */
+.lf-bild { display: flex; flex-wrap: wrap-reverse; gap: 18px; align-items: flex-start; }
+.lf-bild-rahmen { flex: 1 1 420px; min-width: 300px; }
+.lf-bild-rahmen img { display: block; width: 100%; height: auto;
+  border: 1px solid #262b33; border-radius: 6px; background: #101218; }
+.lf-bild-angaben { flex: 1 1 340px; min-width: 280px; }
+/* Die Kopfzeile der Angaben traegt die Farbe der ART und nicht des Geschmacks:
+   eine Regel wird ohne Rueckfrage genommen, ein Vorschlag nie. Beide bekommen
+   AUSSER der Farbe dasselbe Wort daneben -- Farbe allein ist keine Auskunft,
+   und wer sie nicht unterscheiden kann, liest den Satz. */
+.lf-art { display: inline-block; border-radius: 4px; padding: 3px 9px;
+  font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+.lf-art.regel { background: #24301d; border: 1px solid #4d6b3a; color: #cfe8bb; }
+.lf-art.vorschlag { background: #241d13; border: 1px solid #6b4a1f; color: #f0d3a6; }
+.lf-bild-angaben dl { display: grid; grid-template-columns: max-content 1fr;
+  gap: 4px 12px; margin: 12px 0 0; font-size: 13px; }
+.lf-bild-angaben dt { color: #9aa3b2; }
+.lf-bild-angaben dd { margin: 0; color: #e6e8ec; word-break: break-all;
+  font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+/* Die Hinweise sind EIN Textblock und keine gebaute Liste. Grund: das Skript
+   dieser Seite hat genau eine Stelle, an der Text in den Baum geht (setze),
+   und die soll es behalten -- eine Schleife, die <li> baut, waere die zweite,
+   und beim Mutationslauf zu EL ist genau an so einer zweiten Stelle eine
+   Kuerzung durchgerutscht. Die Punkte trennt eine Leerzeile, der Strich links
+   kommt aus dem Stil. */
+.lf-hinweise { margin: 14px 0 0; color: #cbd2de; font-size: 13px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+  border-left: 2px solid #3a4150; padding: 2px 0 2px 12px; }
+.lf-kein-bild { color: #ff9a86; font-size: 13.5px; margin: 6px 0 0; max-width: 100ch; }
 `;
 
 // Das Skript der Longform-Ansicht. Es setzt Werte in den Baum und tut sonst
@@ -1259,6 +1294,17 @@ function setze(element, text) {
   return element;
 }
 
+// EN: DIE EINE STELLE, AN DER EINE ADRESSE IN DEN BAUM GEHT. Sie steht neben
+// setze() und nicht darin, weil ein src kein Text ist: textContent maskiert,
+// ein Attribut nicht. Es gibt genau einen Aufruf, er zeigt auf die eine
+// lesende Bildroute dieses Dienstes, und die Adresse wird hier gebildet und
+// nicht anderswo -- damit es keine zweite Stelle gibt, an der jemand ein
+// Sitzungstoken in eine Adresse haengt.
+function setzeQuelle(element, adresse) {
+  element.src = adresse;
+  return element;
+}
+
 setze(kel('kopf1'), 'Aufnahme ' + D.aufnahme + ' — Betriebsmodus Longform, Trockenlauf');
 setze(kel('kopf2'), 'Woertlich die Ausgabe von:  ' + D.befehl);
 
@@ -1267,6 +1313,38 @@ setze(kel('ausgangKopf'), 'Der Arbeiter endete mit ' + D.ausgang.code +
 setze(kel('ausgangBedeutung'), D.ausgang.bedeutung || '');
 setze(kel('ausgangZusatz'), D.ausgang.zusatz || '');
 if (D.ausgang.fehler) setze(kel('ausgangFehler'), D.ausgang.fehler).hidden = false;
+
+// EN: DAS BILD UND SEINE ANGABEN.
+//
+// ZUERST DIE ANGABEN, DANN DAS BILD -- in dieser Reihenfolge im Code, damit
+// beim Lesen auffiele, wenn eine Fassung das Bild setzte und die Angaben
+// vergaesse. Ein Bild ohne Rang und Art saehe im Zweifelsfall genauso aus wie
+// eines aus Rang 1, und dann urteilt ein Mensch ueber etwas anderes, als er
+// glaubt: DAS ist der Fehler, gegen den dieser Teil gebaut ist.
+if (D.bild && D.bild.da) {
+  kel('bildKasten').hidden = false;
+  setze(kel('bildArt'), D.bild.art === 'regel' ? 'Regel' : 'Vorschlag');
+  kel('bildArt').className = 'lf-art ' + (D.bild.art === 'regel' ? 'regel' : 'vorschlag');
+  setze(kel('bildRang'), 'Rang ' + D.bild.rang);
+  for (const [id, wert] of [
+    ['bildName', D.bild.dateiname],
+    ['bildSha', D.bild.sha256 === null ? '(keine)' : D.bild.sha256],
+    ['bildShaHer', D.bild.sha256_herkunft],
+    ['bildBytes', D.bild.bytes === null ? '(unbekannt)' : D.bild.bytes + ' Bytes'],
+    ['bildZettel', D.bild.zettel === null ? '(keiner)' : D.bild.zettel],
+  ]) setze(kel(id), String(wert));
+  // Die Hinweise als EIN Stueck, durch Leerzeilen getrennt. Sie stammen Wort
+  // fuer Wort aus der Befundzeile des Arbeiters; diese Seite setzt nur den
+  // Strich davor.
+  setze(kel('bildHinweise'), D.bild.hinweise.map((h) => '- ' + h).join('\n\n'));
+  // Zuletzt die Adresse. Wer hier kuerzt, kuerzt das Bild weg und laesst die
+  // Angaben stehen -- das faellt auf; umgekehrt fiele es nicht auf.
+  setzeQuelle(kel('bild'), D.bildAdresse);
+} else {
+  kel('keinBild').hidden = false;
+  setze(kel('keinBild'), 'Kein Bild. ' + ((D.bild && D.bild.grund) || '') +
+    ' Diese Seite zeigt keines, das der Arbeiter nicht bestimmt hat.');
+}
 
 // Die beiden Stroeme, getrennt und jeder als EIN Stueck. Ein leerer Strom
 // bekommt keinen leeren Kasten: ein Rahmen ohne Inhalt sieht aus wie ein
@@ -1282,33 +1360,69 @@ if (!etwasDa) kel('keinStrom').hidden = false;
 `;
 
 // sitzung: { modus, aufnahme, token, trocken: {befehl, code, aus, err, fehler},
-//            ausgang: {code, name, bedeutung, zusatz, fehler} }
+//            ausgang: {code, name, bedeutung, zusatz, fehler},
+//            bild: {da, grund, dateiname, sha256, ...} }
 //
-// Der Token geht NICHT in die Nutzlast. Die Shorts-Seite braucht ihn fuer ihre
-// fetch-Aufrufe und fuer die Videoadressen; diese Seite macht keinen einzigen
-// Aufruf, und ein Token, das im Baum liegt, ohne dass ihn jemand benutzt, ist
-// ein Wert, der herumliegt.
+// EN: DER TOKEN GEHT JETZT IN DIE NUTZLAST -- an genau einer Stelle und fuer
+// genau einen Zweck. Bis EN stand hier "der Token geht NICHT in die Nutzlast,
+// diese Seite macht keinen einzigen Aufruf"; seit sie das Thumbnail zeigt,
+// stimmt der zweite Halbsatz nicht mehr, und der erste wandert mit, statt
+// weiter behauptet zu werden.
+//
+// Er steht in der Adresse und nicht in einer Kopfzeile, weil ein <img> keine
+// setzen kann -- derselbe Grund und derselbe Weg wie beim <video src> der
+// Shorts-Seite (freigabe-server.js, Torwaechter Schritt 2). Die Seite baut die
+// Adresse EINMAL, hier, und das Skript setzt sie EINMAL; es gibt keine zweite
+// Stelle, die ein Token an eine Adresse haengt.
+//
+// Ein Aufruf ist das trotzdem keiner: das Bild wird angezeigt, nicht abgeholt
+// und weiterverarbeitet. Die Seite traegt weiterhin kein fetch, kein Formular,
+// keinen Knopf und kein Ereignis, und der Modus hat weiterhin keine POST-Route.
 function baueLongformSeite(sitzung) {
   const t = sitzung.trocken;
+  const bild = sitzung.bild || { da: false, grund: 'Diese Sitzung traegt kein Bild.' };
   const nutzlast = {
     aufnahme: sitzung.aufnahme,
     befehl: t.befehl,
     ausgang: sitzung.ausgang,
     aus: t.aus,
     err: t.err,
+    // Nur die Angaben, die neben dem Bild stehen. Der PFAD gehoert nicht dazu
+    // und steht ausdruecklich nicht in der Seite: der Browser braucht ihn
+    // nicht, die Route nimmt ihn nicht entgegen, und ein Pfad, der im Baum
+    // liegt, ohne dass ihn jemand benutzt, ist die Einladung, ihn eines Tages
+    // zu benutzen.
+    bild: bild.da ? {
+      da: true,
+      dateiname: bild.dateiname,
+      sha256: bild.sha256,
+      sha256_herkunft: bild.sha256_herkunft,
+      bytes: bild.bytes,
+      rang: bild.rang,
+      art: bild.art,
+      zettel: bild.zettel,
+      hinweise: bild.hinweise,
+    } : { da: false, grund: bild.grund },
+    bildAdresse: bild.da ? '/bild?t=' + sitzung.token : null,
   };
   return [
     '<!doctype html>',
     '<html lang="de"><head><meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    // ENGER ALS DIE SHORTS-SEITE, und zwar an zwei Stellen: kein media-src
-    // (diese Seite bindet kein Video ein) und kein connect-src (sie ruft
-    // nichts auf). Beide fallen damit auf default-src 'none'. Die Sicherung
-    // ist dieselbe wie drueben; sie ist nur um das gekuerzt, was hier nicht
-    // vorkommt -- eine Erlaubnis, die niemand braucht, wird nicht "zur
-    // Sicherheit" mitgeschleppt.
+    // ENGER ALS DIE SHORTS-SEITE: kein media-src (diese Seite bindet kein
+    // Video ein) und kein connect-src (sie ruft nichts auf). Beide fallen auf
+    // default-src 'none'. Die Sicherung ist dieselbe wie drueben; sie ist nur
+    // um das gekuerzt, was hier nicht vorkommt -- eine Erlaubnis, die niemand
+    // braucht, wird nicht "zur Sicherheit" mitgeschleppt.
+    //
+    // EN: img-src 'self' KOMMT DAZU, und nur das. 'self' ist dieser Dienst
+    // unter dieser Adresse -- also die eine lesende Bildroute und sonst
+    // nichts; kein data:, kein blob:, kein fremder Rechner. Ein Bild von
+    // woanders soll auf dieser Seite nicht darstellbar sein, auch nicht
+    // versehentlich. connect-src bleibt weg: dass die Seite ein Bild ANZEIGT,
+    // heisst nicht, dass sie etwas AUFRUFEN darf.
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
-      'style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; ' +
+      'img-src \'self\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; ' +
       'form-action \'none\'; base-uri \'none\'">',
     '<title>Longform-Trockenlauf</title>',
     '<style>' + STIL + LONGFORM_STIL + '</style></head><body>',
@@ -1335,7 +1449,45 @@ function baueLongformSeite(sitzung) {
     '<p class="fehler" id="ausgangFehler" hidden></p>',
     '</section>',
 
-    // 2. DER TEXT DES ARBEITERS, ungekuerzt.
+    // 2. EN: DAS THUMBNAIL. Vor dem Text des Arbeiters und nicht dahinter --
+    //    Vertrag 4, Schritt 7 verlangt, dass der Mensch das Bild sieht, BEVOR
+    //    er urteilt, und hinter hundert Zeilen Text saehe er es beim zweiten
+    //    Mal nicht mehr. Es steht hinter dem Ausgang, weil ein Bild neben
+    //    einem Lauf, der abgebrochen ist, ohne diesen Ausgang falsch gelesen
+    //    wuerde.
+    '<section class="lf-abschnitt">',
+    '<h2>Das Thumbnail</h2>',
+    '<p>Das ist die Datei, die dieser Lauf bestimmt hat &mdash; <b>die Bytes von der ' +
+      'Platte</b>, nicht eine Vorschau davon und keine Kopie. Welche es ist, hat der ' +
+      'Arbeiter ausdruecklich benannt; diese Seite hat sie nicht aus seinem Text ' +
+      'herausgesucht und keinen Ordner danach abgesucht.</p>',
+    '<p><b>Nicht dabei:</b> das Standbild des Videos, das Vertrag 4 Schritt 7 daneben ' +
+      'verlangt. Es ist nicht gebaut &mdash; es braeuchte ffmpeg und eine zweite Datei auf ' +
+      'der Platte, und dieser Dienst schreibt genau eine.</p>',
+    '<div class="lf-bild" id="bildKasten" hidden>',
+    '<div class="lf-bild-rahmen">',
+    // alt bleibt leer und ist es absichtlich: was auf dem Bild zu sehen ist,
+    // weiss diese Seite nicht, und ein erfundener Ersatztext waere eine
+    // Behauptung darueber. Was ueber das Bild bekannt ist, steht daneben als
+    // Text -- lesbar auch dann, wenn das Bild nicht ankommt.
+    '<img id="bild" alt="">',
+    '</div>',
+    '<div class="lf-bild-angaben">',
+    '<span class="lf-art" id="bildArt"></span> <span id="bildRang"></span>',
+    '<dl>',
+    '<dt>Datei</dt><dd id="bildName"></dd>',
+    '<dt>sha256</dt><dd id="bildSha"></dd>',
+    '<dt>woher</dt><dd id="bildShaHer"></dd>',
+    '<dt>Groesse</dt><dd id="bildBytes"></dd>',
+    '<dt>Zettel</dt><dd id="bildZettel"></dd>',
+    '</dl>',
+    '<div class="lf-hinweise" id="bildHinweise"></div>',
+    '</div>',
+    '</div>',
+    '<p class="lf-kein-bild" id="keinBild" hidden></p>',
+    '</section>',
+
+    // 3. DER TEXT DES ARBEITERS, ungekuerzt.
     '<section class="lf-abschnitt">',
     '<h2>Was der Trockenlauf ausgegeben hat</h2>',
     '<p>Der Text unten ist <b>woertlich</b> seine Ausgabe. Diese Seite formuliert nichts ' +
@@ -1354,7 +1506,7 @@ function baueLongformSeite(sitzung) {
       'zu sagen, ist im Terminal nachzusehen.</p>',
     '</section>',
 
-    // 3. WO DIESE SEITE AUFHOERT. Sie steht als eigener Abschnitt und nicht als
+    // 4. WO DIESE SEITE AUFHOERT. Sie steht als eigener Abschnitt und nicht als
     //    Fussnote: dass hier nichts weitergeht, ist die wichtigste Auskunft
     //    dieser Seite nach dem Ausgang oben.
     '<section class="lf-ende">',

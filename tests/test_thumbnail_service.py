@@ -19,6 +19,10 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import quote, unquote
 
+# ES: Das Modul selbst wird gebraucht, um die Listenpruefung fuer den
+# Mutationstest gezielt auszubauen -- gepatcht wird das MODULATTRIBUT, weil
+# build_beipackzettel() und _save_export() beide darueber gehen.
+import thumbnail_service
 from thumbnail_service import (
     SERIES_NAMES,
     AUFNAHME_DIRECTORY_ENV,
@@ -29,7 +33,9 @@ from thumbnail_service import (
     BEIPACKZETTEL_SCHEMA_VERSION,
     VIDEOTITEL_MAX_ZEICHEN,
     beipackzettel_name,
+    bekannte_aufnahmennamen,
     build_beipackzettel,
+    entscheide_aufnahme_herkunft,
     AUFNAHME_PATTERN,
     pruefe_aufnahme,
     pruefe_aufnahme_herkunft,
@@ -985,8 +991,13 @@ class ClientContractTests(unittest.TestCase):
         # DZ: Seit dem Beipackzettel koennen ZWEI Hinweise anfallen (Registry und
         # Zettel). Beide stehen hinter demselben ACHTUNG, keiner faellt weg.
         self.assertIn("gespeichert.warning", self.html)
+        # ES: Seit der Listenpruefung koennen VIER Hinweise anfallen -- Registry,
+        # Zettel, die Abstufung des Aufnahmenamens und ein Dienst, der die
+        # Herkunft gar nicht nennt. Alle stehen hinter demselben ACHTUNG.
         self.assertIn(
-            "const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung].filter(Boolean);",
+            "const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung,\n"
+            "                        gespeichert.aufnahmeWarnung, gespeichert.aufnahmeHinweis]"
+            ".filter(Boolean);",
             self.html,
         )
         self.assertIn("' — ACHTUNG: '+hinweise.join(' ')", self.html)
@@ -1295,6 +1306,16 @@ class BeipackzettelTests(HttpEndpointTests):
 class AufnahmeImZettelTests(HttpEndpointTests):
     """EC: Was ueber HTTP mit dem Feld `aufnahme` passiert -- und was nicht."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        # ES: Ohne Aufnahmeordner kann der Dienst nichts bestaetigen. Diese
+        # Klasse prueft den Weg MIT Liste; der Weg ohne steht in
+        # AufnahmeNamenspruefungTests.
+        self.aufnahmen = Path(self.temporary.name) / "aufnahmen"
+        self.aufnahmen.mkdir()
+        (self.aufnahmen / "2026-09-02 12-10-37.mp4").write_bytes(b"x")
+        self.server.aufnahme_directory = self.aufnahmen
+
     def zettel(self, name: str) -> dict:
         return json.loads((self.export / name).read_text(encoding="utf-8"))
 
@@ -1513,6 +1534,7 @@ class BeipackzettelUnitTests(unittest.TestCase):
                 "chart_quelle": {"herkunft": "manuell", "dateiname": "c.png", "zeitstempel": "z"},
             },
             exportiert_am="2026-09-03T12:00:00+02:00",
+            bekannte_aufnahmen=None,
         )
         self.assertEqual(
             sorted(zettel),
@@ -1618,6 +1640,7 @@ class AufnahmeFeldUnitTests(unittest.TestCase):
             format_="standard", episode=None,
             metadaten={"aufnahme": "2026-09-02 12-10-37"},
             exportiert_am="2026-09-03T12:00:00+02:00",
+            bekannte_aufnahmen={"2026-09-02 12-10-37"},
         )
         self.assertEqual(zettel["aufnahme"], "2026-09-02 12-10-37")
         self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
@@ -1628,11 +1651,14 @@ class AufnahmeFeldUnitTests(unittest.TestCase):
             format_="standard", episode=None,
             metadaten={"aufnahme": "  ", "aufnahme_herkunft": AUFNAHME_HERKUNFT_BESTAETIGT},
             exportiert_am="2026-09-03T12:00:00+02:00",
+            bekannte_aufnahmen={"2026-09-02 12-10-37"},
         )
         self.assertIsNone(zettel["aufnahme"])
         self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_LEER)
 
     def test_a_confirmed_name_is_written_as_confirmed(self) -> None:
+        """ES: ... und zwar NUR, wenn der Name in der Liste steht. Frueher
+        genuegte die Behauptung im Kopf."""
         zettel = build_beipackzettel(
             dateiname="adw-x.jpg", sha256="ab" * 32, bytes_geschrieben=7,
             format_="standard", episode=None,
@@ -1641,6 +1667,7 @@ class AufnahmeFeldUnitTests(unittest.TestCase):
                 "aufnahme_herkunft": AUFNAHME_HERKUNFT_BESTAETIGT,
             },
             exportiert_am="2026-09-03T12:00:00+02:00",
+            bekannte_aufnahmen={"2026-09-02 12-10-37"},
         )
         self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
 
@@ -1890,11 +1917,13 @@ class BeipackzettelClientTests(unittest.TestCase):
         Ereignisse, die ihn nehmen, sind Handlungen eines Menschen."""
         self.assertEqual(1, self.html.count("state.aufnahme = String("))
         self.assertIn(
-            "aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value); });",
+            "aufnahmeEl.addEventListener('input', function(){ "
+            "setzeAufnahme(aufnahmeEl.value, 'tippen'); });",
             self.html,
         )
         self.assertIn(
-            "aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme(''); });",
+            "aufnahmeLeerenEl.addEventListener('click', function(){ "
+            "setzeAufnahme('', 'tippen'); });",
             self.html,
         )
         # Die Kandidatenliste SETZT nicht -- sie bietet an.
@@ -1927,11 +1956,24 @@ class BeipackzettelClientTests(unittest.TestCase):
     def test_a_changed_chart_takes_the_confirmation_away(self) -> None:
         """EC: Der Name bleibt stehen -- die Bestaetigung nicht. Genau dafuer
         gibt es das zweite Feld."""
-        herkunft = self.html[
-            self.html.index("function aufnahmeHerkunft()") : self.html.index("function todayISO()")
+        # ES: Die Chartbindung sitzt seit der Listenpruefung in aufnahmeUrteil().
+        # Sie ist damit nicht weg, sondern eine der drei Bedingungen -- und sie
+        # bleibt eine EIGENE Bedingung mit einem eigenen Satz.
+        urteil = self.html[
+            self.html.index("function aufnahmeUrteil()") : self.html.index(
+                "function nachleseErgebnis("
+            )
         ]
-        self.assertIn("state.aufnahmeChart === chartSchluessel()", herkunft)
-        self.assertIn("AUFNAHME_HERKUNFT_UNBESTAETIGT", herkunft)
+        self.assertIn("state.aufnahmeChart !== chartSchluessel()", urteil)
+        self.assertIn("AUFNAHME_HERKUNFT_UNBESTAETIGT", urteil)
+        self.assertIn(
+            "return aufnahmeUrteil().herkunft;",
+            self.html[
+                self.html.index("function aufnahmeHerkunft()") : self.html.index(
+                    "function todayISO()"
+                )
+            ],
+        )
         # Ein neues Chart loescht den Namen NICHT -- die Arbeit soll bleiben.
         laden = self.html[
             self.html.index("function loadFile(f, options)") : self.html.index("function sourceFailurePhase(")
@@ -1946,7 +1988,14 @@ class BeipackzettelClientTests(unittest.TestCase):
         """Wer exportiert, soll ohne die Datei zu oeffnen sehen, ob gerade ein
         Zettel ohne Aufnahme entstanden ist."""
         self.assertIn("' (ohne Aufnahme)'", self.html)
-        self.assertIn("' (Aufnahme '+state.aufnahme+', '+aufnahmeHerkunft()+')'", self.html)
+        # ES: Genannt wird, was der SCHREIBENDE gemeldet hat -- nicht, was die
+        # Seite jetzt noch errechnen wuerde.
+        self.assertIn(
+            "' (Aufnahme '+state.aufnahme+', '"
+            "+(gespeichert.aufnahmeHerkunft || 'Herkunft ungenannt')+')'",
+            self.html,
+        )
+        self.assertNotIn("+aufnahmeHerkunft()+')'", self.html)
 
     def test_the_connected_folder_writes_the_same_note(self) -> None:
         inhalt = self.html[
@@ -4009,10 +4058,15 @@ def aufnahme_logik_js(html: str) -> str:
     return "\n".join(
         compositor_schnitt(html, von, bis)
         for von, bis in (
-            ("const AUFNAHME_MUSTER", "function aufnahmeFehler"),
+            # ES: bis "function chartSchluessel()" statt bis
+            # "function aufnahmeFehler" -- die FORMSTELLE gehoert seither zur
+            # Aufnahme-Logik, weil aufnahmeUrteil() sie aufruft.
+            ("const AUFNAHME_MUSTER", "function chartSchluessel()"),
             ("function chartSchluessel()", "function todayISO()"),
+            # In diesem Stueck stehen seit ES auch aufnahmeIstBekannt() und
+            # aufnahmeUrteil() -- die eine Stelle, an der die Seite urteilt.
             ("const aufnahmeState = {", "function aufnahmeStichtag()"),
-            ("function setzeAufnahme(name){", "aufnahmeEl.addEventListener"),
+            ("function setzeAufnahme(name, quelle){", "aufnahmeEl.addEventListener"),
             ("async function ladeAufnahmen(absicht){", "function syncExportFormatUI()"),
         )
     )
@@ -4034,6 +4088,7 @@ const localService = { available: szenario !== 'aus', token: token };
 const state = {
   aufnahme: '',
   aufnahmeChart: null,
+  aufnahmeQuelle: null,
   chartQuelle: { herkunft: 'dienst', dateiname: 'chart.png',
                  zeitstempel: '2026-09-04T14:00:00.000Z' },
 };
@@ -4045,6 +4100,8 @@ function syncAufnahmeUI(){
     phase: aufnahmeState.phase,
     auswahl: state.aufnahme,
     herkunft: aufnahmeHerkunft(),
+    urteil: aufnahmeUrteil(),
+    listeDa: aufnahmeState.listeDa,
     meldung: nachleseMeldung(aufnahmeState.nachlese),
     liste: aufnahmeState.liste.map(a => a.name),
   });
@@ -4060,6 +4117,8 @@ function bericht(zusatz){
     auswahl: state.aufnahme,
     auswahlChart: state.aufnahmeChart,
     herkunft: aufnahmeHerkunft(),
+    urteil: aufnahmeUrteil(),
+    listeDa: aufnahmeState.listeDa,
     phase: aufnahmeState.phase,
     liste: aufnahmeState.liste.map(a => a.name),
     nachlese: aufnahmeState.nachlese,
@@ -4091,7 +4150,7 @@ function bericht(zusatz){
     globalThis.fetch = () => { throw new Error('EQ: ueber file:// darf nichts ans Netz gehen'); };
     await ladeAufnahmen();
     const beimStart = bericht();
-    setzeAufnahme(NEUE);
+    setzeAufnahme(NEUE, 'tippen');
     await ladeAufnahmen('nachlesen');
     console.log(JSON.stringify(bericht({ beimStart: beimStart })));
     return;
@@ -4100,7 +4159,7 @@ function bericht(zusatz){
   // Alle uebrigen Szenarien: Seite laedt, Mensch waehlt, Mensch liest nach.
   await ladeAufnahmen();
   const beimStart = bericht();
-  setzeAufnahme(AUSWAHL);
+  setzeAufnahme(AUSWAHL, 'klick');
   const nachWahl = bericht();
 
   if (szenario === 'neu'){
@@ -4338,6 +4397,636 @@ class AufnahmeNachleseTests(HttpEndpointTests):
         for _ in range(3):
             status, _, _ = self.request(path="/api/aufnahmen")
             self.assertEqual(status, 200)
+        self.assertEqual(abzug(), vorher)
+
+
+
+
+# ---------------------------------------------------------------------------
+# ES: EIN GETIPPTER NAME IST KEINE BESTAETIGUNG.
+#
+# Bis hierher erzeugte jeder von Hand getippte Name mit gueltiger FORM sofort
+# "bestaetigt" -- weder die Seite noch der Dienst sahen in der Kandidatenliste
+# nach, ob es diese Aufnahme ueberhaupt gibt. Der gefaehrliche Fall ist nicht
+# der Tippfehler ins Leere (der findet spaeter nichts und faellt auf), sondern
+# der, der eine ANDERE echte Aufnahme trifft: dann haengt das Bild bestaetigt
+# am falschen Video, und Rang 1 des Longform-Wegs nimmt es ohne Rueckfrage.
+#
+# Der Rahmen hier ist derselbe wie bei EQ: die Aufnahme-Logik wird WOERTLICH
+# aus thumbnail-compositor.html geschnitten und in Node ausgefuehrt. Nachgebaut
+# ist nur die Umgebung. Ein zweiter Nachbau der Regel waere kein Nachweis.
+# ---------------------------------------------------------------------------
+
+ES_RAHMEN = """
+const [basis, token, szenario] = process.argv.slice(2);
+
+const echterFetch = globalThis.fetch;
+globalThis.fetch = (pfad, opt) => echterFetch(basis + pfad, opt);
+
+// available ist absichtlich VERAENDERLICH: der Fall "es gibt keine Liste"
+// entsteht dadurch, dass es keinen Dienst gibt, und nicht dadurch, dass ein
+// Testschalter die Regel umgeht.
+const localService = { available: szenario !== 'ohne-dienst', token: token };
+const state = {
+  aufnahme: '',
+  aufnahmeChart: null,
+  aufnahmeQuelle: null,
+  chartQuelle: { herkunft: 'dienst', dateiname: 'chart.png',
+                 zeitstempel: '2026-09-04T14:00:00.000Z' },
+};
+function syncAufnahmeUI(){ /* hier wird nicht gezeichnet, nur geurteilt */ }
+
+__AUFNAHME_LOGIK__
+
+const AUS_LISTE   = '2026-09-04 09-12-03';   // liegt im Ordner
+const NACHBAR     = '2026-09-04 16-30-57';   // liegt AUCH im Ordner
+const ERFUNDEN    = '2026-09-04 09-12-04';   // Form gueltig, gibt es nicht
+const SCHIEF      = '04.09.2026 09:12:03';   // Form ungueltig
+
+function stand(){
+  const u = aufnahmeUrteil();
+  return { fall: u.fall, herkunft: u.herkunft, satz: u.satz, klasse: u.klasse,
+           auswahl: state.aufnahme, listeDa: aufnahmeState.listeDa,
+           liste: aufnahmeState.liste.map(a => a.name) };
+}
+
+(async () => {
+  await ladeAufnahmen();
+
+  if (szenario === 'ohne-dienst'){
+    // Kein Dienst -> keine Liste. Ein Netzaufruf waere hier ein Fehler.
+    globalThis.fetch = () => { throw new Error('ES: ohne Dienst darf nichts ans Netz'); };
+    setzeAufnahme(AUS_LISTE, 'tippen');
+    console.log(JSON.stringify({ ohneListe: stand() }));
+    return;
+  }
+
+  if (szenario === 'ohne-ordner'){
+    // Der ANDERE Weg zu "keine Liste": der Dienst laeuft und antwortet, aber
+    // er hat keinen lesbaren Aufnahmeordner. Das ist etwas anderes als eine
+    // leere Liste, und die Seite muss es auch anders sagen.
+    setzeAufnahme(AUS_LISTE, 'tippen');
+    console.log(JSON.stringify({ ohneOrdner: stand() }));
+    return;
+  }
+
+  if (szenario === 'faelle'){
+    setzeAufnahme(AUS_LISTE, 'klick');   const geklickt = stand();
+    setzeAufnahme(AUS_LISTE, 'tippen');  const getippt  = stand();
+    setzeAufnahme(ERFUNDEN, 'tippen');   const unbekannt = stand();
+    setzeAufnahme(SCHIEF, 'tippen');     const schief   = stand();
+    // Der Chartwechsel: der Name bleibt, die Bestaetigung nicht.
+    setzeAufnahme(AUS_LISTE, 'klick');
+    state.chartQuelle = { herkunft: 'dienst', dateiname: 'anderes.png',
+                          zeitstempel: '2026-09-04T15:00:00.000Z' };
+    const chart = stand();
+    setzeAufnahme('', 'tippen');         const leer = stand();
+    console.log(JSON.stringify({ geklickt, getippt, unbekannt, schief, chart, leer }));
+    return;
+  }
+
+  if (szenario === 'nachbar'){
+    // DER GEFAEHRLICHE FALL: ein Tippfehler, der eine ANDERE echte Aufnahme
+    // trifft. Die Regel prueft, DASS es die Aufnahme gibt -- nicht, dass es
+    // die richtige ist.
+    setzeAufnahme(NACHBAR, 'tippen');
+    console.log(JSON.stringify({ getroffen: stand() }));
+    return;
+  }
+
+  if (szenario === 'auffrischen'){
+    // Anzeige und Datei muessen dasselbe sagen -- AUCH nachdem die Liste
+    // zwischendurch neu gelesen wurde. Ein Urteil, das stehenbleibt, waehrend
+    // sich die Liste geaendert hat, waeren zwei Zustaende unter einer Anzeige.
+    setzeAufnahme(AUS_LISTE, 'klick');
+    const vorher = stand();
+    await ladeAufnahmen('nachlesen');        // der Ordner hat sich inzwischen geleert
+    const nachher = stand();
+    console.log(JSON.stringify({ vorher, nachher }));
+    return;
+  }
+
+  throw new Error('ES: unbekanntes Szenario ' + szenario);
+})().catch(fehler => {
+  console.log(JSON.stringify({ absturz: String((fehler && fehler.message) || fehler) }));
+  process.exitCode = 1;
+});
+"""
+
+
+class AufnahmeNamenspruefungTests(HttpEndpointTests):
+    """ES: bestaetigt nur, was in der Liste steht -- geprueft, wo geschrieben wird."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.aufnahmen = Path(self.temporary.name) / "aufnahmen"
+        self.aufnahmen.mkdir()
+        for name in ("2026-09-04 09-12-03", "2026-09-04 16-30-57"):
+            (self.aufnahmen / (name + ".mp4")).write_bytes(b"x")
+        self.server.aufnahme_directory = self.aufnahmen
+
+    # -- der Rahmen -------------------------------------------------------
+
+    def seite(self, szenario: str, *, logik: str | None = None) -> dict:
+        """Fuehrt die geschnittene Aufnahme-Logik der Seite in Node aus."""
+
+        quelle = ES_RAHMEN.replace(
+            "__AUFNAHME_LOGIK__",
+            logik if logik is not None else aufnahme_logik_js(self.html),
+        )
+        skript = Path(self.temporary.name) / ("es-" + szenario + ".cjs")
+        skript.write_text(quelle, encoding="utf-8")
+        fertig = subprocess.run(
+            ["node", str(skript), "http://" + HOST + ":" + str(self.server.server_port),
+             self.token, szenario],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        self.assertTrue(fertig.stdout.strip(), fertig.stdout + fertig.stderr)
+        ergebnis = json.loads(fertig.stdout.strip().splitlines()[-1])
+        self.assertNotIn("absturz", ergebnis, ergebnis)
+        return ergebnis
+
+    def zettel(self, name: str) -> dict:
+        return json.loads((self.export / name).read_text(encoding="utf-8"))
+
+    def exportiere(self, dateiname: str, **beipackzettel: object) -> tuple[dict, dict]:
+        """Ein Export ueber HTTP. Zurueck: Antwort des Dienstes und der Zettel."""
+
+        status, _, antwort = self.export_request(
+            dateiname + ".png", "image/png", png_bytes(dateiname.encode("utf-8")),
+            preset="standard", beipackzettel=beipackzettel,
+        )
+        self.assertEqual(status, 200, antwort)
+        return antwort, self.zettel(dateiname + ".json")
+
+    # -- Nachweis 1: fuenf Faelle, fuenf Meldungen ------------------------
+
+    def test_the_five_outcomes_do_not_share_a_single_sentence(self) -> None:
+        """Aus der Liste geklickt; getippt und passend; getippt ohne Treffer;
+        getippt mit schiefer Form; keine Liste. Die Verschiedenheit wird
+        GERECHNET -- zwei Faelle unter einem Satz waeren zwei Zustaende unter
+        einer Anzeige."""
+
+        faelle = self.seite("faelle")
+        ohne = self.seite("ohne-dienst")["ohneListe"]
+        fuenf = {
+            "geklickt": faelle["geklickt"],
+            "getippt": faelle["getippt"],
+            "unbekannt": faelle["unbekannt"],
+            "schief": faelle["schief"],
+            "ohne-liste": ohne,
+        }
+        saetze = [stand["satz"] for stand in fuenf.values()]
+        for satz in saetze:
+            self.assertTrue(satz.strip(), fuenf)
+        self.assertEqual(len(saetze), 5)
+        self.assertEqual(len(set(saetze)), 5, saetze)
+        # Und die Faelle selbst tragen fuenf verschiedene Namen.
+        self.assertEqual(
+            sorted(stand["fall"] for stand in fuenf.values()),
+            ["form", "geklickt", "getippt", "ohne-liste", "unbekannt"],
+        )
+
+    def test_every_outcome_of_the_field_has_its_own_sentence(self) -> None:
+        """Nicht nur die fuenf aus dem Auftrag: auch Chartwechsel und Leer
+        haben eigene Saetze. Sieben Ausgaenge, sieben Saetze."""
+
+        faelle = self.seite("faelle")
+        ohne = self.seite("ohne-dienst")["ohneListe"]
+        alle = list(faelle.values()) + [ohne]
+        self.assertEqual(len(alle), 7)
+        self.assertEqual(len(set(s["satz"] for s in alle)), 7,
+                         [s["fall"] for s in alle])
+        self.assertEqual(len(set(s["fall"] for s in alle)), 7)
+
+    def test_the_five_outcomes_write_what_the_sentence_says(self) -> None:
+        """Der Satz ist kein Schmuck: er sagt, was im Zettel steht."""
+
+        faelle = self.seite("faelle")
+        ohne = self.seite("ohne-dienst")["ohneListe"]
+        self.assertEqual(faelle["geklickt"]["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertEqual(faelle["getippt"]["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertEqual(faelle["unbekannt"]["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertEqual(faelle["chart"]["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertEqual(faelle["leer"]["herkunft"], AUFNAHME_HERKUNFT_LEER)
+        self.assertEqual(ohne["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        # Die schiefe Form kommt gar nicht bis zum Zettel -- der Knopf bricht
+        # vorher ab. Behauptet wird trotzdem nichts: unbestaetigt.
+        self.assertEqual(faelle["schief"]["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertEqual(faelle["schief"]["klasse"], "fehler")
+        # Ohne Liste ist es kein Fehler, sondern eine Warnung: der Export laeuft,
+        # der Longform-Weg fragt nach.
+        self.assertEqual(ohne["klasse"], "warnung")
+        self.assertFalse(ohne["listeDa"])
+        self.assertTrue(faelle["getippt"]["listeDa"])
+
+    def test_a_running_service_without_a_folder_is_also_no_list(self) -> None:
+        """Der zweite Weg zu "keine Liste": der Dienst antwortet, hat aber
+        keinen Aufnahmeordner. Ohne diesen Fall koennte listeDa fest auf true
+        stehen, ohne dass ein Test es merkte -- der Mutationslauf zu ES hat
+        genau das gefunden."""
+
+        self.server.aufnahme_directory = None
+        stand = self.seite("ohne-ordner")["ohneOrdner"]
+        self.assertFalse(stand["listeDa"])
+        self.assertEqual(stand["liste"], [])
+        self.assertEqual(stand["fall"], "ohne-liste")
+        self.assertEqual(stand["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        # Und NICHT der Satz fuer "die Liste kennt ihn nicht": der wuerde zum
+        # Neueinlesen raten, wo es nichts einzulesen gibt.
+        self.assertIn("keine Aufnahmeliste", stand["satz"])
+        self.assertNotIn("lies die Liste neu ein", stand["satz"])
+
+    def test_the_two_ways_to_have_no_list_reach_the_same_verdict(self) -> None:
+        """Kein Dienst und kein Ordner sind zwei Wege zu einem Urteil. Der
+        Satz darf derselbe sein -- die Zeile darunter, die den Grund nennt,
+        nicht (die baut syncAufnahmeUI aus `phase`)."""
+
+        ohne_dienst = self.seite("ohne-dienst")["ohneListe"]
+        self.server.aufnahme_directory = None
+        ohne_ordner = self.seite("ohne-ordner")["ohneOrdner"]
+        self.assertEqual(ohne_dienst["fall"], ohne_ordner["fall"])
+        self.assertEqual(ohne_dienst["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertEqual(ohne_ordner["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertIn(
+            "Ohne den lokalen Dienst gibt es keine Kandidatenliste", self.html
+        )
+        self.assertIn("Kein Aufnahmeordner eingestellt.", self.html)
+
+    def test_the_sentences_name_the_reason_and_not_only_the_verdict(self) -> None:
+        faelle = self.seite("faelle")
+        ohne = self.seite("ohne-dienst")["ohneListe"]
+        self.assertIn("aus der Aufnahmeliste gewaehlt", faelle["geklickt"]["satz"])
+        self.assertIn("steht in der Aufnahmeliste", faelle["getippt"]["satz"])
+        self.assertIn("kennt die Aufnahmeliste nicht", faelle["unbekannt"]["satz"])
+        self.assertIn("nicht die Form", faelle["schief"]["satz"])
+        self.assertIn("keine Aufnahmeliste", ohne["satz"])
+
+    # -- Nachweis 2: der gefaehrliche Fall, ausdruecklich ------------------
+
+    def test_a_typo_that_hits_another_real_recording_stays_confirmed(self) -> None:
+        """DIE LUECKE, ausdruecklich stehengelassen.
+
+        Zwei Aufnahmen liegen am selben Tag. Wer sich vertippt und dabei die
+        NACHBARAUFNAHME trifft, bekommt weiterhin "bestaetigt" -- zu Recht, denn
+        der Name steht in der Liste. Die Regel prueft, DASS es die Aufnahme
+        gibt, nicht, dass es die richtige ist.
+
+        Was das abfinge, waere eine zweite, unabhaengige Angabe, gegen die sich
+        die Wahl halten laesst -- und die kostet. Der Bericht zu ES nennt die
+        Rechnung; hier wird nur die Luecke festgeschrieben, damit sie niemand
+        fuer geschlossen haelt.
+        """
+
+        getroffen = self.seite("nachbar")["getroffen"]
+        self.assertEqual(getroffen["auswahl"], "2026-09-04 16-30-57")
+        self.assertEqual(getroffen["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertEqual(getroffen["fall"], "getippt")
+
+        # Und der Dienst schreibt genau das auch hin.
+        antwort, zettel = self.exportiere(
+            "adw-nachbar",
+            aufnahme="2026-09-04 16-30-57",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertEqual(antwort["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertNotIn("aufnahme_hinweis", antwort)
+
+    def test_the_rule_only_asks_whether_the_recording_exists(self) -> None:
+        """Dieselbe Aussage ohne HTTP: die Regel kennt nur die Menge der Namen.
+        Sie hat kein Mittel, den richtigen unter zwei echten zu erkennen."""
+
+        bekannt = {"2026-09-04 09-12-03", "2026-09-04 16-30-57"}
+        for name in sorted(bekannt):
+            herkunft, grund = entscheide_aufnahme_herkunft(
+                AUFNAHME_HERKUNFT_BESTAETIGT, name, bekannt
+            )
+            self.assertEqual(herkunft, AUFNAHME_HERKUNFT_BESTAETIGT, name)
+            self.assertIsNone(grund, name)
+
+    # -- Nachweis 3: am Browser vorbei ------------------------------------
+
+    def test_the_service_refuses_to_confirm_a_name_it_does_not_know(self) -> None:
+        """Mit gueltigem Sitzungstoken direkt an /api/export, ohne dass je eine
+        Seite offen war: der Zettel darf kein "bestaetigt" tragen.
+
+        Eine Pruefung, an der man vorbeikommt, indem man den Dienst direkt
+        anspricht, ist keine.
+        """
+
+        antwort, zettel = self.exportiere(
+            "adw-erfunden",
+            aufnahme="2026-09-04 09-12-04",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        self.assertEqual(zettel["aufnahme"], "2026-09-04 09-12-04")
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        # Die Abstufung passiert nicht still: der Dienst sagt sie.
+        self.assertEqual(antwort["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertIn("nicht in der Liste", antwort["aufnahme_hinweis"])
+
+    def test_the_service_confirms_nothing_at_all_without_a_folder(self) -> None:
+        """Kein AUFNAHME_WURZEL -> keine Liste -> nichts wird bestaetigt.
+        Der Longform-Weg fragt dann nach, und das ist laut Vertrag der
+        Normalfall und kein Fehler."""
+
+        self.server.aufnahme_directory = None
+        antwort, zettel = self.exportiere(
+            "adw-ohne-ordner",
+            aufnahme="2026-09-04 09-12-03",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        self.assertEqual(zettel["aufnahme"], "2026-09-04 09-12-03")
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertIn("keine Aufnahmeliste", antwort["aufnahme_hinweis"])
+        # Der Export selbst bleibt gueltig -- abgewiesen wird nichts.
+        self.assertTrue((self.export / "adw-ohne-ordner.png").is_file())
+
+    def test_an_unreadable_folder_is_no_list_either(self) -> None:
+        """Ordner eingestellt, aber weg: das ist keine leere Liste, sondern
+        keine. Wer aus einem verschwundenen Ordner bestaetigte, bestaetigte
+        gegen nichts."""
+
+        self.server.aufnahme_directory = Path(self.temporary.name) / "gibt-es-nicht"
+        self.assertIsNone(bekannte_aufnahmennamen(self.server.aufnahme_directory))
+        _, zettel = self.exportiere(
+            "adw-ordner-weg",
+            aufnahme="2026-09-04 09-12-03",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+
+    def test_an_empty_folder_is_a_list_and_says_so_differently(self) -> None:
+        """Ein LEERER Ordner ist eine Auskunft, kein fehlender Ordner. Fuer das
+        Urteil laufen beide auf unbestaetigt hinaus -- die Begruendung nicht."""
+
+        for datei in self.aufnahmen.iterdir():
+            datei.unlink()
+        self.assertEqual(bekannte_aufnahmennamen(self.aufnahmen), set())
+        antwort, zettel = self.exportiere(
+            "adw-leerer-ordner",
+            aufnahme="2026-09-04 09-12-03",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertIn("nicht in der Liste", antwort["aufnahme_hinweis"])
+
+    def test_the_service_never_raises_what_the_page_lowered(self) -> None:
+        """Der Kopf ist eine Obergrenze, keine Anhebung. Sagt die Seite
+        "unbestaetigt" (Chart gewechselt), bleibt es dabei -- auch wenn der
+        Name in der Liste steht."""
+
+        _, zettel = self.exportiere(
+            "adw-chart-gewechselt",
+            aufnahme="2026-09-04 09-12-03",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_UNBESTAETIGT,
+        )
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+
+    def test_the_guard_snaps_shut_when_the_service_stops_checking(self) -> None:
+        """DER NACHWEIS, DASS DER TEST OBEN ETWAS PRUEFT.
+
+        Saesse die Pruefung nur in der Seite, traege der Zettel "bestaetigt".
+        Hier wird genau das vorgefuehrt: die Listenpruefung des Dienstes wird
+        fuer die Dauer dieses Tests ausgebaut, und der erfundene Name kommt als
+        bestaetigt zurueck.
+        """
+
+        echt = thumbnail_service.entscheide_aufnahme_herkunft
+
+        def ohne_listenpruefung(rohwert, aufnahme, bekannte_aufnahmen):
+            # Die Fassung von vor ES: nur der Kopf zaehlt.
+            if aufnahme is None:
+                return AUFNAHME_HERKUNFT_LEER, None
+            if isinstance(rohwert, str) and rohwert.strip() in AUFNAHME_HERKUNFT_WERTE:
+                return rohwert.strip(), None
+            return AUFNAHME_HERKUNFT_UNBESTAETIGT, None
+
+        with patch.object(
+            thumbnail_service, "entscheide_aufnahme_herkunft", ohne_listenpruefung
+        ):
+            _, zettel = self.exportiere(
+                "adw-ohne-pruefung",
+                aufnahme="2026-09-04 09-12-04",
+                aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+            )
+        self.assertEqual(zettel["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertIs(thumbnail_service.entscheide_aufnahme_herkunft, echt)
+
+    # -- Nachweis 4: Anzeige und Datei sagen dasselbe ---------------------
+
+    def test_the_page_and_the_note_agree_in_every_case(self) -> None:
+        """Was die Seite als Herkunft anzeigt, steht anschliessend im Zettel.
+        Gemessen wird das nicht an einem Fall, sondern an allen, die es bis zum
+        Zettel schaffen."""
+
+        faelle = self.seite("faelle")
+        namen = {
+            "geklickt": "2026-09-04 09-12-03",
+            "getippt": "2026-09-04 09-12-03",
+            "unbekannt": "2026-09-04 09-12-04",
+            "chart": "2026-09-04 09-12-03",
+        }
+        for schluessel, name in namen.items():
+            stand = faelle[schluessel]
+            antwort, zettel = self.exportiere(
+                "adw-gleichlaut-" + schluessel,
+                aufnahme=name,
+                aufnahme_herkunft=stand["herkunft"],
+            )
+            self.assertEqual(zettel["aufnahme_herkunft"], stand["herkunft"], schluessel)
+            # Und die Antwort, aus der die Seite ihre Zeile baut, sagt dasselbe
+            # wie die Datei -- sie wird AUS dem Zettel gelesen, nicht neu
+            # gerechnet.
+            self.assertEqual(antwort["aufnahme_herkunft"], zettel["aufnahme_herkunft"])
+
+    def test_the_verdict_follows_the_list_and_does_not_stick(self) -> None:
+        """DER FALL, DER FRUEHER ZWEI ZUSTAENDE UNTER EINER ANZEIGE WAR.
+
+        Ein Klick bestaetigt. Dann verschwindet die Aufnahme aus dem Ordner und
+        die Liste wird neu gelesen. Ein Urteil, das jetzt auf "bestaetigt"
+        stehenbliebe, waere eine Anzeige, die nicht mehr zur Liste passt --
+        und der Zettel schriebe etwas anderes als die Seite zeigt.
+        """
+
+        for datei in self.aufnahmen.iterdir():
+            datei.unlink()   # der Ordner leert sich, waehrend die Seite offen ist
+        ergebnis = self.seite("auffrischen")
+        self.assertFalse(ergebnis["vorher"]["liste"])
+        self.assertEqual(ergebnis["nachher"]["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertEqual(ergebnis["nachher"]["fall"], "unbekannt")
+
+    def test_a_confirmation_falls_when_the_recording_disappears(self) -> None:
+        """Dasselbe mit einer Liste, die es beim Klick noch GAB: erst
+        bestaetigt, dann faellt die Aufnahme weg, dann neu gelesen -- und die
+        Anzeige geht mit."""
+
+        ergebnis = self.seite("faelle")
+        self.assertEqual(ergebnis["geklickt"]["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        for datei in self.aufnahmen.iterdir():
+            datei.unlink()
+        nachher = self.seite("auffrischen")["nachher"]
+        self.assertEqual(nachher["herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+        self.assertEqual(nachher["fall"], "unbekannt")
+        # Der NAME bleibt stehen -- die Arbeit soll nicht verschwinden.
+        self.assertEqual(nachher["auswahl"], "2026-09-04 09-12-03")
+
+
+    def test_the_page_shows_the_verdict_it_was_told_not_one_of_its_own(self) -> None:
+        """Die Seite rechnet die Herkunft fuer die Statuszeile NICHT nach.
+        Zwischen dem Anzeigen und dem Export kann sich der Ordner geaendert
+        haben; genannt wird, was der Schreibende gemeldet hat."""
+
+        zeile = self.html[
+            self.html.index("const zettelAufnahme = gespeichert.beipackzettel") :
+            self.html.index("meta.textContent = 'Gespeichert im Export-Ordner: '")
+        ]
+        self.assertIn("gespeichert.aufnahmeHerkunft", zeile)
+        self.assertNotIn("aufnahmeHerkunft()", zeile)
+        # Und wenn der Dienst nichts nennt, wird nichts behauptet.
+        self.assertIn("Herkunft ungenannt", zeile)
+
+    def test_a_service_that_does_not_name_the_provenance_is_called_out(self) -> None:
+        """Ein Dienst der Fassung vor ES schreibt den Zettel, prueft aber nicht
+        gegen die Liste. Das ist der stille Ausgang, den dieses Projekt mit
+        /api/emblem schon einmal hatte -- er wird gesagt."""
+
+        self.assertIn(
+            "Der Dienst hat nicht genannt, welche Aufnahme-Herkunft er geschrieben hat",
+            self.html,
+        )
+        self.assertEqual(SERVICE_PROTOCOL_VERSION, 5)
+
+    # -- Nachweis 6: der Zettel ist sonst zeichengleich --------------------
+
+    def test_only_the_provenance_changed_in_the_note(self) -> None:
+        """Zwei Exporte, gleich bis auf den Aufnahmenamen: der eine bekannt,
+        der andere erfunden. Alles ausser aufnahme/aufnahme_herkunft muss
+        Zeichen fuer Zeichen dasselbe sein."""
+
+        _, bekannt = self.exportiere(
+            "adw-zeichengleich-a",
+            videotitel="Was der Markt heute sagt",
+            datum="2026-09-04",
+            aufnahme="2026-09-04 09-12-03",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        _, erfunden = self.exportiere(
+            "adw-zeichengleich-b",
+            videotitel="Was der Markt heute sagt",
+            datum="2026-09-04",
+            aufnahme="2026-09-04 09-12-04",
+            aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+        )
+        self.assertEqual(sorted(bekannt), sorted(erfunden))
+        self.assertEqual(
+            sorted(bekannt),
+            ["aufnahme", "aufnahme_herkunft", "bild", "chart_quelle", "datum",
+             "episode", "exportiert_am", "format", "schema_version", "videotitel"],
+        )
+        self.assertEqual(bekannt["schema_version"], BEIPACKZETTEL_SCHEMA_VERSION)
+        beweglich = {"aufnahme", "aufnahme_herkunft", "bild", "exportiert_am"}
+        for schluessel in bekannt:
+            if schluessel in beweglich:
+                continue
+            self.assertEqual(bekannt[schluessel], erfunden[schluessel], schluessel)
+        self.assertEqual(bekannt["aufnahme_herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        self.assertEqual(erfunden["aufnahme_herkunft"], AUFNAHME_HERKUNFT_UNBESTAETIGT)
+
+    def test_the_render_engine_was_not_touched(self) -> None:
+        """ES aendert die Zuordnung, nicht das Bild. window.adwRender ist der
+        Weg der Render-Harness -- er bleibt, wie er war."""
+
+        block = self.html[
+            self.html.index("window.adwRender = async function(cfg){") :
+            self.html.index("// ---------- Lebenszeichen an den lokalen Dienst (CQ1)")
+        ]
+        # Der Wert ist der von HEAD 3da1e28, gemessen an der Fassung mit
+        # Zeilenumbruch LF -- so, wie git die Datei speichert. read_text()
+        # normalisiert die Umbrueche, der Wert ist damit vom Arbeitsplatz
+        # unabhaengig.
+        self.assertEqual(
+            hashlib.sha256(block.encode("utf-8")).hexdigest(),
+            "4824d9c9f7f45199575a629068e41fca9de7c68d7783ce90e395abb4054c3a26",
+        )
+        self.assertEqual(len(block.encode("utf-8")), 976)
+        self.assertNotIn("aufnahme", block)
+
+
+    # -- Wo die Regel sitzt ------------------------------------------------
+
+    def test_the_rule_lives_in_one_place_in_each_program(self) -> None:
+        """Eine Regel, eine Stelle -- je Programm. Der Dienst entscheidet und
+        schreibt; die Seite zeigt an und schreibt nur dort, wo es keinen Dienst
+        gibt. Zwei entscheidende Stellen IM SELBEN Programm waeren zwei Regeln.
+        """
+
+        quelle = (
+            Path(__file__).resolve().parents[1] / "thumbnail_service.py"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(1, quelle.count("def entscheide_aufnahme_herkunft("))
+        # Eine Vereinbarung und genau zwei Aufrufe: der Zettel (ueber
+        # build_beipackzettel) und der Hinweis in der Antwort.
+        self.assertEqual(3, quelle.count("entscheide_aufnahme_herkunft("))
+        self.assertEqual(1, self.html.count("function aufnahmeUrteil(){"))
+        self.assertEqual(1, self.html.count("function aufnahmeIstBekannt(name){"))
+        # Die Seite baut den Urteilssatz an genau einer Stelle.
+        self.assertEqual(1, self.html.count("const urteil = aufnahmeUrteil();"))
+
+    def test_the_note_cannot_be_built_without_saying_what_is_known(self) -> None:
+        """bekannte_aufnahmen hat keinen Vorgabewert. Haette es einen, koennte
+        eine kuenftige Aufrufstelle ihn vergessen -- und die Pruefung waere
+        still weg, statt laut."""
+
+        with self.assertRaises(TypeError):
+            build_beipackzettel(
+                dateiname="adw-x.jpg", sha256="ab" * 32, bytes_geschrieben=7,
+                format_="standard", episode=None,
+                metadaten={"aufnahme": "2026-09-04 09-12-03",
+                           "aufnahme_herkunft": AUFNAHME_HERKUNFT_BESTAETIGT},
+                exportiert_am="2026-09-04T12:00:00+02:00",
+            )
+
+    def test_the_service_reads_the_same_list_it_showed(self) -> None:
+        """/api/aufnahmen und der Export lesen mit derselben Funktion und
+        derselben Grenze. Zwei Grenzen waeren zwei Listen, und dann koennten
+        Anzeige und Datei fuer einen Namen jenseits der Grenze auseinanderlaufen.
+        """
+
+        status, _, roh = self.request(path="/api/aufnahmen")
+        self.assertEqual(status, 200)
+        gezeigt = {a["name"] for a in json.loads(roh)["aufnahmen"]}
+        self.assertEqual(gezeigt, bekannte_aufnahmennamen(self.aufnahmen))
+        quelle = (
+            Path(__file__).resolve().parents[1] / "thumbnail_service.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("aufnahmen, _ = sammle_aufnahmen(directory, grenze=grenze)", quelle)
+        self.assertIn("grenze: int = MAX_AUFNAHMEN", quelle)
+
+    def test_the_recordings_folder_is_only_read(self) -> None:
+        """Der Quellordner wird nur gelesen -- auch beim Export, der ihn jetzt
+        zusaetzlich anfasst."""
+
+        def abzug() -> list[tuple[str, int, int]]:
+            return sorted(
+                (p.name, p.stat().st_size, p.stat().st_mtime_ns)
+                for p in self.aufnahmen.iterdir()
+            )
+
+        vorher = abzug()
+        for lauf in range(3):
+            self.exportiere(
+                "adw-nurlesen-" + str(lauf),
+                aufnahme="2026-09-04 09-12-03",
+                aufnahme_herkunft=AUFNAHME_HERKUNFT_BESTAETIGT,
+            )
         self.assertEqual(abzug(), vorher)
 
 

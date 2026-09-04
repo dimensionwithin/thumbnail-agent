@@ -1,5 +1,50 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 9 (ET, 04.09.2026).** Zwei Aenderungen, beide in 2.7 -- und wie bei
+Fassung 8 aendert sich dabei **eine Zusage der Abschnitte 1 bis 8**. Es ist die
+Bedeutung von `bestaetigt`, und sie wird **enger**: der Vertrag verlangt dafuer
+ab jetzt mehr als vorher und erlaubt an keiner Stelle mehr.
+
+**Erstens: ein getippter Name ist fuer sich keine Bestaetigung.** Zu "der
+Mensch hat im Compositor bestaetigt" tritt eine zweite Bedingung: der Name
+stand in der Liste der bekannten Aufnahmen, als der Zettel geschrieben wurde.
+Ein getippter Name, den diese Liste nicht kennt, ergibt `unbestaetigt` -- und
+gibt es gar keine Liste (kein Dienst, kein `AUFNAHME_WURZEL`), ergibt **jeder**
+getippte Name `unbestaetigt`. Das ist der Normalfall und kein Fehler; der
+Longform-Weg fragt dann, statt abzubrechen. **Grund:** Rang 1 fragt nicht. Er
+stuetzt sich allein auf `bestaetigt` und nimmt das Bild ohne Rueckfrage, und
+eine Bestaetigung, die niemand gegen die Wirklichkeit gehalten hat, traegt das
+nicht.
+
+**Zweitens: die Grenze wird benannt, nicht verschwiegen.** Ein Vertipper, der
+eine andere **echte** Aufnahme trifft, ergibt weiterhin `bestaetigt` -- der
+Name steht ja in der Liste. 2.7 traegt jetzt ein, was ihn abfinge (ein
+Standbild aus der Aufnahme, mit dem Bild verglichen), was das kostete (die
+Zusage aus 3.3, dass zum Entscheiden keine Datei geoeffnet wird -- fuer die
+Aufnahmen gaelte sie dann nicht mehr), und wo er heute auffaellt: auf der
+Freigabeseite, wo Abschnitt 4 Schritt 7 das Bild von der Platte und ein
+Standbild des Videos nebeneinander zeigt, bevor der Mensch in Schritt 8 die
+erste Ermaechtigung gibt. Ein falsches Paar sieht man. Diese zweite Linie ist
+der Grund, warum die Luecke offen bleiben darf; **ohne sie duerfte sie es
+nicht**.
+
+**Ein Bau, der gegen Fassung 8 geprueft wurde, wird davon nicht falsch -- und
+was das genau heisst, ist nachgesehen.** Die **lesende** Seite ist unberuehrt:
+Rangfolge, Fenster, Formatregel, Zustandsmatrix, die beiden Ermaechtigungen und
+die Sperre stehen Wort fuer Wort wie in Fassung 8, und ein Arbeiter, der gegen
+Fassung 8 gebaut wurde, verhaelt sich unter Fassung 9 gleich. Enger wird es
+allein auf der **schreibenden** Seite, und dort in der vorsichtigen Richtung:
+ein Dienst der Fassung 8 schreibt `bestaetigt`, wo Fassung 9 `unbestaetigt`
+verlangt -- er sagt also mehr zu, als er geprueft hat, und nie weniger. Nichts,
+was Fassung 8 verbot, ist jetzt erlaubt, und kein Zettel wird rueckwirkend
+ungueltig: die Bedingung gilt fuer den Augenblick, in dem geschrieben wird.
+
+**Keine weitere Zusage der Abschnitte 1 bis 8 aendert sich** -- die Rangfolge,
+das Fenster, die Formatregel, die Sperre und die Tag-Regel bleiben, wie sie
+waren, und die vier offenen Punkte aus Abschnitt 11 bleiben vier. Wie diese
+Fassung entstanden ist, steht in den Berichten ES (der Bau) und ET (die
+Eintragung).
+
 **Fassung 8 (ER, 04.09.2026).** Drei Stellen -- und anders als bei den
 Fassungen 5, 6 und 7 aendert sich diesmal **eine Zusage der Abschnitte 1 bis
 8**. Es ist 2.12, sie aendert sich an zwei Punkten, und sie wird an beiden
@@ -454,8 +499,8 @@ zwei Felder mehr. Stand `schema_version: 1`:
 
 | Zustand | Bedeutung |
 |---|---|
-| `bestaetigt` | Ein Mensch hat den Namen im Compositor gesetzt (Klick oder Tastatur; es gibt genau eine Stelle, die das tut), und das Chart, gegen das er ihn gesetzt hat, ist beim Export noch dasselbe. |
-| `unbestaetigt` | Ein Name steht da, aber das Chart hat sich seit dem Setzen geaendert. Der Name ist nicht falsch; er ist nur nicht mehr gegen das geprueft, was jetzt im Bild ist. |
+| `bestaetigt` | Drei Dinge zusammen: ein Mensch hat den Namen im Compositor gesetzt (Klick oder Tastatur; es gibt genau eine Stelle, die das tut); das Chart, gegen das er ihn gesetzt hat, ist beim Export noch dasselbe; **und der Name stand in der Liste der bekannten Aufnahmen, als der Zettel geschrieben wurde**. Fehlt eines der drei, ist es `unbestaetigt`. |
+| `unbestaetigt` | Ein Name steht da, aber eines der drei fehlt: das Chart hat sich seit dem Setzen geaendert, oder die Liste kennt den Namen nicht, oder es gibt gar keine Liste. Der Name ist nicht falsch; er ist nur nicht geprueft. |
 | `leer` | `aufnahme` ist `null`, und zwar absichtlich aufgeschrieben. |
 | **Feld fehlt ganz** | Ein Zettel von vor EC. Er sagt ueber die Aufnahme *nichts*, und "nichts gesagt" ist etwas anderes als "als leer aufgeschrieben". |
 
@@ -465,6 +510,52 @@ Wert ausserhalb der drei. Ein Name ohne Herkunftsangabe wird beim Export zu
 `unbestaetigt`, nie zu `bestaetigt`. Ein Zettel kann trotzdem von Hand
 geaendert sein; deshalb prueft der Arbeiter dieselben Verbindungen noch
 einmal (Zustandsmatrix unten).
+
+**Ab Fassung 9 entscheidet die Liste mit: ein getippter Name ist fuer sich
+keine Bestaetigung.** Neben "ein Mensch hat bestaetigt" steht eine zweite
+Bedingung -- der Name stand in der Liste der bekannten Aufnahmen, als der
+Zettel geschrieben wurde. Ein getippter Name, den diese Liste nicht kennt,
+ergibt `unbestaetigt`. Gibt es **gar keine** Liste -- kein Dienst, kein
+`AUFNAHME_WURZEL`, der Ordner weg oder unlesbar --, ergibt jeder getippte Name
+`unbestaetigt`. Eine leere Liste ist dabei etwas anderes als keine ("im Ordner
+liegt nichts" ist eine Auskunft, "es gibt keine Liste" ist keine); fuer das
+Urteil laufen beide auf `unbestaetigt` hinaus, fuer die Begruendung nicht. Der
+Export selbst wird davon **nicht** abgewiesen: abgewiesen wird nur die
+Behauptung, das Bild bleibt gueltig, und der Name bleibt stehen. Das ist der
+Normalfall und kein Fehler -- der Longform-Weg fragt dann (Rang 2a), genau wie
+bei `leer`.
+
+**Grund.** Rang 1 fragt nicht. Er stuetzt sich allein auf `bestaetigt` und
+nimmt das Bild ohne Rueckfrage; genau dafuer ist er gebaut. Eine Bestaetigung,
+die niemand gegen die Wirklichkeit gehalten hat, traegt das nicht. Bis dahin
+wurde am getippten Namen nur die **Form** geprueft, und die Form eines Namens
+sagt nichts darueber, ob es die Aufnahme gibt.
+
+**Die Grenze dieser Pruefung, ausdruecklich.** Ein Vertipper, der eine andere
+**echte** Aufnahme trifft, ergibt weiterhin `bestaetigt` -- der Name steht ja
+in der Liste. Geprueft wird, **dass** es die Aufnahme gibt, nicht, dass es die
+**richtige** ist; ein Mittel dafuer hat diese Regel nicht. Das steht hier,
+damit niemand die Luecke fuer geschlossen haelt.
+
+**Was ihn abfinge, und was das kostete.** Ein Standbild aus der Aufnahme neben
+dem Bild, im Augenblick des Bestaetigens: ein Mensch saehe, ob das der richtige
+Take ist. Der Preis waere, dass die Aufnahmedateien **geoeffnet** und dekodiert
+werden muessten. Heute wird der Aufnahmeordner nur nach Namen, mtime und
+Groesse gelesen, und ausser dem Compositor liest ihn niemand (3.2); die Zusage
+aus 3.3 -- zum Entscheiden wird keine Datei geoeffnet -- gaelte fuer die
+Aufnahmen dann nicht mehr, und dazu kaeme ein Videodecoder als Abhaengigkeit in
+einem Werkzeug, das mit der Standardbibliothek auskommt. Diese Zusage ist mehr
+wert als der Schutz gegen einen Tippfehler, der ein Zeichen daneben eine andere
+echte Aufnahme trifft.
+
+**Wo er heute auffaellt, und warum die Luecke deshalb offen bleiben darf.** Auf
+der Freigabeseite. Abschnitt 4 Schritt 7 zeigt das Bild von der Platte und ein
+Standbild des Videos **nebeneinander**, und zwar bevor der Mensch in Schritt 8
+die erste Ermaechtigung gibt. Ein falsches Paar sieht man. Dort kostet das
+Standbild nichts von dem, was es hier kosten wuerde: es ist das fertige Video,
+das der Weg ohnehin in der Hand hat, und es entscheidet niemand darauf -- ein
+Mensch sieht es an. Diese zweite Linie ist der Grund, warum die Luecke offen
+bleiben darf; **ohne sie duerfte sie es nicht**.
 
 **Grund fuer das zweite Feld.** Der Compositor kann die Aufnahme nicht
 schliessen; EC hat es an 71 Aufnahmen und sieben Bildern gemessen: das Bild

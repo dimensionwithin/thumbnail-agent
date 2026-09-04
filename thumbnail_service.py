@@ -101,16 +101,38 @@ BEIPACKZETTEL_SUFFIX = ".json"
 # Vorschlag, der still zur Regel wird, waere damit ein Upload, den niemand
 # geprueft hat. Deshalb traegt jeder Zettel daneben "aufnahme_herkunft":
 #
-#   "bestaetigt"    ein Mensch hat den Namen im Compositor gesetzt, und das
-#                   Chart, gegen das er ihn gesetzt hat, ist noch geladen.
-#   "unbestaetigt"  ein Name steht da, aber das Chart hat sich seit dem Setzen
-#                   geaendert. Der Name ist nicht falsch, er ist nur nicht
-#                   mehr gegen das gepruefte, was jetzt im Bild ist.
+#   "bestaetigt"    ein Mensch hat den Namen im Compositor gesetzt, das
+#                   Chart, gegen das er ihn gesetzt hat, ist noch geladen --
+#                   UND der Name steht in der Liste der bekannten Aufnahmen.
+#   "unbestaetigt"  ein Name steht da, aber eines der drei fehlt: das Chart hat
+#                   sich seit dem Setzen geaendert, oder der Name steht in
+#                   keiner Liste, oder es gibt gar keine Liste. Der Name ist
+#                   nicht falsch, er ist nur nicht geprueft.
 #   "leer"          "aufnahme" ist null, und zwar absichtlich.
 #
 # Ein Zettel OHNE "aufnahme_herkunft" ist ein Zettel von vor diesem Nachtrag.
 # Er ist nicht kaputt -- er sagt nur nichts ueber die Aufnahme, und "nichts
 # gesagt" ist etwas anderes als "als leer aufgeschrieben".
+#
+# ES: WARUM DIE LISTE MITENTSCHEIDET.
+# Bis hierher pruefte der Dienst nur die FORM des Namens. Ein von Hand
+# getippter Name mit gueltiger Form wurde als "bestaetigt" aufgeschrieben, ohne
+# dass irgendwer nachgesehen haette, ob es diese Aufnahme gibt. Der gefaehrliche
+# Fall ist dabei nicht der Tippfehler ins Leere -- der findet spaeter nichts und
+# faellt auf. Es ist der Tippfehler, der eine ANDERE echte Aufnahme trifft: dann
+# haengt das Bild bestaetigt am falschen Video, und Rang 1 des Longform-Wegs
+# nimmt es ohne Rueckfrage. Genau dafuer ist Rang 1 gebaut, dass er nicht fragt;
+# also muss die Bestaetigung, auf die er sich stuetzt, etwas wert sein.
+#
+# Deshalb: "bestaetigt" nur, wenn der Name in der Liste der bekannten Aufnahmen
+# steht (entscheide_aufnahme_herkunft). Kennt der Dienst gar keine Liste -- kein
+# AUFNAHME_WURZEL, Ordner weg, Ordner unlesbar --, ist alles Getippte
+# "unbestaetigt". Der Longform-Weg fragt dann nach, statt zu vertrauen, und das
+# ist laut Vertrag der Normalfall und kein Fehler.
+#
+# Die Pruefung sitzt HIER und nicht allein in der Seite: der Dienst besitzt die
+# Liste und schreibt die Datei. Eine Pruefung, an der man vorbeikommt, indem man
+# /api/export direkt anspricht, waere keine.
 AUFNAHME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}-\d{2}-\d{2}$")
 AUFNAHME_FORMAT = "%Y-%m-%d %H-%M-%S"
 AUFNAHME_HERKUNFT_BESTAETIGT = "bestaetigt"
@@ -154,7 +176,15 @@ SERVICE_ID = "dimensionwithin-thumbnail-compositor"
 # unterscheiden -- die HTML mit dem neuen Feld waere da, die Route nicht, und
 # die Kandidatenliste blieb still leer. Genau dieser Ausgang ist mit
 # /api/emblem schon einmal eingetreten.
-SERVICE_PROTOCOL_VERSION = 4
+# 5 (2026-09-04): /api/export prueft den Aufnahmenamen gegen die Liste und nennt
+# in der Antwort, welche Herkunft er geschrieben hat (ES). Hier aendert sich
+# nicht das Routenangebot, sondern was eine Route ZUSAGT -- und der Unterschied
+# ist derselbe: ein weiterlaufender Dienst der Fassung 4 liefert die NEUE
+# Oberflaeche und schreibt trotzdem "bestaetigt" fuer einen Namen, den niemand
+# gegen die Liste gehalten hat. Das waere unsichtbar, wenn die Fassung stehen
+# bliebe. Der Compositor merkt es zusaetzlich am fehlenden Feld in der Antwort
+# und sagt es fuer genau diesen Export.
+SERVICE_PROTOCOL_VERSION = 5
 STARTUP_SIGNAL_TIMEOUT_SECONDS = 5.0
 BROWSER_OPEN_DELAY_SECONDS = 0.35
 WINDOWS_ERROR_ALREADY_EXISTS = 183
@@ -1553,23 +1583,63 @@ def pruefe_aufnahme_herkunft(herkunft: object, aufnahme: object) -> str | None:
     return None
 
 
-def _aufnahme_herkunft(rohwert: object, aufnahme: str | None) -> str:
-    """Die Herkunft, die in den Zettel geht -- nie geraten.
+def entscheide_aufnahme_herkunft(
+    rohwert: object,
+    aufnahme: str | None,
+    bekannte_aufnahmen: set[str] | None,
+) -> tuple[str, str | None]:
+    """ES: DIE EINE STELLE, an der ueber "bestaetigt" entschieden wird.
 
-    Ohne Namen ist sie ``leer``, ganz gleich was der Kopf behauptet hat. Mit
-    Namen wird der Wert aus dem Kopf uebernommen; fehlt er dort, gilt
-    ``unbestaetigt``. Das ist die vorsichtige Seite: ein Name, dessen Herkunft
-    der Dienst nicht kennt, darf nicht als bestaetigt in den Zettel wandern.
-    Die Kombinationen, die sich widersprechen, sind vorher abgewiesen
-    (pruefe_aufnahme_herkunft) -- diese Funktion biegt nichts zurecht, sie
-    entscheidet nur den Fall "nichts gesagt".
+    Zurueck kommen die Herkunft, die in den Zettel geht, und -- wenn eine
+    Behauptung abgestuft wurde -- der Grund dafuer. Der Grund ist kein Feld des
+    Zettels; er geht in die Antwort von /api/export, damit die Abstufung
+    SICHTBAR ist und nicht nur still passiert.
+
+    ``bekannte_aufnahmen`` ist die Menge der Namen, die der Dienst als Aufnahme
+    kennt -- oder ``None``, wenn es gar keine Liste gibt (kein AUFNAHME_WURZEL,
+    Ordner weg, Ordner unlesbar). Die beiden Faelle sind hier absichtlich
+    getrennt: eine LEERE Liste ist eine Auskunft ("im Ordner liegt keine
+    Aufnahme"), keine Liste ist keine.
+
+    DIE REGEL, in dieser Reihenfolge:
+
+      1. Kein Name -> "leer". Was der Kopf behauptet, spielt keine Rolle.
+      2. Keine Liste -> "unbestaetigt". Ohne Liste laesst sich nichts pruefen,
+         und ungeprueft heisst hier nicht bestaetigt.
+      3. Name nicht in der Liste -> "unbestaetigt". Das ist der Fall, wegen dem
+         es diese Funktion gibt: ein von Hand getippter Name, den es nicht gibt.
+      4. Sonst gilt, was der Kopf sagt -- und "nichts gesagt" heisst
+         "unbestaetigt".
+
+    Der Kopf ist damit eine OBERGRENZE, nie eine Anhebung: die Seite kann
+    "unbestaetigt" sagen (Chart gewechselt), und dann bleibt es dabei, auch wenn
+    der Name in der Liste steht. Der Dienst stuft nur ab.
+
+    WAS DIESE REGEL NICHT ABFAENGT: einen Tippfehler, der eine ANDERE echte
+    Aufnahme trifft. Der Name steht dann in der Liste, und der Zettel sagt
+    zu Recht "bestaetigt" -- die Regel prueft, DASS es die Aufnahme gibt, nicht,
+    dass es die richtige ist. Siehe den Bericht zu ES.
     """
 
     if aufnahme is None:
-        return AUFNAHME_HERKUNFT_LEER
+        return AUFNAHME_HERKUNFT_LEER, None
+    if bekannte_aufnahmen is None:
+        return (
+            AUFNAHME_HERKUNFT_UNBESTAETIGT,
+            f"Die Aufnahme {aufnahme!r} wurde nicht geprueft: der Dienst kennt "
+            f"keine Aufnahmeliste ({AUFNAHME_DIRECTORY_ENV} fehlt oder der "
+            "Ordner ist nicht lesbar). Ohne Liste wird kein Name bestaetigt.",
+        )
+    if aufnahme not in bekannte_aufnahmen:
+        return (
+            AUFNAHME_HERKUNFT_UNBESTAETIGT,
+            f"Die Aufnahme {aufnahme!r} steht nicht in der Liste der bekannten "
+            f"Aufnahmen ({len(bekannte_aufnahmen)} Stueck). Getippt ist nicht "
+            "geprueft.",
+        )
     if isinstance(rohwert, str) and rohwert.strip() in AUFNAHME_HERKUNFT_WERTE:
-        return rohwert.strip()
-    return AUFNAHME_HERKUNFT_UNBESTAETIGT
+        return rohwert.strip(), None
+    return AUFNAHME_HERKUNFT_UNBESTAETIGT, None
 
 
 def sammle_aufnahmen(directory: Path, *, grenze: int = MAX_AUFNAHMEN) -> tuple[list[dict[str, object]], bool]:
@@ -1622,6 +1692,38 @@ def sammle_aufnahmen(directory: Path, *, grenze: int = MAX_AUFNAHMEN) -> tuple[l
     return gefunden[:grenze], abgeschnitten
 
 
+def bekannte_aufnahmennamen(
+    directory: Path | None, *, grenze: int = MAX_AUFNAHMEN
+) -> set[str] | None:
+    """ES: Die Namen, die der Dienst als Aufnahme KENNT -- oder None.
+
+    ``None`` heisst "es gibt keine Liste": kein Ordner eingestellt, Ordner nicht
+    da, Ordner nicht lesbar. Eine leere Menge heisst etwas anderes, naemlich
+    "der Ordner ist da und leer". Fuer das Urteil laufen beide auf
+    "unbestaetigt" hinaus; fuer die BEGRUENDUNG nicht, und die steht in der
+    Antwort.
+
+    GENAU DIESELBE GRENZE wie /api/aufnahmen -- deshalb dieselbe Funktion und
+    dasselbe ``grenze``. Sonst haette der Dienst beim Schreiben eine andere
+    Liste als die, die er der Seite gezeigt hat, und Anzeige und Datei koennten
+    sich fuer einen Namen jenseits der Grenze widersprechen. Die Wirkung ist die
+    vorsichtige: eine Aufnahme, die aelter ist als die neuesten ``grenze``,
+    steht in keiner der beiden Listen und wird nicht bestaetigt.
+
+    Gelesen wird nur; geoeffnet wird keine Datei.
+    """
+
+    if directory is None:
+        return None
+    try:
+        if not directory.is_dir():
+            return None
+        aufnahmen, _ = sammle_aufnahmen(directory, grenze=grenze)
+    except OSError:
+        return None
+    return {str(eintrag["name"]) for eintrag in aufnahmen}
+
+
 def _leer_zu_none(wert: object) -> str | None:
     if not isinstance(wert, str):
         return None
@@ -1657,13 +1759,23 @@ def build_beipackzettel(
     episode: object,
     metadaten: dict,
     exportiert_am: str,
+    bekannte_aufnahmen: set[str] | None,
 ) -> dict[str, object]:
-    """Der Inhalt des Beipackzettels. Rein, damit er ohne HTTP pruefbar ist."""
+    """Der Inhalt des Beipackzettels. Rein, damit er ohne HTTP pruefbar ist.
+
+    ES: ``bekannte_aufnahmen`` hat bewusst KEINEN Vorgabewert. Ein Zettel laesst
+    sich nicht bauen, ohne zu sagen, welche Aufnahmen der Bauende kennt --
+    haette das Argument einen Vorgabewert, koennte eine kuenftige Aufrufstelle
+    ihn vergessen und die Pruefung waere still weg.
+    """
 
     # EC: Der Name zuerst, die Herkunft danach -- die Herkunft haengt am Namen
     # und nicht umgekehrt. Ohne Namen kann sie nur "leer" sein, und dann ist
     # sie es auch, gleich was im Kopf stand.
     aufnahme = _leer_zu_none(metadaten.get("aufnahme"))
+    herkunft, _grund = entscheide_aufnahme_herkunft(
+        metadaten.get("aufnahme_herkunft"), aufnahme, bekannte_aufnahmen
+    )
     return {
         "schema_version": BEIPACKZETTEL_SCHEMA_VERSION,
         "exportiert_am": exportiert_am,
@@ -1678,9 +1790,7 @@ def build_beipackzettel(
         "format": _leer_zu_none(format_),
         "chart_quelle": _chart_quelle(metadaten.get("chart_quelle")),
         "aufnahme": aufnahme,
-        "aufnahme_herkunft": _aufnahme_herkunft(
-            metadaten.get("aufnahme_herkunft"), aufnahme
-        ),
+        "aufnahme_herkunft": herkunft,
     }
 
 
@@ -2777,19 +2887,37 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
         # fehlender Beipackzettel erst dem Uploader auf.
         beipackzettel_datei: str | None = None
         beipackzettel_warnung: str | None = None
+        # ES: Die Liste wird HIER gelesen, im Moment des Schreibens, und nicht
+        # aus einer frueheren Antwort erinnert. Zwischen dem Laden der
+        # Kandidatenliste in der Seite und diesem Export koennen Minuten liegen;
+        # entscheidend ist, was jetzt auf der Platte liegt.
+        bekannte = bekannte_aufnahmennamen(self.server.aufnahme_directory)
+        aufnahme_herkunft: str | None = None
+        aufnahme_hinweis: str | None = None
         try:
+            zettel = build_beipackzettel(
+                dateiname=actual_filename,
+                sha256=digest.hexdigest(),
+                bytes_geschrieben=length,
+                format_=self.headers.get("X-Export-Preset", ""),
+                episode=unquote(self.headers.get("X-Export-Episode", "")),
+                metadaten=metadaten,
+                exportiert_am=datetime.datetime.now().astimezone().isoformat(),
+                bekannte_aufnahmen=bekannte,
+            )
             beipackzettel_datei = write_beipackzettel(
                 self.server.export_directory,
                 actual_filename,
-                build_beipackzettel(
-                    dateiname=actual_filename,
-                    sha256=digest.hexdigest(),
-                    bytes_geschrieben=length,
-                    format_=self.headers.get("X-Export-Preset", ""),
-                    episode=unquote(self.headers.get("X-Export-Episode", "")),
-                    metadaten=metadaten,
-                    exportiert_am=datetime.datetime.now().astimezone().isoformat(),
-                ),
+                zettel,
+            )
+            # ES: Was in der Antwort steht, wird AUS DEM ZETTEL gelesen und
+            # nicht neu gerechnet. Sonst waeren es zwei Urteile unter einer
+            # Anzeige -- genau der Zustand, den dieser Nachtrag beseitigt.
+            aufnahme_herkunft = str(zettel["aufnahme_herkunft"])
+            _, aufnahme_hinweis = entscheide_aufnahme_herkunft(
+                metadaten.get("aufnahme_herkunft"),
+                zettel["aufnahme"],
+                bekannte,
             )
         except Exception as error:  # pragma: no cover - defensive, Bild bleibt gueltig
             _console_print(
@@ -2803,6 +2931,13 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
         result: dict[str, object] = {"ok": True, "filename": actual_filename, "size": length}
         if beipackzettel_datei:
             result["beipackzettel"] = beipackzettel_datei
+            # ES: Der Dienst NENNT die Herkunft, die er geschrieben hat. Die
+            # Seite zeigt genau diesen Wert an, statt ihn ein zweites Mal zu
+            # rechnen; nur so sagen Anzeige und Datei dasselbe, auch wenn sich
+            # der Aufnahmeordner zwischen Anzeige und Export geaendert hat.
+            result["aufnahme_herkunft"] = aufnahme_herkunft
+            if aufnahme_hinweis:
+                result["aufnahme_hinweis"] = aufnahme_hinweis
         if beipackzettel_warnung:
             result["beipackzettel_warnung"] = beipackzettel_warnung
         if registry_warning:
@@ -3111,7 +3246,8 @@ def run_server(
             describe_directory("Aufnahmeordner", resolved_aufnahmen)
             if resolved_aufnahmen is not None
             else f"Aufnahmeordner: nicht eingestellt ({AUFNAHME_DIRECTORY_ENV})"
-            "  [Feld 'aufnahme' bleibt Handeingabe]"
+            "  [Feld 'aufnahme' bleibt Handeingabe -- und bleibt damit"
+            " 'unbestaetigt': ohne Liste bestaetigt der Dienst keinen Namen]"
         )
         _console_print(
             "Selbstbeendigung: "

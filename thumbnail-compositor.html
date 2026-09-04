@@ -341,7 +341,7 @@
              die Seite neu geladen und die Arbeit weggeworfen werden muss. -->
         <button class="folderButton" id="aufnahmeNachlesen" type="button">Aufnahmen neu lesen</button>
       </div>
-      <div class="hint">Steht NICHT im Bild. Nur im Beipackzettel &mdash; und nur, wenn du sie hier eintraegst. Leer heisst leer: der Zettel schreibt dann <code>aufnahme: null</code> auf, statt aus der Zeitnaehe zu raten. Die Vorschlaege sind Vorschlaege; erst dein Klick macht daraus <code>bestaetigt</code>.</div>
+      <div class="hint">Steht NICHT im Bild. Nur im Beipackzettel &mdash; und nur, wenn du sie hier eintraegst. Leer heisst leer: der Zettel schreibt dann <code>aufnahme: null</code> auf, statt aus der Zeitnaehe zu raten. <code>bestaetigt</code> wird ein Name nur, wenn er in der Aufnahmeliste steht; ein getippter Name, den es nicht gibt, bleibt <code>unbestaetigt</code>, und ohne Aufnahmeordner bleibt jeder Name unbestaetigt. Geprueft wird, DASS es die Aufnahme gibt &mdash; nicht, dass es die richtige ist.</div>
     </div>
 
     <div class="field">
@@ -425,6 +425,13 @@ const state = {
   // ist der Name nicht mehr bestaetigt -- er ist nur noch da. Genau dieser
   // Unterschied steht spaeter als aufnahme_herkunft im Zettel.
   aufnahmeChart: null,
+  // ES: WIE der Name hereinkam -- 'klick' (aus der Liste gewaehlt) oder
+  // 'tippen' (von Hand ins Feld). Das aendert das URTEIL nicht: beide sind
+  // bestaetigt, wenn der Name in der Liste steht, und beide sind es nicht,
+  // wenn er fehlt. Es aendert nur die MELDUNG -- "aus der Liste gewaehlt" und
+  // "getippt und in der Liste wiedergefunden" sind zwei verschiedene
+  // Auskuenfte, und die zweite ist die, die frueher niemand geprueft hat.
+  aufnahmeQuelle: null,
   chartQuelle: null,    // DZ: {herkunft, dateiname, zeitstempel} des geladenen Bildes
   pos: UI_DEFAULT_POS,
   preset: 'standard',
@@ -515,12 +522,21 @@ function chartSchluessel(){
   return q ? (q.dateiname + '|' + q.zeitstempel) : '';
 }
 // Was am Ende im Zettel steht. Ohne Namen kann es nur "leer" sein; mit Namen
-// haengt es daran, ob das Chart seit dem Setzen dasselbe ist.
+// haengt es an drei Dingen: der Name muss in der Aufnahmeliste stehen, das
+// Chart muss seit dem Setzen dasselbe sein, und eine Liste muss es ueberhaupt
+// geben. Gerechnet wird das an EINER Stelle -- aufnahmeUrteil() weiter unten,
+// dort steht auch die Begruendung. Hier nur der Durchgriff, damit die
+// Aufrufstellen unveraendert bleiben.
+//
+// ES: DIESE STELLE ENTSCHEIDET NICHT ALLEIN. Der Dienst rechnet dieselbe Regel
+// beim Schreiben noch einmal, gegen den Ordner, wie er in DIESEM Augenblick
+// aussieht (entscheide_aufnahme_herkunft in thumbnail_service.py), und er nennt
+// das Ergebnis in der Antwort. Was hier steht, ist die Vorschau darauf; was der
+// Dienst zurueckmeldet, ist das Urteil. Ohne Dienst schreibt diese Seite den
+// Zettel selbst -- dann ist die Vorschau zugleich das Urteil, und zwar mit
+// derselben Funktion.
 function aufnahmeHerkunft(){
-  if (!String(state.aufnahme || '').trim()) return AUFNAHME_HERKUNFT_LEER;
-  return state.aufnahmeChart === chartSchluessel()
-    ? AUFNAHME_HERKUNFT_BESTAETIGT
-    : AUFNAHME_HERKUNFT_UNBESTAETIGT;
+  return aufnahmeUrteil().herkunft;
 }
 
 function todayISO(){
@@ -1861,7 +1877,78 @@ const aufnahmeState = {
   // steht `phase` auf 'da', ohne dass irgendetwas passiert waere.
   // { art: 'neu' | 'nichts' | 'unerreichbar' | 'aus', namen: [...] }
   nachlese: null,
+  // ES: Hat der Dienst je eine LISTE geliefert? Das ist ein eigenes Feld und
+  // nicht aus `phase` ableitbar: nach einem gescheiterten Neueinlesen steht
+  // `phase` auf 'unerreichbar', waehrend die zuletzt gelieferte Liste bewusst
+  // stehenbleibt. "Es gibt keine Liste" und "die Liste ist leer" sind zwei
+  // verschiedene Auskuenfte -- die erste heisst, dass hier nichts geprueft
+  // werden kann, die zweite, dass im Ordner nichts liegt.
+  listeDa: false,
 };
+
+// ---------- ES: das Urteil ueber den Aufnahmenamen
+//
+// WARUM ES DAS GIBT. Bis hierher wurde jeder Name, den jemand ins Feld tippte,
+// sofort als "bestaetigt" ausgegeben -- geprueft wurde nur die FORM. Der
+// gefaehrliche Fall ist nicht der Tippfehler ins Leere, sondern der, der eine
+// ANDERE echte Aufnahme trifft: dann haengt das Bild bestaetigt am falschen
+// Video, und Rang 1 des Longform-Wegs nimmt es ohne Rueckfrage.
+//
+// Was diese Regel abfaengt: einen Namen, den es nicht gibt.
+// Was sie NICHT abfaengt: einen Namen, den es gibt und der trotzdem falsch ist.
+// Das steht so im Bericht zu ES und wird hier nicht schoener gesagt.
+
+function aufnahmeIstBekannt(name){
+  const t = String(name == null ? '' : name).trim();
+  if (!t || aufnahmeState.listeDa !== true) return false;
+  return aufnahmeState.liste.some(function(a){ return String(a && a.name) === t; });
+}
+
+// Das Urteil: was im Zettel stuende, und der Satz, der es begruendet. Rein --
+// kein DOM, kein Netz. syncAufnahmeUI() ZEIGT das an, es faellt es nicht.
+//
+// Jeder Ausgang hat einen eigenen Satz. Zwei Ausgaenge unter einem Satz waeren
+// zwei Zustaende unter einer Anzeige, und genau das ist der Fehler, den dieser
+// Nachtrag beseitigt.
+function aufnahmeUrteil(){
+  const name = String(state.aufnahme || '').trim();
+  const B = AUFNAHME_HERKUNFT_BESTAETIGT, U = AUFNAHME_HERKUNFT_UNBESTAETIGT;
+  if (!name){
+    return { fall: 'leer', herkunft: AUFNAHME_HERKUNFT_LEER, klasse: '',
+      satz: 'Leer \u2014 der Zettel schreibt "aufnahme: null" und "aufnahme_herkunft: leer".' };
+  }
+  const formfehler = aufnahmeFehler(name);
+  if (formfehler){
+    // Kein Export: der Knopf bricht vorher ab und der Dienst wiese es ab.
+    return { fall: 'form', herkunft: U, klasse: 'fehler',
+      satz: formfehler + ' Der Dienst wird das ablehnen.' };
+  }
+  if (aufnahmeState.listeDa !== true){
+    return { fall: 'ohne-liste', herkunft: U, klasse: 'warnung',
+      satz: 'Es gibt keine Aufnahmeliste, gegen die sich dieser Name pruefen liesse. '
+        + 'Der Zettel schreibt "aufnahme_herkunft: unbestaetigt" \u2014 der Longform-Weg fragt dann nach, '
+        + 'statt den Namen zu nehmen. Ohne Aufnahmeordner ist das der Normalfall und kein Fehler.' };
+  }
+  if (!aufnahmeIstBekannt(name)){
+    return { fall: 'unbekannt', herkunft: U, klasse: 'warnung',
+      satz: 'Diesen Namen kennt die Aufnahmeliste nicht \u2014 getippt ist nicht geprueft. '
+        + 'Der Zettel schreibt "aufnahme_herkunft: unbestaetigt" \u2014 der Longform-Weg fragt dann nach. '
+        + 'Steht die Aufnahme erst seit eben im Ordner, lies die Liste neu ein.' };
+  }
+  if (state.aufnahmeChart !== chartSchluessel()){
+    return { fall: 'chart', herkunft: U, klasse: 'warnung',
+      satz: 'Das Chart hat sich geaendert, seit du diese Aufnahme gesetzt hast. '
+        + 'Der Zettel schreibt "aufnahme_herkunft: unbestaetigt" \u2014 der Longform-Weg fragt dann nach, statt sie zu nehmen. '
+        + 'Klick die Aufnahme erneut an oder tipp sie neu, wenn sie weiter stimmt.' };
+  }
+  if (state.aufnahmeQuelle === 'klick'){
+    return { fall: 'geklickt', herkunft: B, klasse: '',
+      satz: 'Bestaetigt \u2014 aus der Aufnahmeliste gewaehlt. Der Zettel schreibt "aufnahme_herkunft: bestaetigt".' };
+  }
+  return { fall: 'getippt', herkunft: B, klasse: '',
+    satz: 'Bestaetigt \u2014 der getippte Name steht in der Aufnahmeliste. '
+      + 'Der Zettel schreibt "aufnahme_herkunft: bestaetigt".' };
+}
 
 // EQ: Was ein Neueinlesen ergeben hat -- rein, ohne DOM und ohne Netz.
 // Verglichen werden NAMEN, nicht Objekte: der Dienst baut die Eintraege bei
@@ -1963,23 +2050,14 @@ function kandidatWofuer(a, kandidaten){
 
 function syncAufnahmeUI(){
   if (aufnahmeEl.value !== state.aufnahme) aufnahmeEl.value = state.aufnahme;
-  const formfehler = aufnahmeFehler(state.aufnahme);
-  const herkunft = aufnahmeHerkunft();
   const kandidaten = aufnahmeKandidaten();
 
-  const zeilen = [];
-  let klasse = '';
-  if (formfehler){ zeilen.push(formfehler + ' Der Dienst wird das ablehnen.'); klasse = 'fehler'; }
-  else if (herkunft === AUFNAHME_HERKUNFT_LEER){
-    zeilen.push('Leer \u2014 der Zettel schreibt "aufnahme: null" und "aufnahme_herkunft: leer".');
-  } else if (herkunft === AUFNAHME_HERKUNFT_UNBESTAETIGT){
-    zeilen.push('Das Chart hat sich geaendert, seit du diese Aufnahme gesetzt hast. '
-      + 'Der Zettel schreibt "aufnahme_herkunft: unbestaetigt" \u2014 der Longform-Weg fragt dann nach, statt sie zu nehmen. '
-      + 'Klick die Aufnahme erneut an oder tipp sie neu, wenn sie weiter stimmt.');
-    klasse = 'warnung';
-  } else {
-    zeilen.push('Bestaetigt \u2014 der Zettel schreibt "aufnahme_herkunft: bestaetigt".');
-  }
+  // ES: Der erste Satz ist das Urteil. Er wird nicht hier gebaut, sondern kommt
+  // aus aufnahmeUrteil() -- sonst koennte derselbe Fall an zwei Stellen zwei
+  // verschiedene Saetze bekommen, und die Seite saehe anders aus als der Zettel.
+  const urteil = aufnahmeUrteil();
+  const zeilen = [urteil.satz];
+  const klasse = urteil.klasse;
 
   if (aufnahmeState.phase === 'aus'){
     zeilen.push('Ohne den lokalen Dienst gibt es keine Kandidatenliste. Der Name kann von Hand eingetragen werden.');
@@ -2030,7 +2108,7 @@ function syncAufnahmeUI(){
     wofuer.className = 'wofuer';
     wofuer.textContent = kandidatWofuer(a, kandidaten);
     b.appendChild(kopf); b.appendChild(wofuer);
-    b.addEventListener('click', function(){ setzeAufnahme(a.name); });
+    b.addEventListener('click', function(){ setzeAufnahme(a.name, 'klick'); });
     aufnahmeKandidatenEl.appendChild(b);
   });
 }
@@ -2038,13 +2116,21 @@ function syncAufnahmeUI(){
 // Der EINZIGE Weg, auf dem ein Name in den Zustand kommt: eine Handlung eines
 // Menschen. Der Klick auf einen Kandidaten und das Tippen im Feld gehen beide
 // hier durch, und beide halten fest, gegen welches Chart entschieden wurde.
-function setzeAufnahme(name){
+//
+// ES: `quelle` haelt fest, WIE der Name hereinkam. Sie geht NICHT in das
+// Urteil ein -- ein getippter Name, der in der Liste steht, ist genauso
+// bestaetigt wie ein geklickter, und ein geklickter, der aus der Liste
+// verschwunden ist, ist genauso unbestaetigt wie ein getippter. Sie steht nur
+// in der Meldung, damit "aus der Liste gewaehlt" und "getippt und
+// wiedergefunden" nicht unter einem Satz zusammenfallen.
+function setzeAufnahme(name, quelle){
   state.aufnahme = String(name == null ? '' : name).trim();
   state.aufnahmeChart = state.aufnahme ? chartSchluessel() : null;
+  state.aufnahmeQuelle = state.aufnahme ? (quelle === 'klick' ? 'klick' : 'tippen') : null;
   syncAufnahmeUI();
 }
-aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value); });
-aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme(''); });
+aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value, 'tippen'); });
+aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme('', 'tippen'); });
 aufnahmeNachlesenEl.addEventListener('click', function(){ void ladeAufnahmen('nachlesen'); });
 
 // EQ: `absicht` ist 'nachlesen', wenn ein Mensch den Knopf gedrueckt hat, und
@@ -2064,6 +2150,9 @@ async function ladeAufnahmen(absicht){
   if (!nachlesen) aufnahmeState.nachlese = null;
   if (!localService.available){
     aufnahmeState.phase = 'aus';
+    // ES: Ohne Dienst gibt es keine Liste -- und ohne Liste bestaetigt nichts
+    // einen Namen. Das ist kein Ausfall: der Longform-Weg fragt dann nach.
+    aufnahmeState.listeDa = false;
     if (nachlesen) aufnahmeState.nachlese = { art: 'aus', namen: [] };
     syncAufnahmeUI();
     return;
@@ -2091,6 +2180,9 @@ async function ladeAufnahmen(absicht){
     aufnahmeState.abgeschnitten = daten.abgeschnitten === true;
     aufnahmeState.grund = typeof daten.grund === 'string' ? daten.grund : '';
     aufnahmeState.phase = (daten.wurzel_gesetzt && daten.wurzel_lesbar) ? 'da' : 'ohne-ordner';
+    // ES: Eine gelieferte, aber LEERE Liste ist eine Liste. Erst wenn der
+    // Dienst sagt, dass er keinen lesbaren Ordner hat, gibt es keine.
+    aufnahmeState.listeDa = daten.wurzel_gesetzt === true && daten.wurzel_lesbar === true;
     if (nachlesen) aufnahmeState.nachlese = nachleseErgebnis(vorher, aufnahmeState.liste);
   } catch (fehler){
     aufnahmeState.phase = 'unerreichbar';
@@ -2499,6 +2591,22 @@ async function writeExportToLocalService(blob, filename){
         ? result.beipackzettel_warnung
         : (typeof result.beipackzettel === 'string' ? null
            : 'Der Dienst hat keinen Beipackzettel bestaetigt — er laeuft vermutlich in einer aelteren Fassung. Bitte neu starten.'),
+      // ES: Was der Dienst WIRKLICH in den Zettel geschrieben hat. Die Seite
+      // rechnet es nicht nach: zwischen dem Anzeigen und dem Export kann sich
+      // der Aufnahmeordner geaendert haben, und dann waeren es zwei Urteile
+      // unter einer Anzeige. Was hier steht, steht in der Datei.
+      aufnahmeHerkunft: typeof result.aufnahme_herkunft === 'string' ? result.aufnahme_herkunft : null,
+      aufnahmeHinweis: typeof result.aufnahme_hinweis === 'string' ? result.aufnahme_hinweis : null,
+      // Ein Dienst der Fassung 4 schreibt den Zettel, nennt die Herkunft aber
+      // nicht -- und prueft den Namen auch nicht gegen die Liste. Das ist genau
+      // der stille Ausgang, gegen den dieser Nachtrag da ist, also wird er
+      // gesagt statt uebergangen.
+      aufnahmeWarnung: (typeof result.beipackzettel === 'string'
+          && typeof result.aufnahme_herkunft !== 'string')
+        ? 'Der Dienst hat nicht genannt, welche Aufnahme-Herkunft er geschrieben hat — er laeuft '
+          + 'vermutlich in einer Fassung vor der Listenpruefung. Der Zettel kann "bestaetigt" tragen, '
+          + 'ohne dass jemand den Namen gegen die Aufnahmeliste gehalten hat. Bitte den Dienst neu starten.'
+        : null,
     };
   } catch (error) {
     console.error('Local export service failed for "'+filename+'".', error);
@@ -2546,7 +2654,7 @@ async function writeExportToDirectory(blob, filename){
     // behauptet eine Zuordnung, die es nicht gibt; ein Bild ohne Zettel laesst
     // nur eine Luecke. Scheitert der Zettel, bleibt der Export gueltig und die
     // Statuszeile sagt es (wie beim Dienst).
-    let beipackzettel = null, beipackzettelWarnung = null;
+    let beipackzettel = null, beipackzettelWarnung = null, zettelHerkunft = null;
     try {
       const name = beipackzettelName(filename);
       const inhalt = await beipackzettelInhalt(blob, filename);
@@ -2555,12 +2663,19 @@ async function writeExportToDirectory(blob, filename){
       await zettelWritable.write(new Blob([JSON.stringify(inhalt, null, 2)], {type:'application/json'}));
       await zettelWritable.close();
       beipackzettel = name;
+      // ES: Hier schreibt die SEITE den Zettel -- also ist ihr Urteil auch das
+      // Urteil. Gelesen wird es trotzdem aus dem geschriebenen Inhalt und nicht
+      // ein zweites Mal gerechnet, damit Anzeige und Datei dieselbe Quelle
+      // haben. Ohne Dienst gibt es keine Liste, und dann kann hier nichts
+      // "bestaetigt" heissen.
+      zettelHerkunft = inhalt.aufnahme_herkunft;
     } catch (error) {
       console.error('Beipackzettel konnte nicht geschrieben werden.', error);
       beipackzettelWarnung = 'Der Beipackzettel konnte nicht neben das Bild gelegt werden. '
         + 'Die Zuordnung Bild zu Video ist nicht aufgeschrieben.';
     }
-    return { filename: filename, beipackzettel: beipackzettel, beipackzettelWarnung: beipackzettelWarnung };
+    return { filename: filename, beipackzettel: beipackzettel, beipackzettelWarnung: beipackzettelWarnung,
+             aufnahmeHerkunft: zettelHerkunft, aufnahmeHinweis: null, aufnahmeWarnung: null };
   } catch (error) {
     console.error('Direct export to directory failed for "'+filename+'".', error);
     await refreshExportDirectoryPermission();
@@ -2606,14 +2721,23 @@ exportBtn.addEventListener('click', async () => {
       const zettel = gespeichert.beipackzettel
         ? ' + '+gespeichert.beipackzettel
         : '';
-      const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung].filter(Boolean);
+      const hinweise = [gespeichert.warning, gespeichert.beipackzettelWarnung,
+                        gespeichert.aufnahmeWarnung, gespeichert.aufnahmeHinweis].filter(Boolean);
       // EC: Was im Zettel ueber die Aufnahme steht, steht auch hier. Sonst
       // erfaehrt niemand, dass gerade ein Zettel ohne Aufnahme entstanden ist
       // -- und genau der ist es, dem der Longform-Weg spaeter nicht glauben
       // darf.
+      //
+      // ES: Genannt wird die Herkunft, die der SCHREIBENDE gemeldet hat, nicht
+      // die, die diese Seite jetzt errechnen wuerde. Beim Dienst kann sich der
+      // Aufnahmeordner zwischen Anzeige und Export geaendert haben; dann steht
+      // hier, was in der Datei steht, und nicht, was die Seite noch glaubt.
+      // Meldet der Schreibende gar nichts (Dienst vor der Listenpruefung),
+      // steht "Herkunft ungenannt" statt einer Behauptung -- und
+      // aufnahmeWarnung sagt oben, warum.
       const zettelAufnahme = gespeichert.beipackzettel
         ? (state.aufnahme
-            ? ' (Aufnahme '+state.aufnahme+', '+aufnahmeHerkunft()+')'
+            ? ' (Aufnahme '+state.aufnahme+', '+(gespeichert.aufnahmeHerkunft || 'Herkunft ungenannt')+')'
             : ' (ohne Aufnahme)')
         : '';
       meta.textContent = 'Gespeichert im Export-Ordner: '+gespeichert.filename+zettel+zettelAufnahme

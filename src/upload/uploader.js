@@ -1935,7 +1935,7 @@ function formatiereVorschau(v, { mitPruefsumme = true } = {}) {
   //
   // Der gemeinsame Teil FAELLT NICHT WEG. Er ist die einzige Stelle, an der
   // ein Mensch sieht, was unter jedem Video steht, und er aendert sich, sobald
-  // jemand config/shorts-beschreibung.txt anfasst. Er steht darum weiter
+  // jemand config/beschreibung.txt anfasst. Er steht darum weiter
   // unten -- einmal, am Stueck, vollstaendig und im Wortlaut.
   const g = gemeinsamerTeil(v.auswahl);
 

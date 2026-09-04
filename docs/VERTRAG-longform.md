@@ -1,5 +1,19 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 6 (EM, 04.09.2026).** Nur Namen und ein Stand. Die
+Beschreibungsvorlage heisst seit `1623fc6` `config/beschreibung.txt`; 2.9
+nannte sie noch beim alten Namen, und die Tabelle in 3.4 trug den Zusatz
+"(heute `shorts-beschreibung.txt`)", der seither in die andere Richtung falsch
+war. Beide sagen es jetzt gleich. Der **Standort beim Schreiben** nennt kein
+Commit-Kuerzel mehr: das dort genannte war der Stand der Fassung 3 und ist
+seither zweimal nicht nachgezogen worden. Eine Angabe, die bei jeder Fassung
+von Hand mitwandern muss, wandert irgendwann nicht mit; wer den Stand einer
+Fassung braucht, findet ihn im Bericht, der sie eingetragen hat. **Keine
+Zusage der Abschnitte 1 bis 8 aendert sich** — die Rangfolge, das Fenster, die
+Formatregel, die Sperre, die Tag-Regel und die vier offenen Punkte aus
+Abschnitt 11 bleiben, wie sie waren; die vier offenen Punkte bleiben vier. Wie
+diese Fassung entstanden ist, steht im Bericht EM.
+
 **Fassung 5 (EJ, 04.09.2026).** Eine Stelle, an der der Bau des zweiten
 Betriebsmodus (EI) den Vertrag zu eng gefunden hat — und nur diese eine. 2.13
 verlangte, die Longform-Sperrdatei trage "denselben Inhalt plus den Modus";
@@ -47,9 +61,10 @@ ergaenzt. Was in Abschnitt 11 steht, bleibt offen. Wie diese Fassung
 entstanden ist, steht nicht hier, sondern im Bericht EE.
 
 **Standort beim Schreiben:** das Upload-Projekt (dieses Repo), Branch
-`master`, HEAD `de2da06` ("Beipackzettel: die Aufnahme steht drin, bestaetigt
-oder gar nicht"), Arbeitsbaum sauber. Kein Commit, kein `git add`, kein
-YouTube-Aufruf, kein Upload, kein Netzaufruf.
+`master`, Arbeitsbaum sauber. Kein Commit, kein `git add`, kein
+YouTube-Aufruf, kein Upload, kein Netzaufruf. Ein Commit-Kuerzel steht hier
+seit Fassung 6 nicht mehr (siehe Kopf); den Stand je Fassung nennt der
+Bericht, der sie eingetragen hat.
 
 Diese Datei ist der Vertrag des Longform-Wegs, **bevor** er gebaut wird. Sie
 ist so geschrieben, dass jemand den Weg danach bauen kann, ohne
@@ -643,13 +658,13 @@ aussehen: "Bild gefunden" und "Upload moeglich".
 
 ### 2.9 Beschreibung, Hashtags und Tags: eine Vorlage, eine Zuordnungsdatei
 
-**Die Vorlage heisst kuenftig `config/beschreibung.txt`.** Heute heisst sie
-`config/shorts-beschreibung.txt`, und der Shorts-Uploader traegt diesen Namen
-als Konstante. Die Umbenennung faellt **zusammen** mit der Aenderung am
-Shorts-Uploader (unten), in einem Commit; bis dahin liest der Longform-Weg
-nichts. **Grund:** wenn beide Wege dieselbe Datei lesen, ist sie keine
-Shorts-Datei mehr, sondern die Kanalvorlage, und ein Name, der "shorts" sagt,
-luegt. Zwei Dateien mit demselben Text waeren in einem Monat zwei Texte.
+**Die Vorlage heisst `config/beschreibung.txt`.** Sie hiess bis `1623fc6`
+`config/shorts-beschreibung.txt`, und der Shorts-Uploader trug diesen Namen
+als Konstante. Die Umbenennung fiel **zusammen** mit der Aenderung am
+Shorts-Uploader (unten), in einen Commit. **Grund:** wenn beide Wege dieselbe
+Datei lesen, ist sie keine Shorts-Datei mehr, sondern die Kanalvorlage, und
+ein Name, der "shorts" sagt, luegt. Zwei Dateien mit demselben Text waeren in
+einem Monat zwei Texte.
 
 Gelesen wird sie mit denselben Regeln wie im Shorts-Uploader: `{titel}` wird
 durch den Titel ersetzt, `{hashtags}` durch die Hashtag-Zeile; solange der
@@ -1101,7 +1116,7 @@ entfernt das Feld.
 
 | Datei | was daraus kommt | Stand |
 |---|---|---|
-| `config/beschreibung.txt` (heute `shorts-beschreibung.txt`) | die Vorlage (2.9) | eine Datei, beide Wege |
+| `config/beschreibung.txt` | die Vorlage (2.9) | eine Datei, beide Wege |
 | `config/shorts-veroeffentlichung.json` | `categoryId`, `defaultLanguage`, `defaultAudioLanguage`, `selfDeclaredMadeForKids` | mitgelesen, unveraendert (2.9) |
 | `config/shorts-hashtags.json` | Hashtags und Tags: Gruppen und `immer`; nie die Shorts-Liste | eine Datei, zwei Listen (2.9) |
 

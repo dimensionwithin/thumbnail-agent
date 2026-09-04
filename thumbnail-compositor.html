@@ -162,6 +162,10 @@
   .aufnahmeKandidat[aria-pressed=true]{background:rgba(169,130,70,.22);border-color:var(--brass);color:var(--bone)}
   .aufnahmeKandidat .wofuer{display:block;opacity:.62;text-transform:none;letter-spacing:.02em;margin-top:3px}
   .aufnahmeKandidat.vorschlag{border-style:dashed;border-color:var(--brass)}
+  /* EQ: Die beiden Handgriffe am Feld liegen nebeneinander, nicht untereinander:
+     beide betreffen dieselbe Zeile, und keiner ist der wichtigere. */
+  .aufnahmeKnoepfe{display:flex;gap:6px;margin-top:9px}
+  .aufnahmeKnoepfe .folderButton{flex:1;margin-top:0}
   .sourceTools{margin-top:12px;padding-top:12px;border-top:1px solid var(--graphite)}
   .sourceStatus{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--bone-dim);line-height:1.5;text-transform:uppercase;overflow-wrap:anywhere}
   .sourceButton{width:100%;margin-top:8px;background:transparent;border:1px solid var(--graphite);color:var(--bone-dim);border-radius:6px;padding:9px;cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;transition:all .14s}
@@ -328,7 +332,15 @@
       <input type="text" id="aufnahme" class="mono" spellcheck="false" value="" placeholder="JJJJ-MM-TT HH-MM-SS" autocomplete="off">
       <div class="aufnahmeStatus" id="aufnahmeStatus"></div>
       <div class="aufnahmeKandidaten" id="aufnahmeKandidaten"></div>
-      <button class="folderButton" id="aufnahmeLeeren" type="button" style="margin-top:9px">Leer lassen</button>
+      <div class="aufnahmeKnoepfe">
+        <button class="folderButton" id="aufnahmeLeeren" type="button">Leer lassen</button>
+        <!-- EQ: Der Dienst liest die Aufnahmen EINMAL beim Laden der Seite. Wer
+             das Bild vor der Aufnahme baut -- und das ist der Regelfall, siehe
+             die Messung weiter unten -- hat beim Laden noch keine Aufnahme, die
+             er anklicken koennte. Dieser Knopf holt die Liste nach, ohne dass
+             die Seite neu geladen und die Arbeit weggeworfen werden muss. -->
+        <button class="folderButton" id="aufnahmeNachlesen" type="button">Aufnahmen neu lesen</button>
+      </div>
       <div class="hint">Steht NICHT im Bild. Nur im Beipackzettel &mdash; und nur, wenn du sie hier eintraegst. Leer heisst leer: der Zettel schreibt dann <code>aufnahme: null</code> auf, statt aus der Zeitnaehe zu raten. Die Vorschlaege sind Vorschlaege; erst dein Klick macht daraus <code>bestaetigt</code>.</div>
     </div>
 
@@ -1835,13 +1847,57 @@ const aufnahmeEl = document.getElementById('aufnahme');
 const aufnahmeStatusEl = document.getElementById('aufnahmeStatus');
 const aufnahmeKandidatenEl = document.getElementById('aufnahmeKandidaten');
 const aufnahmeLeerenEl = document.getElementById('aufnahmeLeeren');
+const aufnahmeNachlesenEl = document.getElementById('aufnahmeNachlesen');
 const aufnahmeState = {
   // 'aus' (kein Dienst) | 'laedt' | 'da' | 'ohne-ordner' | 'unerreichbar'
   phase: localService.available ? 'laedt' : 'aus',
   liste: [],
   grund: '',
   abgeschnitten: false,
+  // EQ: Was das letzte Neueinlesen ergeben hat -- oder null, wenn seither
+  // keines stattfand. Das ist ein EIGENES Feld und nicht aus `phase`
+  // abgeleitet: "die Liste ist da" und "der Klick hat etwas gefunden" sind
+  // zwei verschiedene Auskuenfte, und nach einem Klick, der nichts fand,
+  // steht `phase` auf 'da', ohne dass irgendetwas passiert waere.
+  // { art: 'neu' | 'nichts' | 'unerreichbar' | 'aus', namen: [...] }
+  nachlese: null,
 };
+
+// EQ: Was ein Neueinlesen ergeben hat -- rein, ohne DOM und ohne Netz.
+// Verglichen werden NAMEN, nicht Objekte: der Dienst baut die Eintraege bei
+// jeder Anfrage neu, und die mtime einer noch laufenden Aufnahme wandert.
+// Waeren die Objekte der Vergleich, meldete der Knopf eine Aenderung, wo
+// nur die Uhr weitergegangen ist.
+function nachleseErgebnis(vorher, nachher){
+  const alt = new Set((vorher || []).map(a => String(a && a.name)));
+  const neu = (nachher || []).map(a => String(a && a.name)).filter(n => !alt.has(n));
+  return { art: neu.length ? 'neu' : 'nichts', namen: neu };
+}
+
+// Die Meldung zum Ergebnis. Vier Ausgaenge, vier verschiedene Saetze -- ein
+// Knopf, der im Erfolgsfall aussieht wie im wirkungslosen, ist keiner.
+// Die neuen Namen werden GENANNT: "etwas dazugekommen" ohne zu sagen was,
+// zwingt zum Suchen in einer Liste, die man gerade erst bekommen hat.
+function nachleseMeldung(nachlese){
+  if (!nachlese) return '';
+  if (nachlese.art === 'aus'){
+    // Dass der Name von Hand eingetragen werden kann, sagt die Dauerauskunft
+    // ueber der Meldung schon. Zweimal derselbe Satz liest sich wie ein
+    // Fehler und nicht wie eine Antwort.
+    return 'Neu gelesen: ohne den lokalen Dienst gibt es keine Liste, die sich auffrischen liesse.';
+  }
+  if (nachlese.art === 'unerreichbar'){
+    return 'Neu gelesen: der Dienst hat nicht geantwortet. Die Liste steht unveraendert.';
+  }
+  if (nachlese.art === 'nichts'){
+    return 'Neu gelesen: nichts dazugekommen. Die Liste ist dieselbe wie vorher.';
+  }
+  const namen = nachlese.namen || [];
+  const gezeigt = namen.slice(0, 3);
+  const rest = namen.length - gezeigt.length;
+  return 'Neu gelesen: ' + namen.length + (namen.length === 1 ? ' Aufnahme' : ' Aufnahmen')
+    + ' dazugekommen — ' + gezeigt.join(', ') + (rest > 0 ? ' und ' + rest + ' weitere' : '') + '.';
+}
 
 // Der Tag, an dem gesucht wird. Zuerst das Datum, das AUF DEM BILD steht --
 // das ist die Angabe, die ein Mensch gesetzt hat. Hat das Format kein
@@ -1945,8 +2001,18 @@ function syncAufnahmeUI(){
       + 'Welche es ist, entscheidet nichts hier \u2014 waehle sie aus.');
   }
   if (aufnahmeState.abgeschnitten) zeilen.push('Die Liste ist auf die neuesten Aufnahmen begrenzt.');
+  // EQ: Das Ergebnis des letzten Klicks steht ZULETZT -- es ist die Antwort
+  // auf die juengste Handlung und soll nicht zwischen Dauerauskuenften
+  // untergehen.
+  const nachleseSatz = nachleseMeldung(aufnahmeState.nachlese);
+  if (nachleseSatz) zeilen.push(nachleseSatz);
   aufnahmeStatusEl.textContent = zeilen.join(' ');
   aufnahmeStatusEl.className = 'aufnahmeStatus' + (klasse ? ' '+klasse : '');
+  // Waehrend gelesen wird, ist der Knopf gesperrt -- sonst laufen zwei
+  // Anfragen, und die zweite vergleicht gegen eine Liste, die die erste
+  // gerade ersetzt. Ohne Dienst bleibt er BEDIENBAR: ein Knopf, der still
+  // nichts tut, sagt nicht, warum er nichts tut.
+  aufnahmeNachlesenEl.disabled = aufnahmeState.phase === 'laedt';
 
   aufnahmeKandidatenEl.innerHTML = '';
   // Nur EIN Kandidat und noch nichts gesetzt: das ist der Fall, in dem die
@@ -1979,9 +2045,30 @@ function setzeAufnahme(name){
 }
 aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value); });
 aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme(''); });
+aufnahmeNachlesenEl.addEventListener('click', function(){ void ladeAufnahmen('nachlesen'); });
 
-async function ladeAufnahmen(){
-  if (!localService.available){ aufnahmeState.phase = 'aus'; syncAufnahmeUI(); return; }
+// EQ: `absicht` ist 'nachlesen', wenn ein Mensch den Knopf gedrueckt hat, und
+// sonst 'start' (Seitenaufbau, Chartwechsel). Der Unterschied ist NUR die
+// Rueckmeldung: gelesen wird in beiden Faellen gleich, und in beiden Faellen
+// bleibt `state.aufnahme` unberuehrt.
+//
+// DIE REGEL, DIE HIER NICHT VERLETZT WERDEN DARF: diese Funktion fasst
+// `state.aufnahme` und `state.aufnahmeChart` NICHT an. Die Liste ist, was es
+// GIBT; die Auswahl ist, was ein Mensch ENTSCHIEDEN hat. Ein Auffrischen der
+// ersten darf die zweite nicht wegnehmen -- sonst kostet der Knopf genau die
+// Arbeit, die er sparen soll, und im schlimmsten Fall faellt eine bestaetigte
+// Zuordnung unbemerkt auf leer zurueck, kurz bevor jemand exportiert.
+async function ladeAufnahmen(absicht){
+  const nachlesen = absicht === 'nachlesen';
+  const vorher = aufnahmeState.liste;
+  if (!nachlesen) aufnahmeState.nachlese = null;
+  if (!localService.available){
+    aufnahmeState.phase = 'aus';
+    if (nachlesen) aufnahmeState.nachlese = { art: 'aus', namen: [] };
+    syncAufnahmeUI();
+    return;
+  }
+  if (nachlesen){ aufnahmeState.phase = 'laedt'; syncAufnahmeUI(); }
   try {
     const antwort = await fetch('/api/aufnahmen', {
       headers: {'X-Session-Token': localService.token},
@@ -1994,6 +2081,7 @@ async function ladeAufnahmen(){
     if (antwort.status === 404){
       aufnahmeState.phase = 'unerreichbar';
       aufnahmeState.grund = 'der laufende Dienst kennt /api/aufnahmen noch nicht (aeltere Fassung).';
+      if (nachlesen) aufnahmeState.nachlese = { art: 'unerreichbar', namen: [] };
       syncAufnahmeUI();
       return;
     }
@@ -2003,9 +2091,13 @@ async function ladeAufnahmen(){
     aufnahmeState.abgeschnitten = daten.abgeschnitten === true;
     aufnahmeState.grund = typeof daten.grund === 'string' ? daten.grund : '';
     aufnahmeState.phase = (daten.wurzel_gesetzt && daten.wurzel_lesbar) ? 'da' : 'ohne-ordner';
+    if (nachlesen) aufnahmeState.nachlese = nachleseErgebnis(vorher, aufnahmeState.liste);
   } catch (fehler){
     aufnahmeState.phase = 'unerreichbar';
     aufnahmeState.grund = fehler && fehler.message ? fehler.message : '';
+    // Die alte Liste bleibt stehen: eine Antwort, die nicht kam, ist kein
+    // Beleg dafuer, dass es die Aufnahmen nicht mehr gibt.
+    if (nachlesen) aufnahmeState.nachlese = { art: 'unerreichbar', namen: [] };
   }
   syncAufnahmeUI();
 }

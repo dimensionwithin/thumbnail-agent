@@ -1899,7 +1899,7 @@ class BeipackzettelClientTests(unittest.TestCase):
         )
         # Die Kandidatenliste SETZT nicht -- sie bietet an.
         laden = self.html[
-            self.html.index("async function ladeAufnahmen()") : self.html.index("// ---------- Lebenszeichen")
+            self.html.index("async function ladeAufnahmen(") : self.html.index("// ---------- Lebenszeichen")
         ]
         self.assertNotIn("setzeAufnahme", laden)
 
@@ -1963,7 +1963,7 @@ class BeipackzettelClientTests(unittest.TestCase):
         hierfuer nicht -- sonst saehe ein aelterer Dienst kaputt aus."""
         self.assertIn("const REQUIRED_PROTOCOL_VERSION = 2;", self.html)
         laden = self.html[
-            self.html.index("async function ladeAufnahmen()") : self.html.index("// ---------- Lebenszeichen")
+            self.html.index("async function ladeAufnahmen(") : self.html.index("// ---------- Lebenszeichen")
         ]
         self.assertIn("if (antwort.status === 404){", laden)
         self.assertIn("aeltere Fassung", laden)
@@ -3976,6 +3976,369 @@ class HeartbeatClientContractTests(unittest.TestCase):
 
     def test_an_older_service_stops_the_heartbeat_quietly(self) -> None:
         self.assertIn("if (response.status === 404){", self.html)
+
+
+# ---------------------------------------------------------------------------
+# EQ: Die Aufnahmeliste neu einlesen
+#
+# WARUM DIESE TESTS DAS JS AUSFUEHREN UND NICHT NUR SUCHEN. Die uebrigen
+# Compositor-Tests hier pruefen Zeichenketten im HTML -- das reicht, solange
+# die Frage "steht es da?" lautet. Die Fragen dieses Auftrags lauten anders:
+# ueberlebt eine Auswahl das Neueinlesen, und unterscheiden sich die
+# Rueckmeldungen wirklich? Beides ist Verhalten. Ein assertIn haette
+# geantwortet, dass die Zeile dasteht -- nicht, dass sie stimmt.
+#
+# Geschnitten wird WOERTLICH aus thumbnail-compositor.html. Nachgebaut wird
+# nur, was im Browser die Umgebung stellt: der Zustand `state`, die
+# Dienstkennung, das Zeichnen (hier ein Mitschrieb) und die Aufloesung des
+# relativen Pfads gegen einen Ursprung. Die Aufnahme-Logik selbst -- die
+# Funktionen, um die es geht -- laeuft im Original.
+# ---------------------------------------------------------------------------
+
+
+def compositor_schnitt(html: str, von: str, bis: str) -> str:
+    """Ein Stueck Compositor-Quelltext, woertlich."""
+
+    anfang = html.index(von)
+    return html[anfang : html.index(bis, anfang)]
+
+
+def aufnahme_logik_js(html: str) -> str:
+    """Die Aufnahme-Logik des Compositors, in Ausfuehrungsreihenfolge."""
+
+    return "\n".join(
+        compositor_schnitt(html, von, bis)
+        for von, bis in (
+            ("const AUFNAHME_MUSTER", "function aufnahmeFehler"),
+            ("function chartSchluessel()", "function todayISO()"),
+            ("const aufnahmeState = {", "function aufnahmeStichtag()"),
+            ("function setzeAufnahme(name){", "aufnahmeEl.addEventListener"),
+            ("async function ladeAufnahmen(absicht){", "function syncExportFormatUI()"),
+        )
+    )
+
+
+# Der Rahmen. Alles darin ist Umgebung, nichts davon ist Aufnahme-Logik.
+EQ_RAHMEN = """
+const [basis, token, ordner, szenario] = process.argv.slice(2);
+const fs = require('fs');
+const path = require('path');
+
+// Der Browser loest '/api/aufnahmen' gegen den Ursprung der Seite auf. Node
+// kennt keinen Ursprung, also wird er hier gestellt -- und NUR er.
+const echterFetch = globalThis.fetch;
+let ursprung = basis;
+globalThis.fetch = (pfad, opt) => echterFetch(ursprung + pfad, opt);
+
+const localService = { available: szenario !== 'aus', token: token };
+const state = {
+  aufnahme: '',
+  aufnahmeChart: null,
+  chartQuelle: { herkunft: 'dienst', dateiname: 'chart.png',
+                 zeitstempel: '2026-09-04T14:00:00.000Z' },
+};
+// Statt zu zeichnen wird mitgeschrieben: die Tests fragen, WAS auf der Seite
+// stuende, nicht wie es aussieht.
+const mitschrieb = [];
+function syncAufnahmeUI(){
+  mitschrieb.push({
+    phase: aufnahmeState.phase,
+    auswahl: state.aufnahme,
+    herkunft: aufnahmeHerkunft(),
+    meldung: nachleseMeldung(aufnahmeState.nachlese),
+    liste: aufnahmeState.liste.map(a => a.name),
+  });
+}
+
+__AUFNAHME_LOGIK__
+
+const AUSWAHL = '2026-09-04 09-12-03';
+const NEUE = '2026-09-04 16-30-57';
+
+function bericht(zusatz){
+  return Object.assign({
+    auswahl: state.aufnahme,
+    auswahlChart: state.aufnahmeChart,
+    herkunft: aufnahmeHerkunft(),
+    phase: aufnahmeState.phase,
+    liste: aufnahmeState.liste.map(a => a.name),
+    nachlese: aufnahmeState.nachlese,
+    meldung: nachleseMeldung(aufnahmeState.nachlese),
+    mitschrieb: mitschrieb.slice(),
+  }, zusatz || {});
+}
+
+(async () => {
+  if (szenario === 'meldungen'){
+    const arten = [
+      { art: 'nichts', namen: [] },
+      { art: 'neu', namen: [NEUE] },
+      { art: 'unerreichbar', namen: [] },
+      { art: 'aus', namen: [] },
+    ];
+    console.log(JSON.stringify({
+      meldungen: arten.map(a => nachleseMeldung(a)),
+      ohneNachlese: nachleseMeldung(null),
+      vieleNamen: nachleseMeldung({ art: 'neu', namen: ['a','b','c','d','e'] }),
+      eineNeue: nachleseMeldung({ art: 'neu', namen: [NEUE] }),
+    }));
+    return;
+  }
+
+  if (szenario === 'aus'){
+    // Ueber file:// gibt es keinen Dienst. Ein fetch waere hier ein Fehler --
+    // deshalb wird er zur Falle gemacht statt nur weggelassen.
+    globalThis.fetch = () => { throw new Error('EQ: ueber file:// darf nichts ans Netz gehen'); };
+    await ladeAufnahmen();
+    const beimStart = bericht();
+    setzeAufnahme(NEUE);
+    await ladeAufnahmen('nachlesen');
+    console.log(JSON.stringify(bericht({ beimStart: beimStart })));
+    return;
+  }
+
+  // Alle uebrigen Szenarien: Seite laedt, Mensch waehlt, Mensch liest nach.
+  await ladeAufnahmen();
+  const beimStart = bericht();
+  setzeAufnahme(AUSWAHL);
+  const nachWahl = bericht();
+
+  if (szenario === 'neu'){
+    // Die Aufnahme entsteht, waehrend die Seite offen ist -- so wie OBS sie
+    // anlegt, nachdem das Thumbnail schon gebaut war.
+    fs.writeFileSync(path.join(ordner, NEUE + '.mp4'), 'x');
+  }
+  if (szenario === 'unerreichbar'){
+    ursprung = 'http://127.0.0.1:1';
+  }
+
+  await ladeAufnahmen('nachlesen');
+  console.log(JSON.stringify(bericht({ beimStart: beimStart, nachWahl: nachWahl })));
+})().catch(fehler => {
+  console.log(JSON.stringify({ absturz: String((fehler && fehler.message) || fehler) }));
+  process.exitCode = 1;
+});
+"""
+
+
+class AufnahmeNachleseTests(HttpEndpointTests):
+    """EQ: Der Knopf, der die Aufnahmeliste neu einliest."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.aufnahmen = Path(self.temporary.name) / "aufnahmen"
+        self.aufnahmen.mkdir()
+        # Der Wegwerfordner, gegen den gemessen wird -- nie der echte.
+        (self.aufnahmen / "2026-09-04 09-12-03.mp4").write_bytes(b"x")
+        self.server.aufnahme_directory = self.aufnahmen
+
+    def fahre(self, szenario: str, *, logik: str | None = None) -> dict:
+        """Fuehrt die geschnittene Aufnahme-Logik in Node aus."""
+
+        quelle = EQ_RAHMEN.replace(
+            "__AUFNAHME_LOGIK__",
+            logik if logik is not None else aufnahme_logik_js(self.html),
+        )
+        skript = Path(self.temporary.name) / f"eq-{szenario}.cjs"
+        skript.write_text(quelle, encoding="utf-8")
+        fertig = subprocess.run(
+            [
+                "node",
+                str(skript),
+                f"http://{HOST}:{self.server.server_port}",
+                self.token,
+                str(self.aufnahmen),
+                szenario,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertTrue(fertig.stdout.strip(), fertig.stdout + fertig.stderr)
+        ergebnis = json.loads(fertig.stdout.strip().splitlines()[-1])
+        self.assertNotIn("absturz", ergebnis, ergebnis)
+        return ergebnis
+
+    # -- Nachweis 1: der Knopf liest wirklich neu ein ----------------------
+
+    def test_a_recording_made_after_page_load_shows_up_after_the_click(self) -> None:
+        ergebnis = self.fahre("neu")
+        self.assertEqual(ergebnis["beimStart"]["liste"], ["2026-09-04 09-12-03"])
+        self.assertEqual(
+            ergebnis["liste"], ["2026-09-04 16-30-57", "2026-09-04 09-12-03"]
+        )
+        self.assertEqual(ergebnis["nachlese"]["art"], "neu")
+        self.assertEqual(ergebnis["nachlese"]["namen"], ["2026-09-04 16-30-57"])
+
+    def test_the_service_reads_the_folder_again_on_every_request(self) -> None:
+        """Ohne das waere der Knopf eine Zeichnung: der Compositor fragte neu,
+        der Dienst antwortete aus dem Gedaechtnis."""
+
+        status, _, vorher = self.request(path="/api/aufnahmen")
+        self.assertEqual(status, 200)
+        (self.aufnahmen / "2026-09-04 16-30-57.mp4").write_bytes(b"x")
+        _, _, nachher = self.request(path="/api/aufnahmen")
+        namen = lambda daten: [a["name"] for a in json.loads(daten)["aufnahmen"]]
+        self.assertEqual(namen(vorher), ["2026-09-04 09-12-03"])
+        self.assertEqual(
+            namen(nachher), ["2026-09-04 16-30-57", "2026-09-04 09-12-03"]
+        )
+
+    # -- Nachweis 2: die Auswahl ueberlebt ---------------------------------
+
+    def test_the_chosen_recording_survives_a_refresh_that_changes_the_list(
+        self,
+    ) -> None:
+        ergebnis = self.fahre("neu")
+        self.assertEqual(ergebnis["nachWahl"]["auswahl"], "2026-09-04 09-12-03")
+        self.assertEqual(ergebnis["auswahl"], "2026-09-04 09-12-03")
+        self.assertEqual(ergebnis["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        # Auch waehrend des Ladens darf sie nicht kurz verschwinden: genau in
+        # dieser Luecke exportiert sonst jemand.
+        seit_wahl = ergebnis["mitschrieb"][len(ergebnis["nachWahl"]["mitschrieb"]) :]
+        self.assertTrue(seit_wahl)
+        for stand in seit_wahl:
+            self.assertEqual(stand["auswahl"], "2026-09-04 09-12-03", stand)
+            self.assertEqual(stand["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT, stand)
+
+    def test_the_chosen_recording_survives_a_refresh_that_finds_nothing(self) -> None:
+        ergebnis = self.fahre("nichts")
+        self.assertEqual(ergebnis["auswahl"], "2026-09-04 09-12-03")
+        self.assertEqual(ergebnis["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+
+    def test_the_chosen_recording_survives_a_service_that_does_not_answer(self) -> None:
+        ergebnis = self.fahre("unerreichbar")
+        self.assertEqual(ergebnis["auswahl"], "2026-09-04 09-12-03")
+        self.assertEqual(ergebnis["herkunft"], AUFNAHME_HERKUNFT_BESTAETIGT)
+        # Eine Antwort, die nicht kam, ist kein Beleg, dass es die Aufnahmen
+        # nicht mehr gibt -- die Liste bleibt stehen.
+        self.assertEqual(ergebnis["liste"], ["2026-09-04 09-12-03"])
+
+    def test_the_guard_snaps_shut_when_the_refresh_overwrites_the_choice(self) -> None:
+        """Der Nachweis, dass der Test oben ueberhaupt etwas pruefen kann.
+
+        Dieselbe Logik, eine Zeile veraendert: das Neueinlesen setzt die
+        Auswahl zurueck, so wie es ein unachtsamer Nachbau taete. Bemerkte der
+        Test das nicht, bewiese er nichts.
+        """
+
+        echt = aufnahme_logik_js(self.html)
+        naht = "aufnahmeState.liste = Array.isArray(daten.aufnahmen)"
+        self.assertIn(naht, echt)
+        mutiert = echt.replace(naht, "state.aufnahme = ''; " + naht, 1)
+        self.assertNotEqual(mutiert, echt)
+
+        ergebnis = self.fahre("neu", logik=mutiert)
+        self.assertEqual(ergebnis["nachWahl"]["auswahl"], "2026-09-04 09-12-03")
+        # Und jetzt ist sie weg -- der Fall, den der Test oben ausschliesst.
+        self.assertEqual(ergebnis["auswahl"], "")
+        self.assertEqual(ergebnis["herkunft"], AUFNAHME_HERKUNFT_LEER)
+
+    # -- Nachweis 3: die Rueckmeldung unterscheidet die Faelle --------------
+
+    def test_the_four_outcomes_do_not_share_a_single_sentence(self) -> None:
+        ergebnis = self.fahre("meldungen")
+        meldungen = ergebnis["meldungen"]
+        self.assertEqual(len(meldungen), 4)
+        self.assertEqual(len(set(meldungen)), 4, meldungen)
+        for satz in meldungen:
+            self.assertTrue(satz.strip(), meldungen)
+        # Ohne Klick steht gar nichts da: eine Meldung ohne Anlass waere eine
+        # Behauptung ueber eine Handlung, die es nicht gab.
+        self.assertEqual(ergebnis["ohneNachlese"], "")
+
+    def test_the_message_names_what_arrived(self) -> None:
+        ergebnis = self.fahre("meldungen")
+        self.assertIn("2026-09-04 16-30-57", ergebnis["eineNeue"])
+        # Viele Namen: die ersten stehen da, der Rest wird gezaehlt.
+        self.assertIn("5", ergebnis["vieleNamen"])
+        self.assertIn("und 2 weitere", ergebnis["vieleNamen"])
+
+    def test_the_three_live_outcomes_reach_the_page_differently(self) -> None:
+        """Nicht die reine Funktion, sondern was nach einem echten Klick auf
+        der Seite stuende."""
+
+        saetze = {
+            szenario: self.fahre(szenario)["meldung"]
+            for szenario in ("neu", "nichts", "unerreichbar")
+        }
+        self.assertEqual(len(set(saetze.values())), 3, saetze)
+        self.assertIn("2026-09-04 16-30-57", saetze["neu"])
+
+    # -- Nachweis 4: ohne Dienst ------------------------------------------
+
+    def test_without_the_service_the_button_answers_instead_of_going_quiet(
+        self,
+    ) -> None:
+        """Ueber file:// gibt es keinen Dienst. Der Rahmen macht fetch dort zur
+        Falle -- ein Netzaufruf waere ein Absturz, kein stilles Weiterlaufen."""
+
+        ergebnis = self.fahre("aus")
+        self.assertEqual(ergebnis["phase"], "aus")
+        self.assertEqual(ergebnis["nachlese"]["art"], "aus")
+        self.assertTrue(ergebnis["meldung"].strip())
+        # Die Arbeit laeuft weiter: der von Hand getippte Name steht noch.
+        self.assertEqual(ergebnis["auswahl"], "2026-09-04 16-30-57")
+
+    def test_the_page_over_file_url_needs_no_service_to_work(self) -> None:
+        """Dieselbe Datei, kein Ursprung: `localService.available` haengt an
+        einer Kennung, die nur der Dienst in die Seite schreibt."""
+
+        quelle = self.html.replace("\r\n", "\n")
+        self.assertIn("phase: localService.available ? 'laedt' : 'aus',", quelle)
+        self.assertIn(
+            "if (!localService.available){\n    aufnahmeState.phase = 'aus';", quelle
+        )
+
+    # -- Der Knopf selbst --------------------------------------------------
+
+    def test_the_button_exists_next_to_the_field_and_is_wired(self) -> None:
+        self.assertIn('id="aufnahmeNachlesen"', self.html)
+        self.assertIn(
+            "aufnahmeNachlesenEl.addEventListener('click', function(){ "
+            "void ladeAufnahmen('nachlesen'); });",
+            self.html,
+        )
+
+    def test_the_button_locks_only_while_reading(self) -> None:
+        """Gesperrt waehrend des Lesens (sonst vergleicht die zweite Anfrage
+        gegen eine Liste, die die erste ersetzt) -- sonst nie, auch nicht ohne
+        Dienst."""
+
+        self.assertIn(
+            "aufnahmeNachlesenEl.disabled = aufnahmeState.phase === 'laedt';",
+            self.html,
+        )
+
+    def test_a_refresh_that_is_not_a_click_says_nothing(self) -> None:
+        """Seitenaufbau und Chartwechsel rufen dieselbe Funktion. Sie duerfen
+        keine Meldung ueber einen Klick hinterlassen, den niemand getan hat."""
+
+        ergebnis = self.fahre("nichts")
+        self.assertIsNone(ergebnis["beimStart"]["nachlese"])
+        self.assertEqual(ergebnis["beimStart"]["meldung"], "")
+
+    # -- Nachweis 6: der Quellordner bleibt, wie er war --------------------
+
+    def test_reading_the_recordings_changes_nothing_in_the_folder(self) -> None:
+        def abzug() -> list[tuple[str, int, int]]:
+            return sorted(
+                (pfad.name, pfad.stat().st_size, pfad.stat().st_mtime_ns)
+                for pfad in self.aufnahmen.iterdir()
+            )
+
+        vorher = abzug()
+        for _ in range(3):
+            status, _, _ = self.request(path="/api/aufnahmen")
+            self.assertEqual(status, 200)
+        self.assertEqual(abzug(), vorher)
 
 
 if __name__ == "__main__":

@@ -47,13 +47,22 @@
 //    nicht mehr -- die Kette startet Kindprozesse mitten im Betrieb. Der Kern
 //    stimmt weiter: KEIN URTEIL LOEST EINEN AUS.
 //
-//    Drei gehoeren zum Start:
+//    Drei gehoeren zum Start des SHORTS-Modus:
 //      - der Leser (ruftLeser)          -- die EINGABE des Dienstes. Vor dem
 //        Port, vor der ersten Karte, bei jedem Start.
 //      - netstat (haelterDesPorts)      -- nur bei belegtem Port, und dann
 //        startet der Dienst gar nicht erst. Liest eine Liste, sonst nichts.
 //      - der Browser (oeffneImBrowser)  -- einmal, nach listen(), ausser bei
 //        --no-browser. Scheitert er, laeuft der Dienst weiter.
+//
+//    Einer gehoert zum Start des LONGFORM-Modus, und er steht dort an
+//    derselben Stelle wie der Leser hier:
+//      - der Trockenlauf des Longform-Arbeiters (ruftLongformTrocken) -- die
+//        EINGABE der Longform-Ansicht (EL, Vertrag 4, Schritt 2). Vor dem
+//        Port, vor der Seite, bei jedem Start. Er macht keinen Netzaufruf und
+//        laedt nichts hoch; sein Modul ist die lesende Haelfte (EK).
+//        Der Leser laeuft in diesem Modus NICHT -- es gibt keine
+//        Uebergabedatei, und es wird auch keine gesucht.
 //
 //    Zwei gehoeren zur Kette und haengen an je einem eigenen, benannten Knopf:
 //      - der Planer und der Trockenlauf des Uploaders (ruftPlaner,
@@ -146,7 +155,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
-const { baueSeite } = require('./freigabe-seite');
+// EL: zwei Ansichten, zwei Funktionen. Welche gilt, entscheidet baueDienst
+// anhand des Modus der Sitzung -- das Seitenmodul kennt diesen Dienst nicht.
+const { baueSeite, baueLongformSeite } = require('./freigabe-seite');
 // Die Pfadsperre kommt aus dem Leser. Eine eigene waere eine zweite Fassung
 // derselben Regel, und zwei Fassungen einer Regel sind auf Dauer eineinhalb.
 const { neueSperre } = require('./uebergabe-leser');
@@ -157,7 +168,11 @@ const { neueSperre } = require('./uebergabe-leser');
 // (Bericht ZUSAGE-freigabedienst-aufruf.md, Abschnitt 5):
 //   0 geordnetes Sitzungsende, 1 lief und lehnte den START ab, 2 lief nicht.
 // Diese drei Werte sind Vertrag und werden nicht angetastet.
-const { EXIT } = require('./uebergabe-leser');
+// EL: EXIT_CODES kommt dazu -- die Tabelle mit den BEDEUTUNGEN. Die
+// Longform-Ansicht nennt den Rueckgabewert des Arbeiters und sagt, was er
+// heisst; der Satz dazu wird von dort geholt und nicht hier ein zweites Mal
+// formuliert.
+const { EXIT, EXIT_CODES } = require('./uebergabe-leser');
 const EXIT_OK = EXIT.OK;
 const EXIT_ABBRUCH = EXIT.BEFUND;
 const EXIT_AUFRUFFEHLER = EXIT.AUFRUF;
@@ -1229,8 +1244,36 @@ function leseBereich(kopf, dateiGroesse) {
 // Der Dienst
 // ---------------------------------------------------------------------------
 
-const ROUTEN_GET = new Set(['/', '/video', '/stand', '/kette', '/lauf']);
-const ROUTEN_POST = new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']);
+// DIE ROUTEN HAENGEN AM MODUS, DER TORWAECHTER NICHT (EL).
+//
+// Was JE MODUS verschieden ist, steht in genau diesen beiden Tabellen: welche
+// Namen es ueberhaupt gibt. Alles davor -- die Bindung an 127.0.0.1, die
+// Host-Pruefung, die Origin-Pruefung, das Sitzungstoken -- steht EINMAL im
+// Handler unten und kennt den Modus nicht. Ein Modus, der sich seine eigenen
+// Sicherungen baut, hat sie beim naechsten Mal anders gebaut.
+//
+// DER LONGFORM-MODUS HAT GENAU EINE ROUTE UND KEINE EINZIGE MIT POST.
+//
+// Das ist nicht Sparsamkeit, sondern die Zusage selbst: die Ansicht zeigt den
+// Trockenlauf und hoert dort auf. Sie holt keinen Stand nach, spielt kein
+// Video ab, startet nichts und schickt nichts zurueck -- ihre Seite traegt
+// darum auch kein fetch, kein Formular und keinen Knopf (EL). Eine leere
+// POST-Liste laesst sich in einem Blick pruefen; "der eine Knopf schreibt ja
+// nichts" muss man glauben.
+//
+// WAS DAS KOSTET, und es wird nicht wegdefiniert: der Longform-Modus hat
+// keinen Knopf "Sitzung beenden". Er wird mit Strg+C in dem Terminal
+// beendet, in dem er gestartet wurde -- und dort steht ohnehin der Mensch,
+// der ihn gestartet hat. Kommt spaeter der Knopf, der hochlaedt (Vertrag 4,
+// Schritte 8 bis 17), kommt die POST-Route mit ihm und nicht vorher.
+const ROUTEN_GET = {
+  [MODUS_SHORTS]: new Set(['/', '/video', '/stand', '/kette', '/lauf']),
+  [MODUS_LONGFORM]: new Set(['/']),
+};
+const ROUTEN_POST = {
+  [MODUS_SHORTS]: new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']),
+  [MODUS_LONGFORM]: new Set([]),
+};
 
 function gleichSicher(a, b) {
   const x = Buffer.from(String(a), 'utf8');
@@ -1251,7 +1294,17 @@ function baueDienst(sitzung) {
   // scheitern, sondern am Zufall.
   const erwarteterHost = () => HOST + ':' + sitzung.port;
   const erwarteterUrsprung = () => 'http://' + erwarteterHost();
-  const seite = Buffer.from(baueSeite(sitzung), 'utf8');
+  // EL: ZWEI ANSICHTEN, ZWEI FUNKTIONEN, EINE ENTSCHEIDUNG. Der Modusvergleich
+  // steht HIER und nicht in der Seite: das Seitenmodul kennt weder fs noch
+  // http noch diesen Dienst, und es soll auch seine Konstanten nicht kennen.
+  // baueSeite() ist damit woertlich die Funktion geblieben, die vor EL die
+  // Shorts-Seite gebaut hat -- sie hat von der zweiten Ansicht nicht einmal
+  // gehoert.
+  const modus = pruefeModus(sitzung.modus === undefined ? MODUS_SHORTS : sitzung.modus);
+  const seite = Buffer.from(
+    modus === MODUS_LONGFORM ? baueLongformSeite(sitzung) : baueSeite(sitzung), 'utf8');
+  const routenGet = ROUTEN_GET[modus];
+  const routenPost = ROUTEN_POST[modus];
 
   function antwort(res, status, typ, leib, kopfzeilen) {
     const daten = Buffer.isBuffer(leib) ? leib : Buffer.from(leib, 'utf8');
@@ -1324,7 +1377,7 @@ function baueDienst(sitzung) {
     //    einen Dateisystempfad uebersetzt -- "/../../windows/win.ini" trifft
     //    keinen dieser Namen und bekommt 404.
     if (req.method === 'GET' || req.method === 'HEAD') {
-      if (!ROUTEN_GET.has(pfad)) { fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.'); return; }
+      if (!routenGet.has(pfad)) { fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.'); return; }
       if (pfad === '/') { antwort(res, 200, 'text/html; charset=utf-8', seite); return; }
       if (pfad === '/stand') {
         antwort(res, 200, 'application/json; charset=utf-8',
@@ -1337,11 +1390,18 @@ function baueDienst(sitzung) {
         return;
       }
       if (pfad === '/lauf') { liefereLauf(res, abfrage); return; }
-      liefereVideo(req, res, abfrage);
+      // EL: /video steht jetzt AUSDRUECKLICH da und faengt nicht mehr alles auf,
+      // was uebrig bleibt. Ein Auffangbecken am Ende einer Kette von Namen tut
+      // still das Falsche, sobald die Namensliste wachsen kann -- und seit EL
+      // haengt sie am Modus. Im Longform-Modus koennte hier ohnehin nichts
+      // ankommen (routenGet kennt dort nur '/'), aber "kann nicht vorkommen" ist
+      // keine Sicherung, sondern eine Erwartung.
+      if (pfad === '/video') { liefereVideo(req, res, abfrage); return; }
+      fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.');
       return;
     }
     if (req.method === 'POST') {
-      if (!ROUTEN_POST.has(pfad)) { fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.'); return; }
+      if (!routenPost.has(pfad)) { fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.'); return; }
       if (pfad === '/beenden') { beende(res); return; }
       if (pfad === '/planen') { nimmPlanen(res); return; }
       if (pfad === '/archivieren') { nimmArchivieren(res); return; }
@@ -1948,6 +2008,12 @@ function baueSitzung({ bericht, eingabeText, aufnahme, projektwurzel, port }) {
   const jetzt = new Date().toISOString();
   const eingabeSha256 = crypto.createHash('sha256').update(eingabeText, 'utf8').digest('hex');
   return {
+    // EL: DER MODUS STEHT IN BEIDEN SITZUNGEN, auch in dieser, die es vor EL
+    // schon gab. Derselbe Grund wie beim Feld `modus` der Sperrdatei
+    // (Vertrag 2.13): traegt ihn nur die zweite Sorte, dann bedeutet "Feld
+    // fehlt" heimlich "shorts", und diese Regel steht dann in keiner Datei,
+    // sondern nur im Kopf dessen, der sie geschrieben hat.
+    modus: MODUS_SHORTS,
     aufnahme,
     port,
     token: crypto.randomBytes(32).toString('hex'),
@@ -2127,29 +2193,177 @@ function pruefeModusVerbindung(modus, argv) {
   return null;
 }
 
-// Was der Longform-Modus heute IST und was er nicht ist. Er steht hier als
-// eigene Meldung und nicht als halbe Seite: der Dienst kennt den Modus, die
-// Sperre und die Argumente -- die Ansicht und der Arbeiter dahinter sind nicht
-// gebaut. Ein Modus, der stattdessen die Shorts-Seite zeigte, waere schlimmer
-// als einer, der sagt, dass er noch nichts zu zeigen hat.
-function meldeLongformOhneSeite(aufnahme, sperrpfad) {
-  return [
-    '',
-    'ABBRUCH: der Longform-Modus hat noch keine Seite.',
-    '',
-    '  Aufnahme:       ' + aufnahme,
-    '  Sperrdatei:     ' + sperrpfad,
-    '',
-    '  Was steht: das Modusargument, die Sperre je Aufnahme und Modus, die Meldung',
-    '  mit dem Modus darin, und die Abweisung von --wurzel=. Diese Sitzung hat die',
-    '  Sperre genommen und gibt sie unmittelbar wieder frei.',
-    '',
-    '  Was fehlt: die Longform-Ansicht dieser Seite und der Arbeiter dahinter.',
-    '  Beides ist nicht gebaut, und dieser Dienst erfindet es nicht.',
-    '',
-    'Es wurde nichts gelesen, nichts hochgeladen und keine Seite ausgeliefert.',
-    '',
-  ].join(String.fromCharCode(10));
+// ---------------------------------------------------------------------------
+// DER LONGFORM-MODUS (EL, Vertrag 2.13 und 4)
+// ---------------------------------------------------------------------------
+//
+// WAS AN DIE STELLE VON meldeLongformOhneSeite() GETRETEN IST. Bis EL endete
+// dieser Modus nach der Sperre mit 1 und dem Satz, dass hier nichts gebaut
+// ist. Diese Meldung ist ERSATZLOS WEG und nicht danebengestellt worden: sie
+// sagte "der Longform-Modus hat noch keine Seite", und das ist ab hier
+// unwahr. Eine Meldung, die stehen bleibt, nachdem ihr Satz nicht mehr
+// stimmt, ist genau die Sorte, die der naechste Leser fuer wahr nimmt.
+//
+// WAS DIESER MODUS TUT, VOLLSTAENDIG: Sperre nehmen (2.13), den Trockenlauf
+// des Arbeiters als Kindprozess starten (4, Schritt 2 bis 6), seine Ausgabe
+// woertlich ausliefern (4, Schritt 7, soweit gebaut), und dort aufhoeren.
+//
+// WAS ER NICHT TUT, UND ZWAR MIT ABSICHT:
+//
+//   - Keine Ermaechtigung. Weder schreiben noch entgegennehmen, kein Knopf,
+//     der eine ausloest, kein Feld, das eine vorbereitet. Grund: eine
+//     Einmal-Ermaechtigung ohne Empfaenger liegt herum, bis jemand sie
+//     einloest. Sie kommt mit dem Arbeiter, der sie einloest (Vertrag 4,
+//     Schritte 8 bis 17), und keinen Schritt frueher.
+//   - Kein Netzaufruf, kein Upload, kein Start des schreibenden Arbeiters.
+//     Der Trockenlauf laeuft OHNE --execute und OHNE --bestaetigt-durch=; der
+//     Arbeiter selbst weist beide Argumente heute mit einer eigenen Meldung
+//     ab (EK), und dieser Dienst gibt sie ihm gar nicht erst.
+//   - Keine zweite Darstellung dessen, was der Arbeiter sagt. Was er ueber
+//     Videodatei, Titel, Beschreibung, Hashtags, Tags und Thumbnail schreibt,
+//     geht Zeichen fuer Zeichen durch diesen Dienst hindurch auf die Seite.
+//     Ein zweiter Formatierungsweg waere eine zweite Fassung derselben Regel,
+//     und die Regel hinter dem Thumbnail allein hat 37 Zustaende (2.7).
+//
+// WARUM KINDPROZESS UND NICHT require(): der Arbeiter loest seine beiden
+// Ordner selbst aus der .env auf (LONGFORM_RENDER_WURZEL, THUMBNAIL_EXPORT_DIR),
+// prueft seine Argumente selbst und setzt seinen Rueckgabewert selbst. Ihn
+// hier im selben Prozess aufzurufen hiesse, all das ein zweites Mal zu bauen
+// -- und die zweite Fassung waere die, die der Mensch vor Augen hat. Es ist
+// dieselbe Bauart wie beim Leser und beim Trockenlauf des Uploaders: hier
+// steht ein spawnSync auf seine Datei und kein Nachbau seiner Regeln.
+const LONGFORM_ARBEITER = path.join(__dirname, 'longform-arbeiter.js');
+
+// Der Trockenlauf -- WOERTLICH derselbe, der im Terminal steht. Kein
+// --execute, kein --bestaetigt-durch=, kein --json und keine zweite
+// Ausgabeart: der Arbeiter hat nur eine, und das ist die, die ein Mensch
+// liest.
+//
+// BEIDE STROEME WERDEN GETRENNT AUFGEHOBEN. Vertrag 6: die Vorschau geht auf
+// stdout, wenn der Lauf durchkommt, und auf stderr, wenn er mit einem Befund
+// endet. Sie hier zusammenzuruehren hiesse, eine Reihenfolge zu erfinden, die
+// es zwischen zwei Stroemen nicht gibt.
+function ruftLongformTrocken(aufnahme) {
+  const argumente = [LONGFORM_ARBEITER, '--aufnahme=' + aufnahme];
+  const lauf = spawnSync(process.execPath, argumente, {
+    encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 170000,
+  });
+  return {
+    befehl: 'node ' + path.relative(PROJEKTWURZEL, LONGFORM_ARBEITER) +
+      ' --aufnahme="' + aufnahme + '"',
+    code: lauf.status, fehler: lauf.error ? lauf.error.message : null,
+    aus: lauf.stdout || '', err: lauf.stderr || '',
+  };
+}
+
+// BEI WELCHEM RUECKGABEWERT ES ETWAS ZU ZEIGEN GIBT.
+//
+// Die Regel dahinter ist ein Satz: hat der Arbeiter gelesen, zeigt die Seite,
+// was er gelesen hat; hat er nichts gelesen, gibt es nichts zu zeigen.
+//
+//   0 (OK)        er ist durchgelaufen                   -> Seite
+//   1 (BEFUND)    er hat gelesen und lehnt ab            -> Seite, mit seinem Grund
+//   3 (GESPERRT)  eine Sperre im Quelltext greift        -> Seite, mit dem Grund
+//   2 (AUFRUF)    "es wurde nichts gelesen" (EXIT_CODES) -> KEINE Seite
+//
+// Der 2er ist der einzige, der hier ausgeschlossen ist, und er ist es aus
+// seiner eigenen Definition heraus: ein Aufruffehler faellt vor dem ersten
+// Zugriff. Eine Seite darueber haette keinen Inhalt ausser der Meldung selbst
+// -- und die gehoert dorthin, wo der Mensch gerade steht, wenn er den Dienst
+// startet: ins Terminal. Ihr haeufigster Fall auf einem frischen Rechner ist
+// ein fehlender Schluessel in der .env, und der wird dort behoben, nicht hier.
+const LONGFORM_CODES_MIT_SEITE = [EXIT.OK, EXIT.BEFUND, EXIT.GESPERRT];
+
+// Was der Rueckgabewert BEDEUTET -- geliehen aus der einen Tabelle im Leser
+// (EXIT_CODES), nicht hier ein zweites Mal aufgeschrieben. Der Zusatz je Fall
+// sagt, was das FUER DIESE SEITE heisst, und er sagt nichts ueber den Inhalt
+// des Trockenlaufs: der steht darunter, in den Worten des Arbeiters.
+//
+// KEIN "BEREIT", KEIN "IN ORDNUNG", KEIN GRUEN. Auch der 0er ist hier kein
+// gutes Zeichen, sondern eine Auskunft ueber einen Prozess, der zu Ende
+// gelaufen ist. Ein Zustand, der gut aussieht, obwohl er es nicht ist, ist der
+// Fehler, gegen den dieses ganze Projekt gebaut ist.
+const LONGFORM_ZUSATZ = {
+  [EXIT.OK]: 'Er hat keinen Grund gefunden, vorher abzubrechen. Das heisst NICHT, dass ' +
+    'hochgeladen werden koennte: den Weg dorthin gibt es in diesem Dienst nicht, und was ' +
+    'der Trockenlauf selbst nicht kann, sagt er unten unter seiner eigenen Ueberschrift.',
+  [EXIT.BEFUND]: 'Er hat gelesen, gerechnet und lehnt ab. Der Grund steht unten in seinen ' +
+    'Worten -- diese Seite gibt ihn nicht mit eigenen wieder.',
+  [EXIT.GESPERRT]: 'Eine benannte Sperre im Quelltext greift (Vertrag 2.11). Es gibt kein ' +
+    'Argument, das sie umgeht, und dieser Dienst hat keines.',
+};
+
+function longformAusgang(trocken) {
+  const bekannt = EXIT_CODES.find((c) => c.wert === trocken.code);
+  return {
+    code: trocken.code,
+    name: bekannt ? bekannt.name : null,
+    bedeutung: bekannt ? bekannt.bedeutung : null,
+    zusatz: LONGFORM_ZUSATZ[trocken.code] || null,
+    fehler: trocken.fehler,
+  };
+}
+
+// Die Sitzung des Longform-Modus. Sie traegt ABSICHTLICH weniger als die des
+// Shorts-Modus: keine Karten, keine Freigabedatei, keinen Stand, keine Kette,
+// keine Videoliste und keine Pfadsperre. Was sie nicht hat, kann keine Route
+// anfassen -- und es gibt in diesem Modus auch keine, die es versuchte.
+//
+// `trocken` ist das Ergebnis von ruftLongformTrocken(), unveraendert. Es wird
+// hier nicht ausgewertet, nicht zerlegt und nicht umsortiert; die Seite setzt
+// die beiden Stroeme ueber textContent in den Baum, und das ist der ganze Weg
+// von der Ausgabe des Arbeiters bis vor die Augen eines Menschen.
+function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
+  if (!AUFNAHME_FORM.test(String(aufnahme))) {
+    throw new Error('baueLongformSitzung: die Aufnahme hat nicht die feste Form.');
+  }
+  return {
+    modus: MODUS_LONGFORM,
+    aufnahme,
+    port,
+    projektwurzel,
+    token: crypto.randomBytes(32).toString('hex'),
+    trocken,
+    ausgang: longformAusgang(trocken),
+  };
+}
+
+// Der eine Ausgang des Longform-Modus, der KEINE Seite hat: der Arbeiter kam
+// nicht bis zum Lesen. Sein Text wird unveraendert durchgereicht -- er hat
+// eigene Meldungen fuer den fehlenden Schluessel und fuer die beiden noch
+// nicht gebauten Argumente, und die sind besser als jede, die dieser Dienst
+// darueber schreiben koennte.
+//
+// KEINE ZWEITE DEUTUNG. Was hier von diesem Dienst stammt, sind der Rahmen und
+// die Angabe, wo die Sperre lag; alles andere ist der Arbeiter, mit "| "
+// eingerueckt, damit zu sehen bleibt, wo sein Text anfaengt und aufhoert.
+function meldeLongformOhneVorschau(aufnahme, sperrpfad, trocken) {
+  const z = [];
+  z.push('');
+  z.push('ABBRUCH: der Longform-Arbeiter kam nicht bis zum Lesen.');
+  z.push('');
+  z.push('  Aufnahme:       ' + aufnahme);
+  z.push('  Sperrdatei:     ' + sperrpfad + '   (wird jetzt freigegeben)');
+  z.push('  Aufruf:         ' + trocken.befehl);
+  z.push('  Rueckgabewert:  ' + (trocken.code === null ? '(kein Ende)' : trocken.code));
+  z.push('');
+  if (trocken.fehler) {
+    z.push('  Er liess sich nicht starten: ' + trocken.fehler);
+    z.push('');
+  }
+  const durchgereicht = (trocken.err || '') + (trocken.aus || '');
+  if (durchgereicht.trim() !== '') {
+    z.push('  Was er selbst dazu sagt, woertlich:');
+    z.push('');
+    for (const zeile of durchgereicht.split(String.fromCharCode(10))) {
+      z.push(zeile === '' ? '' : '  | ' + zeile);
+    }
+    z.push('');
+  }
+  z.push('Es wurde nichts hochgeladen, nichts veroeffentlicht und keine Seite ausgeliefert.');
+  z.push('Geschrieben hat dieser Dienst nichts ausser seiner Sperre, und die ist wieder weg.');
+  z.push('');
+  return z.join(String.fromCharCode(10));
 }
 
 // ---------------------------------------------------------------------------
@@ -2159,6 +2373,122 @@ function meldeLongformOhneSeite(aufnahme, sperrpfad) {
 function wertVon(argv, praefix) {
   const t = argv.slice(2).find((x) => x.startsWith(praefix));
   return t === undefined ? null : t.slice(praefix.length);
+}
+
+// DER START DES LONGFORM-MODUS (EL, Vertrag 4, Schritte 1 bis 7)
+//
+// Er steht als eigene Funktion und nicht als Zweig mitten in main(): die
+// Shorts-Linie darunter ist lang, und ein Modus, der sich durch sie
+// hindurchschlaengelt, laesst sich nicht mehr lesen, ohne beide zu lesen.
+//
+// DIE SPERRE IST SCHON GENOMMEN, wenn diese Funktion anfaengt, und `abbruch`
+// ist die EINE Tuer nach draussen -- dieselbe, die die Shorts-Linie benutzt,
+// und die einzige, die die Sperre wieder freigibt. Es gibt hier kein
+// process.exit, das an ihr vorbeigeht.
+//
+// DIE REIHENFOLGE IST DIE AUS VERTRAG 4, und sie ist keine Geschmacksfrage:
+// der Trockenlauf laeuft VOR dem Port. Ein Dienst, der erst einen Port
+// aufmacht und dann eine halbe Minute rechnet, zeigt in dieser halben Minute
+// eine leere Seite -- und eine leere Seite ist der Zustand, den ein Mensch am
+// leichtesten fuer "nichts gefunden" haelt.
+function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, abbruch }) {
+  console.log('Rufe den Longform-Arbeiter im Trockenlauf: ' +
+    path.relative(projektwurzel, LONGFORM_ARBEITER) +
+    ' --aufnahme=' + JSON.stringify(aufnahme));
+  console.log('Er liest und rechnet. Er macht keinen Netzaufruf und laedt nichts hoch.');
+  const trocken = ruftLongformTrocken(aufnahme);
+
+  // Der 2er und der nicht gestartete Prozess sind die beiden Faelle, in denen
+  // es nichts zu zeigen gibt. Beide gehen ueber abbruch() -- die Sperre wird
+  // frei, und der Text des Arbeiters geht unveraendert mit.
+  if (!LONGFORM_CODES_MIT_SEITE.includes(trocken.code)) {
+    abbruch(meldeLongformOhneVorschau(aufnahme, sperre.pfad, trocken));
+    return;
+  }
+
+  const sitzung = baueLongformSitzung({ aufnahme, projektwurzel, port, trocken });
+  const dienst = baueDienst(sitzung);
+  const verbindungen = new Set();
+  dienst.on('connection', (s) => {
+    verbindungen.add(s);
+    s.on('close', () => verbindungen.delete(s));
+  });
+
+  dienst.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+      abbruch(meldeBelegtenPort(port));
+      return;
+    }
+    abbruch(String.fromCharCode(10) + 'Abbruch: ' + e.message + String.fromCharCode(10));
+  });
+
+  let beendet = false;
+  function herunterfahren(grund) {
+    if (beendet) return;
+    beendet = true;
+    console.log(String.fromCharCode(10) + grund);
+    // Anders als im Shorts-Modus steht hier NICHT "alle Urteile stehen auf der
+    // Platte": es gibt in diesem Modus kein Urteil und keine Datei, in der
+    // eines stuende. Der Satz waere eine Beruhigung ueber etwas, das gar nicht
+    // vorkommt.
+    console.log('Diese Sitzung hat gelesen und gezeigt. Geschrieben hat sie nichts ausser ' +
+      'ihrer Sperre, und die geht jetzt weg.');
+    const frei = gibSperreFrei(sperre);
+    console.log(frei.geloescht
+      ? 'Sperre freigegeben: ' + sperre.pfad
+      : 'Sperrdatei blieb liegen: ' + frei.grund);
+    dienst.close(() => process.exit(EXIT_OK));
+    for (const s of verbindungen) s.destroy();
+    setTimeout(() => process.exit(EXIT_OK), 2000).unref();
+  }
+
+  // NUR SIGINT. Es gibt in diesem Modus keine POST-Route und keinen Knopf, der
+  // 'beenden-erwuenscht' ausloesen koennte; ein Zuhoerer darauf waere ein
+  // Anschluss ins Leere und saehe aus wie ein Weg, den es gibt.
+  process.on('SIGINT', () => herunterfahren('Strg+C -- beende den Dienst.'));
+
+  dienst.listen(port, HOST, () => {
+    const adresse = 'http://' + HOST + ':' + port + '/?t=' + sitzung.token;
+    traegeSperrePortNach(sperre, port);
+    console.log('');
+    console.log('Betriebsmodus:  ' + MODUS_BEZEICHNUNG[MODUS_LONGFORM]);
+    console.log('Aufnahme:       ' + sitzung.aufnahme);
+    console.log('Trockenlauf:    ' + trocken.befehl);
+    console.log('Rueckgabewert:  ' + sitzung.ausgang.code +
+      (sitzung.ausgang.name ? ' (' + sitzung.ausgang.name + ')' : ''));
+    console.log('Sperre:         ' + sperre.pfad + '   (PID ' + process.pid +
+      ', Port ' + port + ')');
+    if (sperre.verwaist) {
+      const v = sperre.verwaist.vorhanden;
+      console.log('                VERWAISTE SPERRE UEBERNOMMEN -- ' + sperre.verwaist.grund + '.');
+      console.log('                Sie stammte von PID ' + (v ? v.pid : '(unlesbar)') +
+        (v && v.port ? ', Port ' + v.port : '') +
+        (v && v.gestartet_am ? ', gestartet am ' + v.gestartet_am : '') +
+        '. Diese Sitzung wurde nicht geordnet beendet.');
+    }
+    console.log('');
+    console.log('Die Seite zeigt die Ausgabe des Trockenlaufs, woertlich, und hoert dort ' +
+      'auf. Es gibt auf ihr keinen Knopf, der etwas hochlaedt, und keine Ermaechtigung.');
+    console.log('');
+    console.log('Die Adresse traegt das Sitzungstoken dieses Starts. Ohne das Token ' +
+      'antwortet der Dienst auf nichts:');
+    console.log('  ' + adresse);
+    console.log('');
+    console.log('Beenden: Strg+C hier im Terminal. Die Seite hat dafuer keinen Knopf ' +
+      '-- sie schickt ueberhaupt nichts an diesen Dienst zurueck.');
+
+    if (keinBrowser) {
+      console.log('');
+      console.log('--no-browser: es wird nichts geoeffnet. Nimm die Adresse oben.');
+      return;
+    }
+    const auf = oeffneImBrowser(adresse);
+    console.log('');
+    console.log(auf.gestartet
+      ? 'Die Seite wird im Standardbrowser geoeffnet (--no-browser schaltet das ab).'
+      : 'Der Browser liess sich nicht oeffnen (' + auf.grund + '). Der Dienst laeuft ' +
+        'weiter -- nimm die Adresse oben von Hand.');
+  });
 }
 
 function main() {
@@ -2242,13 +2572,13 @@ function main() {
     process.exit(EXIT_ABBRUCH);
   }
 
-  // HIER ENDET DER LONGFORM-MODUS HEUTE. Er hat die Sperre genommen -- das ist
-  // sein zugesagtes Verhalten, und es ist geprueft -- und gibt sie ueber
-  // abbruch() unmittelbar wieder frei. Weiter unten steht die SHORTS-Linie:
-  // der Leser, die Karten, die Seite. Nichts davon gilt fuer Longform, und
-  // nichts davon wird ihm untergeschoben.
+  // DER LONGFORM-MODUS (EL). Er zweigt HIER ab, an derselben Stelle, an der er
+  // bis EI endete: hinter der Sperre und vor dem Leser. Was danach kommt, ist
+  // die SHORTS-Linie -- der Leser, die Karten, die Seite --, und nichts davon
+  // gilt fuer Longform oder wird ihm untergeschoben. Der Longform-Zweig
+  // kehrt nie in die Shorts-Linie zurueck; er hat seinen eigenen Ausgang.
   if (modus === MODUS_LONGFORM) {
-    abbruch(meldeLongformOhneSeite(aufnahme, sperre.pfad));
+    starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, abbruch });
     return;
   }
 
@@ -2412,7 +2742,9 @@ module.exports = {
   ERLAUBTE_ARGUMENTE, EXIT_OK, EXIT_ABBRUCH, EXIT_AUFRUFFEHLER,
   HOST, STANDARD_PORT, AUFNAHME_FORM,
   MODUS_SHORTS, MODUS_LONGFORM, MODI, MODUS_BEZEICHNUNG, pruefeModus,
-  pruefeModusVerbindung, meldeLongformOhneSeite,
+  pruefeModusVerbindung, meldeLongformOhneVorschau,
+  LONGFORM_ARBEITER, LONGFORM_CODES_MIT_SEITE, LONGFORM_ZUSATZ,
+  ruftLongformTrocken, longformAusgang, baueLongformSitzung,
   FREIGABE_SCHEMA_VERSION, FREIGABE_ARTIFACT_TYPE,
   TITEL_MAX_ZEICHEN, NOTIZ_MAX_ZEICHEN, MAX_ANFRAGE_BYTES,
   freigabePfad, ruftLeser, baueKarten, pruefeTitel, pruefeNotiz,

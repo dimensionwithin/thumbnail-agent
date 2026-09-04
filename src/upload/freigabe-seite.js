@@ -1142,4 +1142,251 @@ function baueSeite(sitzung) {
   ].join('\n');
 }
 
-module.exports = { baueSeite, jsonFuerSkriptblock, SKRIPTBLOCK_MASKEN };
+// ===========================================================================
+// EL: DIE LONGFORM-ANSICHT
+// ===========================================================================
+//
+// Sie zeigt EINEN Text: die Ausgabe des Longform-Arbeiters im Trockenlauf,
+// woertlich. Und sie sagt, wo sie aufhoert.
+//
+// WARUM SIE DEN TEXT NICHT ZERLEGT, obwohl die Shorts-Vorschau darueber das
+// Gegenteil tut (baueVorschau schneidet an den Trennlinien, setzt
+// Ueberschriften und klappt einen Teil weg):
+//
+// Der Uploader-Trockenlauf hat eine Form, die sich zerlegen laesst -- je Short
+// ein Block, und die Bloecke sind fast gleich. Der Longform-Trockenlauf hat
+// die nicht: er ist EIN Befund ueber EIN Video, und was darin steht, haengt an
+// einer Zustandsmatrix mit 37 Zeilen (Vertrag 2.7). Wer ihn zerlegte, muesste
+// erkennen, welcher Abschnitt was ist -- an seinem Wortlaut. Das waere eine
+// zweite Stelle, an der die Regeln des Arbeiters ausgelegt werden, und die
+// zweite waere ausgerechnet die, die ein Mensch vor Augen hat.
+//
+// Diese Ansicht kennt darum KEIN einziges Wort aus der Ausgabe des Arbeiters.
+// Sie setzt seinen Text als ein Stueck ueber textContent in den Baum und tut
+// sonst nichts damit: nicht kuerzen, nicht einklappen, nicht umsortieren,
+// nicht faerben, nicht zusammenfuegen. tests/el-longform-ansicht.test.cjs
+// rechnet beides nach -- dass keines seiner Woerter hier vorkommt, und dass
+// jede seiner Zeilen in der ausgelieferten Seite steht.
+//
+// WAS DIESE ANSICHT SELBST SAGT, und nur das:
+//   - welcher Befehl gelaufen ist und mit welchem Rueckgabewert,
+//   - was dieser Rueckgabewert heisst (aus der EINEN Tabelle, ueber den Dienst
+//     hereingereicht -- dieses Modul liest nichts),
+//   - dass die beiden Stroeme getrennt stehen und warum,
+//   - wo sie aufhoert, was als Naechstes kaeme und dass es das nicht gibt.
+//
+// KEINE ZUSTIMMUNGSFARBE, NIRGENDS. Die Shorts-Seite faerbt ein gefaelltes
+// Urteil gruen; hier gibt es kein Urteil zu faellen, und ein gruener Kasten
+// ueber einem Trockenlauf, der mit 0 endete, hiesse "in Ordnung". Er ist es
+// nicht -- er ist zu Ende gelaufen. Ein Zustand, der gut aussieht, obwohl er
+// es nicht ist, ist der Fehler, gegen den dieses ganze Projekt gebaut ist.
+
+// Der Zusatzstil. Der Grundstil oben wird GETEILT und nicht nachgebaut: es ist
+// dieselbe Oberflaeche desselben Dienstes, und zwei Fassungen von Schrift und
+// Farbe laufen mit dem ersten Nachtrag auseinander.
+//
+// WARUM DER TEXT DES ARBEITERS UMBROCHEN WIRD (pre-wrap), obwohl er seine
+// eigenen 78 Spalten setzt -- gemessen am echten Lauf vom 04.09.2026: von 98
+// Zeilen sind 8 laenger als 78 Spalten, die laengste hat 207. Sie stammen aus
+// dem geliehenen Modul hinter Vertrag 2.7, das nicht auf 78 umbricht. Ohne
+// pre-wrap liefen sie rechts aus dem Bild und waeren nur ueber einen
+// waagerechten Rollbalken zu finden -- und die laengste von allen ist die
+// Zeile mit dem Abbruchgrund. Eine Ansicht, auf der ausgerechnet die halb im
+// Verborgenen steht, waere genau der Zustand, gegen den dieser Bildschirm
+// gebaut ist.
+//
+// BENANNTE GRENZE: eine umbrochene Zeile sieht damit aus wie zwei. Das ist der
+// Preis, und er ist der kleinere -- eine Zeile, die man falsch zaehlt, ist
+// besser als eine, die man nicht sieht. Dieselbe Wahl trifft die
+// Shorts-Vorschau seit DT, aus demselben Grund.
+//
+// DIE KOMMENTARE HIER DRIN SIND KURZ, und das ist kein Geiz: alles zwischen
+// den Anfuehrungsstrichen unten geht bei jedem Aufruf ueber die Leitung und
+// steht im Browser eines Menschen. Die Begruendungen gehoeren hierher, vor die
+// Konstante, und nicht hinein.
+const LONGFORM_STIL = `
+main.lf { max-width: none; }
+.lf-ausgang { border: 1px solid #6b4a1f; background: #241d13; border-radius: 8px;
+  padding: 14px 18px; max-width: 100ch; }
+.lf-ausgang h2 { margin: 0 0 8px; font-size: 16px; color: #f0d3a6; }
+.lf-ausgang p { margin: 6px 0 0; color: #cbd2de; font-size: 14px; }
+.lf-ausgang p.fehler { color: #ff9a86; }
+.lf-abschnitt { border-top: 1px solid #2e333c; padding-top: 16px; }
+.lf-abschnitt h2 { margin: 0 0 6px; font-size: 16px; }
+.lf-abschnitt h3 { margin: 16px 0 6px; font-size: 13px; color: #9aa3b2;
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.lf-abschnitt > p { color: #9aa3b2; font-size: 13px; margin: 0 0 6px; max-width: 100ch; }
+/* Kein eigener Rollbalken, keine Hoehengrenze, umbrochen statt abgeschnitten.
+   Warum: siehe den Kommentar ueber dieser Konstante. */
+pre.lf-strom { margin: 0; padding: 12px 14px;
+  background: #101218; border: 1px solid #262b33; border-radius: 6px;
+  white-space: pre-wrap; word-break: break-word;
+  font: 12.5px/1.5 "Cascadia Mono", Consolas, monospace;
+  color: #c8d0dd; }
+.lf-ende { border-top: 2px solid #6b4a1f; margin-top: 8px; padding-top: 16px;
+  max-width: 100ch; }
+.lf-ende h2 { margin: 0 0 8px; font-size: 16px; color: #f0d3a6; }
+.lf-ende p { color: #b8c0cd; font-size: 13.5px; margin: 8px 0 0; }
+.lf-ende b { color: #e6e8ec; }
+.lf-ende code { background: #12141a; border: 1px solid #262b33; border-radius: 4px;
+  padding: 1px 5px; }
+`;
+
+// Das Skript der Longform-Ansicht. Es setzt Werte in den Baum und tut sonst
+// NICHTS: kein fetch, kein XMLHttpRequest, kein Ereignis, kein Zeitgeber,
+// keine Tastenbelegung. Es gibt in diesem Modus keine Route, an die es sich
+// wenden koennte, und es soll auch keine geben (freigabe-server.js,
+// ROUTEN_POST).
+const LONGFORM_SKRIPT = String.raw`
+const D = DATEN;
+
+const kel = (id) => document.getElementById(id);
+
+// DIE EINE STELLE, AN DER TEXT IN DEN BAUM GEHT -- und zwar wirklich die eine:
+// die Kopfzeilen, der Ausgang und die beiden Stroeme des Arbeiters gehen alle
+// hier hindurch. Zwei Stellen waeren zwei Gelegenheiten, an genau einer davon
+// zu kuerzen; beim Mutationslauf zu EL ist das aufgefallen, als eine
+// eingebaute Kuerzung nur die Kopfzeilen traf und der Text des Arbeiters heil
+// blieb -- der Test sah gruen aus und hatte den Weg gar nicht angesehen.
+//
+// textContent, nicht innerHTML: hier laufen Werte durch, die dieses Modul
+// nicht gebildet hat -- ein Aufnahmename, ein Pfad, und der ganze Text eines
+// fremden Programms. textContent maskiert selbst, und es gibt damit keine
+// Einsetzstelle, die man vergessen koennte. Der Text wird UNVERAENDERT
+// gesetzt: nichts wird geteilt, gesucht, ersetzt oder beschnitten.
+function setze(element, text) {
+  element.textContent = text;
+  return element;
+}
+
+setze(kel('kopf1'), 'Aufnahme ' + D.aufnahme + ' — Betriebsmodus Longform, Trockenlauf');
+setze(kel('kopf2'), 'Woertlich die Ausgabe von:  ' + D.befehl);
+
+setze(kel('ausgangKopf'), 'Der Arbeiter endete mit ' + D.ausgang.code +
+  (D.ausgang.name ? ' (' + D.ausgang.name + ')' : ''));
+setze(kel('ausgangBedeutung'), D.ausgang.bedeutung || '');
+setze(kel('ausgangZusatz'), D.ausgang.zusatz || '');
+if (D.ausgang.fehler) setze(kel('ausgangFehler'), D.ausgang.fehler).hidden = false;
+
+// Die beiden Stroeme, getrennt und jeder als EIN Stueck. Ein leerer Strom
+// bekommt keinen leeren Kasten: ein Rahmen ohne Inhalt sieht aus wie ein
+// Inhalt, den man nicht liest.
+let etwasDa = false;
+for (const [id, text] of [['stromAus', D.aus], ['stromErr', D.err]]) {
+  if (text === '') continue;
+  etwasDa = true;
+  kel(id).hidden = false;
+  setze(document.querySelector('#' + id + ' pre'), text);
+}
+if (!etwasDa) kel('keinStrom').hidden = false;
+`;
+
+// sitzung: { modus, aufnahme, token, trocken: {befehl, code, aus, err, fehler},
+//            ausgang: {code, name, bedeutung, zusatz, fehler} }
+//
+// Der Token geht NICHT in die Nutzlast. Die Shorts-Seite braucht ihn fuer ihre
+// fetch-Aufrufe und fuer die Videoadressen; diese Seite macht keinen einzigen
+// Aufruf, und ein Token, das im Baum liegt, ohne dass ihn jemand benutzt, ist
+// ein Wert, der herumliegt.
+function baueLongformSeite(sitzung) {
+  const t = sitzung.trocken;
+  const nutzlast = {
+    aufnahme: sitzung.aufnahme,
+    befehl: t.befehl,
+    ausgang: sitzung.ausgang,
+    aus: t.aus,
+    err: t.err,
+  };
+  return [
+    '<!doctype html>',
+    '<html lang="de"><head><meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    // ENGER ALS DIE SHORTS-SEITE, und zwar an zwei Stellen: kein media-src
+    // (diese Seite bindet kein Video ein) und kein connect-src (sie ruft
+    // nichts auf). Beide fallen damit auf default-src 'none'. Die Sicherung
+    // ist dieselbe wie drueben; sie ist nur um das gekuerzt, was hier nicht
+    // vorkommt -- eine Erlaubnis, die niemand braucht, wird nicht "zur
+    // Sicherheit" mitgeschleppt.
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
+      'style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; ' +
+      'form-action \'none\'; base-uri \'none\'">',
+    '<title>Longform-Trockenlauf</title>',
+    '<style>' + STIL + LONGFORM_STIL + '</style></head><body>',
+    '<header>',
+    '<h1>Longform &mdash; der Trockenlauf</h1>',
+    '<div class="kopfzeile" id="kopf1"></div>',
+    '<div class="kopfzeile" id="kopf2"></div>',
+    '<div class="kopfwerkzeug">',
+    '<span class="kopfzeile">Diese Seite schickt nichts an den Dienst zurueck &mdash; sie ' +
+      'hat weder Knopf noch Feld. Beenden: <kbd>Strg</kbd>+<kbd>C</kbd> in dem Terminal, ' +
+      'in dem der Dienst laeuft. Er gibt dabei seine Sperre frei.</span>',
+    '</div></header>',
+    '<main class="lf">',
+
+    // 1. DER AUSGANG, GANZ OBEN. Der Text darunter ist rund hundert Zeilen
+    //    lang; ein Satz dahinter ist ein Satz, den man ueberliest. Denselben
+    //    Grund nennt der Uploader fuer seinen Befund ("Am Ende, hinter neun
+    //    vollstaendigen Beschreibungen, waere er genau das, was er nicht sein
+    //    darf"), und er hat dort recht behalten.
+    '<section class="lf-ausgang">',
+    '<h2 id="ausgangKopf"></h2>',
+    '<p id="ausgangBedeutung"></p>',
+    '<p id="ausgangZusatz"></p>',
+    '<p class="fehler" id="ausgangFehler" hidden></p>',
+    '</section>',
+
+    // 2. DER TEXT DES ARBEITERS, ungekuerzt.
+    '<section class="lf-abschnitt">',
+    '<h2>Was der Trockenlauf ausgegeben hat</h2>',
+    '<p>Der Text unten ist <b>woertlich</b> seine Ausgabe. Diese Seite formuliert nichts ' +
+      'davon um, kuerzt nichts, klappt nichts weg und hebt nichts hervor &mdash; auch dann ' +
+      'nicht, wenn eine Zeile wichtiger aussieht als die anderen. Was der Arbeiter nicht ' +
+      'sagt, sagt diese Seite auch nicht; was er sagt, steht hier vollstaendig.</p>',
+    '<p>Er schreibt auf <b>zwei</b> Kanaele: die Vorschau auf stdout, wenn der Lauf ' +
+      'durchkommt, und auf stderr, wenn er mit einem Befund endet. Beide stehen hier ' +
+      'getrennt und in voller Laenge. Zusammengefuegt werden sie nicht &mdash; zwischen ' +
+      'zwei Stroemen gibt es keine Reihenfolge, und eine erfundene waere eine Behauptung ' +
+      'darueber, was zuerst geschah.</p>',
+    '<div id="stromAus" hidden><h3>stdout</h3><pre class="lf-strom"></pre></div>',
+    '<div id="stromErr" hidden><h3>stderr</h3><pre class="lf-strom"></pre></div>',
+    '<p id="keinStrom" hidden>Der Arbeiter hat auf beiden Kanaelen nichts geschrieben. Das ' +
+      'ist kein guter Zustand, sondern ein unerklaerter: ein Lauf, der endet, ohne etwas ' +
+      'zu sagen, ist im Terminal nachzusehen.</p>',
+    '</section>',
+
+    // 3. WO DIESE SEITE AUFHOERT. Sie steht als eigener Abschnitt und nicht als
+    //    Fussnote: dass hier nichts weitergeht, ist die wichtigste Auskunft
+    //    dieser Seite nach dem Ausgang oben.
+    '<section class="lf-ende">',
+    '<h2>Hier hoert diese Seite auf</h2>',
+    '<p><b>Was als Naechstes kaeme</b> (Vertrag 4, Schritte 8 bis 17): ein Knopf ' +
+      '&bdquo;Hochladen&ldquo; mit dem Dateinamen des Bildes darauf. Beim Klick schriebe ' +
+      'die Seite eine <b>Einmal-Ermaechtigung</b> und startete den Arbeiter mit ' +
+      '<code>--execute</code>. Der lieferte das Video privat ab, wartete bis zu 45 Minuten ' +
+      'auf die Verarbeitung, heftete das Thumbnail an und meldete sich zurueck. Danach ' +
+      'zeigte die Seite die <b>zweite</b> Frage, mit Titel und Kennung des Videos darauf, ' +
+      'und erst ein zweites Ja stellte es oeffentlich.</p>',
+    '<p><b>Nichts davon ist gebaut.</b> Nicht der Knopf, nicht die Ermaechtigung, nicht ' +
+      'die schreibende Haelfte des Arbeiters. Es gibt in diesem Betriebsmodus keine Route, ' +
+      'die etwas entgegennimmt, und diese Seite traegt kein Element, das eine ansprechen ' +
+      'koennte &mdash; kein Formular, keinen Knopf, kein Eingabefeld, keinen einzigen ' +
+      'Aufruf zurueck an den Dienst.</p>',
+    '<p><b>Warum hier kein Knopf steht, der schon einmal die Ermaechtigung schriebe.</b> ' +
+      'Eine Einmal-Ermaechtigung ohne Empfaenger liegt herum, bis jemand sie einloest. Sie ' +
+      'kommt mit dem Arbeiter, der sie einloest, und keinen Schritt frueher.</p>',
+    '<p>Was dieser Dienst in dieser Sitzung geschrieben hat: <b>eine</b> Datei, seine ' +
+      'eigene Sperre unter <code>data/freigaben/</code>. Sie wird beim Beenden wieder ' +
+      'geloescht. Sonst nichts &mdash; kein Plan, keine Freigabedatei, kein Gedaechtnis, ' +
+      'keine Ermaechtigung.</p>',
+    '</section>',
+    '</main>',
+    '<script>',
+    'const DATEN = ' + jsonFuerSkriptblock(nutzlast) + ';',
+    LONGFORM_SKRIPT,
+    '<\/script></body></html>',
+  ].join('\n');
+}
+
+module.exports = {
+  baueSeite, baueLongformSeite, jsonFuerSkriptblock, SKRIPTBLOCK_MASKEN,
+};

@@ -1461,8 +1461,23 @@ test('EI: es gibt EINE Sperrfunktion und EINEN Sperrpfad, nicht je Modus einen',
     "genau ein openSync(pfad, 'wx') -- eine Stelle, an der eine Sperre entsteht");
   assert.equal((NURCODE.match(/\.sperre\.json/g) || []).length, 1,
     'die Endung steht genau einmal im Code -- in sperrPfad');
-  assert.ok(!/function .*[Ll]ongform.*\(/.test(NURCODE.replace(/meldeLongformOhneSeite/g, '')),
-    'es gibt keine eigene Longform-Fassung einer dieser Funktionen');
+  // EL: DIESE ZUSAGE IST GENAUER GEWORDEN, NICHT WEICHER. Bis EL stand hier
+  // "keine Funktion mit 'longform' im Namen", mit einer handgepflegten
+  // Ausnahme fuer die eine, die es doch gab. Das war zu breit gefasst: der
+  // Longform-Modus hat seit EL eine Reihe eigener Funktionen (sein
+  // Trockenlauf, seine Sitzung, sein Start), und keine davon ist eine
+  // Sperrfunktion. Die Zusage des Vertrags (2.13) betrifft die SPERRE: sie
+  // entsteht ueber dieselbe Formpruefung, es gibt keine zweite Stelle, an der
+  // ein Aufnahmename zu einem Dateinamen wird. Genau das wird jetzt geprueft,
+  // und die Ausnahmeliste faellt weg -- eine Zusage mit einer gepflegten
+  // Ausnahmeliste ist beim naechsten Nachtrag wieder falsch.
+  const sperrig = [...NURCODE.matchAll(/function\s+(\w+)\s*\(/g)].map((m) => m[1])
+    .filter((n) => /sperr/i.test(n));
+  for (const name of sperrig) {
+    assert.ok(!/longform/i.test(name),
+      'es gibt eine eigene Longform-Fassung einer Sperrfunktion: ' + name);
+  }
+  assert.ok(sperrig.length > 0, 'es wurde ueberhaupt eine Sperrfunktion gefunden');
 });
 
 test('EI: der Modus geht so hart in den Dateinamen wie der Aufnahmename', () => {
@@ -1559,24 +1574,41 @@ test('EI: ein unbekannter Modus endet mit 2, bevor etwas angefasst wird', () => 
   assert.ok(!/Sperre/.test(r.aus));
 });
 
-test('EI: der Longform-Modus zeigt keine Shorts-Seite, sondern sagt, was fehlt', () => {
-  // Der Dienst KENNT den Modus; die Ansicht dahinter ist nicht gebaut. Ein
-  // Modus, der stattdessen die Shorts-Seite ausliefert, waere schlimmer als
-  // einer, der sagt, dass er noch nichts zu zeigen hat.
-  const text = S.meldeLongformOhneSeite(AUFNAHME, '/w/data/freigaben/x.longform.sperre.json');
-  assert.match(text, /der Longform-Modus hat noch keine Seite/);
-  assert.ok(text.includes(AUFNAHME));
-  assert.match(text, /Es wurde nichts gelesen, nichts hochgeladen und keine Seite ausgeliefert/);
+test('EL: der Longform-Modus zeigt seine EIGENE Seite -- nie die der Shorts', () => {
+  // EL: DIESE ZUSAGE HAT SICH GEAENDERT, UND DIE ALTE IST WEG STATT
+  // AUFGEWEICHT. Bis EL stand hier meldeLongformOhneSeite() und der Satz "der
+  // Longform-Modus hat noch keine Seite". Er hat jetzt eine; die Meldung ist
+  // ersatzlos entfernt, nicht danebengestellt. Was UNVERAENDERT gilt: er
+  // bekommt nie die Shorts-Seite untergeschoben, und sein Zweig liegt hinter
+  // der Sperre und vor dem Leser.
+  assert.ok(!('meldeLongformOhneSeite' in S),
+    'die alte Meldung ist noch exportiert -- ihr Satz stimmt seit EL nicht mehr');
+  assert.ok(!NURCODE.includes('meldeLongformOhneSeite'),
+    'die alte Meldung steht noch im Code');
 
-  // Und im Ablauf: er steht NACH der Sperre und VOR dem Leser, und er geht ueber
-  // abbruch() -- also wird die Sperre wieder frei.
+  // Zwei Ansichten, zwei Funktionen. baueSeite() baut die Shorts-Seite und
+  // kennt die zweite nicht einmal dem Namen nach.
+  assert.equal(typeof SEITE.baueSeite, 'function');
+  assert.equal(typeof SEITE.baueLongformSeite, 'function');
+  const shortsRumpf = SEITENTEXT.slice(SEITENTEXT.indexOf('function baueSeite(sitzung) {'),
+    SEITENTEXT.indexOf('// ===='));
+  assert.ok(shortsRumpf.length > 500, 'der Rumpf von baueSeite wurde gefunden');
+  assert.ok(!/[Ll]ongform/.test(shortsRumpf),
+    'baueSeite kennt die Longform-Ansicht -- dann haengen die beiden aneinander');
+
+  // Welche der beiden gilt, entscheidet EINE Zeile in baueDienst, am Modus
+  // der Sitzung. Die Seite selbst entscheidet es nicht -- sie kennt diesen
+  // Dienst nicht.
+  assert.match(NURCODE,
+    /modus === MODUS_LONGFORM \? baueLongformSeite\(sitzung\) : baueSeite\(sitzung\)/);
+
+  // Und im Ablauf: der Zweig steht NACH der Sperre und VOR dem Leser.
   const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
-  const wo = (s) => mainRumpf.indexOf(s);
-  assert.ok(wo('meldeLongformOhneSeite(aufnahme, sperre.pfad)') > wo('nimmSperre({'),
-    'der Longform-Ausgang liegt hinter der Sperre');
-  assert.ok(wo('meldeLongformOhneSeite(aufnahme, sperre.pfad)') < wo('ruftLeser(aufnahme, wurzel)'),
+  const wo = (x) => mainRumpf.indexOf(x);
+  assert.ok(wo('starteLongform({') > wo('nimmSperre({'),
+    'der Longform-Zweig liegt hinter der Sperre');
+  assert.ok(wo('starteLongform({') < wo('ruftLeser(aufnahme, wurzel)'),
     'und vor dem Leser -- der laeuft im Longform-Modus nicht');
-  assert.match(mainRumpf, /abbruch\(meldeLongformOhneSeite\(aufnahme, sperre\.pfad\)\);/);
 });
 
 // ---------------------------------------------------------------------------
@@ -1663,14 +1695,30 @@ test('DJb: der Browser wird nur aus main() geoeffnet, nie aus baueDienst', () =>
   // Ein npm test, das Browserfenster oeffnet, waere schlimmer als das
   // Kopieren der Adresse. Die Tests fahren den Dienst ueber baueDienst und
   // erreichen oeffneImBrowser damit ueberhaupt nicht.
-  const aufrufe = [...NURCODE.matchAll(/oeffneImBrowser\(/g)];
-  assert.equal(aufrufe.length, 2, 'genau eine Definition und ein Aufruf');
-  const mainRumpf = NURCODE.slice(NURCODE.indexOf('function main()'));
-  assert.ok(mainRumpf.includes('oeffneImBrowser(adresse)'), 'der Aufruf steht in main()');
-  const vorMain = NURCODE.slice(0, NURCODE.indexOf('function main()'));
-  assert.ok(!/oeffneImBrowser\(adresse\)/.test(vorMain));
-  // Und der Schalter steht davor.
-  assert.ok(mainRumpf.indexOf('if (keinBrowser)') < mainRumpf.indexOf('oeffneImBrowser(adresse)'));
+  // EL: aus einem Aufruf sind zwei geworden -- je Betriebsmodus einer, beide
+  // im Startweg. Die Zusage haengt NICHT an ihrer Zahl (die war schon einmal
+  // eine andere), sondern daran, WO sie stehen duerfen: im Startweg, hinter
+  // dem Schalter --no-browser, und niemals in baueDienst. Ein npm test, das
+  // Browserfenster oeffnet, waere schlimmer als das Kopieren der Adresse; die
+  // Tests fahren den Dienst ueber baueDienst und erreichen den Aufruf damit
+  // ueberhaupt nicht.
+  const STARTWEGE = ['function starteLongform(', 'function main()'];
+  const dienstRumpf = NURCODE.slice(NURCODE.indexOf('function baueDienst(sitzung) {'),
+    NURCODE.indexOf('function sitzungsEintraege('));
+  assert.ok(dienstRumpf.length > 1000, 'der Rumpf von baueDienst wurde gefunden');
+  assert.ok(!/oeffneImBrowser/.test(dienstRumpf),
+    'baueDienst oeffnet einen Browser -- dann tut es auch ein npm test');
+  for (const kopf of STARTWEGE) {
+    const von = NURCODE.indexOf(kopf);
+    assert.ok(von >= 0, kopf + ' gefunden');
+    const bis = NURCODE.indexOf('\n}\n', von);
+    const rumpf = NURCODE.slice(von, bis);
+    assert.ok(rumpf.includes('oeffneImBrowser(adresse)'), kopf + ' oeffnet die Seite');
+    // Und der Schalter steht davor.
+    assert.ok(rumpf.indexOf('if (keinBrowser)') >= 0 &&
+      rumpf.indexOf('if (keinBrowser)') < rumpf.indexOf('oeffneImBrowser(adresse)'),
+      kopf + ': --no-browser wird nicht vor dem Oeffnen geprueft');
+  }
 });
 
 test('DJb: ein gescheitertes Oeffnen ist kein Startfehler', () => {
@@ -1712,6 +1760,7 @@ test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
     'ruftPlaner',           // DR, Schritt 1: der Planer
     'ruftUploaderTrocken',  // DR, Schritt 1: der Trockenlauf
     'starteUploaderLauf',   // DR, Schritt 3: der scharfe Uploader
+    'ruftLongformTrocken',  // EL: die EINGABE des Longform-Modus, beim Start
   ];
   assert.equal(stellen.length, heimat.length,
     stellen.map((x) => x.zeile + ': ' + x.text).join(' | '));
@@ -1877,7 +1926,15 @@ test('DNa: die Rueckgabewerte kommen aus der Tabelle im Leser', () => {
   // Keine eigene Zahl mehr im Quelltext.
   assert.ok(!/const EXIT_[A-Z_]+\s*=\s*\d+\s*;/.test(NURCODE),
     'der Dienst vergibt eine Exit-Zahl selbst');
-  assert.match(NURCODE, /const \{ EXIT \} = require\('\.\/uebergabe-leser'\)/);
+  // EL: EXIT_CODES kommt aus derselben Zeile mit -- die Longform-Ansicht nennt
+  // die BEDEUTUNG des Rueckgabewerts, und die steht in derselben Tabelle wie
+  // die Zahl. Zwei Tabellen fuer Zahl und Bedeutung waeren zwei Stellen fuer
+  // dieselbe Auskunft.
+  assert.match(NURCODE, /const \{ EXIT, EXIT_CODES \} = require\('\.\/uebergabe-leser'\)/);
+  for (const wert of S.LONGFORM_CODES_MIT_SEITE) {
+    assert.ok(L.EXIT_CODES.some((c) => c.wert === wert),
+      'der Wert ' + wert + ' steht in keiner Zeile der Tabelle');
+  }
 });
 
 test('DNa: die zugesagten Werte 0, 1 und 2 stehen unveraendert', () => {
@@ -1958,8 +2015,17 @@ test('EK: kein anderer Ausgang des Dienstes traegt BEIDE Wortteile, an denen der
   const andere = [
     ['pruefeModusVerbindung (--wurzel= im Longform-Modus)',
       S.pruefeModusVerbindung(S.MODUS_LONGFORM, ['node', 'x', '--wurzel=Q'])],
-    ['meldeLongformOhneSeite',
-      S.meldeLongformOhneSeite(AUFNAHME, path.join('data', 'freigaben', 'x.json'))],
+    ['meldeLongformOhneVorschau',
+      S.meldeLongformOhneVorschau(AUFNAHME, path.join('data', 'freigaben', 'x.json'),
+        { befehl: 'node x --aufnahme="y"', code: 2, fehler: null,
+          aus: '', err: 'Abbruch: der Schluessel fehlt in der .env.' })],
+    // EL: und derselbe Ausgang mit einem Arbeiter, der sich gar nicht erst
+    // starten liess. Er reicht dann eine fremde Fehlermeldung durch, und auch
+    // die darf die Gegenseite nicht als laufende Sitzung deuten.
+    ['meldeLongformOhneVorschau (nicht startbar)',
+      S.meldeLongformOhneVorschau(AUFNAHME, path.join('data', 'freigaben', 'x.json'),
+        { befehl: 'node x --aufnahme="y"', code: null, fehler: 'spawn ENOENT',
+          aus: '', err: '' })],
     ['meldeBelegtenPort', S.meldeBelegtenPort(8791)],
   ];
 

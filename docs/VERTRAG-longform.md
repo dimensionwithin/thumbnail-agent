@@ -42,6 +42,32 @@ und Fassung 10 streicht die Behauptung, statt sie einzufordern. Es ist eine
 sie wegzubauen, steht in 2.13: ein Kindprozess, der am Ende eines Laufs haengt
 statt an einem Klick, und ein zweiter Weg, auf dem die Seite entsteht.
 
+**Dazu, in einem eigenen Commit und ohne dass sich eine Zusage aendert: die
+Vermerke, die einen Zustand von damals behaupten.** Diese Datei trug an sieben
+Stellen Hinweise darauf, wann und woran etwas geprueft oder gezaehlt wurde.
+**Die Unterscheidung, nach der entschieden wurde:** ein Vermerk, der die
+**Herkunft** einer Zusage oder einer Begruendung traegt -- wo etwas gemessen,
+belegt oder entschieden wurde --, verweist auf einen abgeschlossenen Vorgang
+und behauptet ueber heute nichts; er wird nicht falsch, er wird nur aelter, und
+er bleibt. Ein Vermerk, der einen **Zustand** von damals als den heutigen
+ausgibt -- "so ist der Quelltext", "so steht der Ordner", "das ist HEAD" --,
+muesste bei jeder Aenderung von Hand mitwandern; er wandert irgendwann nicht
+mit und sagt dem naechsten Leser dann etwas Unwahres, ohne dass ihn jemand
+angefasst hat. Zwei dieser Sorte sind schon einzeln entfernt worden, aus
+demselben Grund: das Commit-Kuerzel im Kopf (Fassung 6) und der datierte Satz
+ueber die `.env`-Schluessel in 3.4 (Fassung 7). **Gestrichen sind jetzt:** der
+Pruefvermerk "in ED F4 gegen den Quelltext nachgeprueft" ueber der
+Zustandstabelle in 2.7 -- die Tabelle hat sich seither geaendert, die Pruefung
+kann sie nie gesehen haben --, das HEAD-Kuerzel neben "seit EC" ebendort, die
+gezaehlte Momentaufnahme des Export-Ordners in 2.7 (die Regel, wann Rang 1
+erreichbar wird, bleibt) und der erledigte Uebergang "diese Fassung liegt im
+Berichteordner nur bis zur Durchsicht" am Schluss. **Richtiggestellt statt
+gestrichen sind:** drei Stellen, an denen dieselbe Messung eine Begruendung
+traegt; dort ist aus "heute liegen" ein "damals lagen" geworden, damit die
+Begruendung steht und die Zeitbehauptung faellt. **Sie werden nicht weiter
+einzeln eingesammelt** -- die Unterscheidung oben gilt ab jetzt fuer die ganze
+Datei.
+
 **Keine weitere Zusage der Abschnitte 1 bis 8 aendert sich** -- die Rangfolge,
 das Fenster, die Formatregel, die Sperre, die Tag-Regel und die enge Zusage aus
 2.5 bleiben, wie sie waren, und die vier offenen Punkte aus Abschnitt 11
@@ -524,7 +550,7 @@ ist es gleichgueltig, weil beide Ausgaenge im Gedaechtnis stehen.
 ### 2.7 Das Thumbnail kommt aus dem Beipackzettel
 
 Seit DZ legt der Thumbnail-Dienst beim Export neben jedes Bild eine Datei
-gleichen Namens mit der Endung `.json`. Seit EC (HEAD `de2da06`) traegt sie
+gleichen Namens mit der Endung `.json`. Seit EC traegt sie
 zwei Felder mehr. Stand `schema_version: 1`:
 
 | Feld | Inhalt | Wert kann fehlen |
@@ -543,7 +569,7 @@ zwei Felder mehr. Stand `schema_version: 1`:
 | `aufnahme_herkunft` | einer von `bestaetigt`, `unbestaetigt`, `leer` (unten) | **fehlt** in jedem Zettel von vor EC; ist er da, ist er einer der drei Werte |
 
 **Die vier Zustaende von `aufnahme_herkunft`**, so gebaut in
-`thumbnail_service.py` und in ED F4 gegen den Quelltext nachgeprueft:
+`thumbnail_service.py`:
 
 | Zustand | Bedeutung |
 |---|---|
@@ -617,7 +643,7 @@ noch gilt. Genau dagegen ist das Feld gebaut, und deshalb verlangt Rang 1
 unten `bestaetigt` und nicht bloss ein vorhandenes Feld.
 
 **`herkunft: leer` ist kein Fehler, sondern der Normalfall.** ED F4 hat
-gemessen: beide Zettel, die heute im Export-Ordner liegen, tragen `leer`. Der
+gemessen: beide Zettel, die damals im Export-Ordner lagen, trugen `leer`. Der
 Longform-Weg fragt dann (Vorschlag nach Rangfolge), statt abzubrechen.
 **Grund:** die richtige Aufnahme kann zur Exportzeit noch gar nicht
 existieren (EC, Befund 1: das Bild zu EP. 17 entstand zwei Minuten vor
@@ -708,7 +734,8 @@ gedeutet; der Mensch liest ihn und entscheidet. **Grund:** die Alternative,
 Bilder ohne Zettel wegen eines Namens auszuschliessen, wuerde EP. 17 und
 EP. 18 (beide ohne Zettel) genauso treffen wie ein Livestream-Bild, sobald
 jemand anders benennt; und die Alternative, sie alle auszuschliessen, machte
-Rang 3 leer, obwohl er heute der einzige Weg zu sieben der neun Bilder ist.
+Rang 3 leer, obwohl er bei den neun Bildern, die ED F5 vorfand, der einzige
+Weg zu sieben von ihnen war.
 Gemessen an den vier Renders aus ED F5 (mit der Formatregel an Rang 2 und
 ohne sie an Rang 3): 31.08. ein Kandidat, 02.09. ein Kandidat, 03.09. ein
 Kandidat (Rang 2b; der Inner-Circle-Zettel faellt am Format), 29.08. drei
@@ -822,12 +849,13 @@ irgendein Video hochgeht; dieselbe Regel gilt hier. Ein Video ohne Thumbnail
 hochzuladen und dann festzustellen, dass keines da ist, waere ein Upload, den
 niemand wollte.
 
-**Stand des Export-Ordners, gemessen in ED F4:** neun Bilder, zwei Zettel,
-beide mit `leer`, keiner mit `bestaetigt` oder `unbestaetigt`. Rang 1 ist
-damit heute fuer keine Aufnahme erreichbar. Er wird es erst, wenn ein Bild
-nach dem Aufnahmebeginn exportiert und die Aufnahme im Compositor angeklickt
-wird; einen Zettel nachtraeglich zu ergaenzen kann der Compositor nicht (EC,
-offen 3; siehe 9).
+**Wann Rang 1 ueberhaupt erreichbar ist.** Erst, wenn ein Bild nach dem
+Aufnahmebeginn exportiert und die Aufnahme im Compositor angeklickt wird;
+einen Zettel nachtraeglich zu ergaenzen kann der Compositor nicht (EC, offen
+3; siehe 9). Wie viele Zettel im Export-Ordner das heute erfuellen, steht
+nicht hier -- eine gezaehlte Momentaufnahme veraltet, waehrend der Vertrag
+gilt. Wer den Stand braucht, laesst den Trockenlauf laufen: er nennt jeden
+Zettel mit seinem Ausgang.
 
 ### 2.8 Der Titel kommt aus dem Beipackzettel, und nur von dort
 
@@ -1885,9 +1913,9 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   (Zelle 3) beziehungsweise "kein Kandidat" (Zellen 12, 27, 30, 36). Ob
   der Compositor jemals ohne Format exportiert, hat niemand gemessen.
   Damit steht eine Entscheidung auf einem ungemessenen Zustand.
-- **Ob die Vorschau mit 37 Zettel-Ausgaengen lesbar bleibt.** Heute liegen
-  zwei Zettel im Ordner; bei fuenfzig ist die Liste "genannt, kein Kandidat"
-  lang. Die Zaehlregel fuer Zettel ausserhalb des Fensters ist der Versuch,
+- **Ob die Vorschau mit 37 Zettel-Ausgaengen lesbar bleibt.** Bei der Messung
+  in ED F4 lagen zwei Zettel im Ordner; bei fuenfzig ist die Liste "genannt,
+  kein Kandidat" lang. Die Zaehlregel fuer Zettel ausserhalb des Fensters ist der Versuch,
   das zu begrenzen; gemessen ist sie nicht.
 - **Die Groessenwarnung an der echten Verteilung.** Mit den vielen kleinen
   Probelaeufen vom 09.08. im Ordner liegt das Mittel der uebrigen Dateien
@@ -1975,9 +2003,9 @@ aendert, aendert den Vertrag im selben Commit.
 
 **Der Berichteordner ausserhalb der Repos ist kein Projektordner.** Er steht
 in keinem Repo, wird nicht versioniert und nicht gesichert; er wird nicht
-mitgezogen, wenn jemand die Projekte auf einen anderen Rechner holt. Diese
-Fassung liegt dort nur bis zur Durchsicht; danach gehoert sie unter `docs/`,
-und die Fassung im Berichteordner ist die Kopie, nicht das Original.
+mitgezogen, wenn jemand die Projekte auf einen anderen Rechner holt. Das
+Original dieser Datei liegt darum unter `docs/`; was im Berichteordner liegen
+mag, ist die Kopie.
 
 **Der Bau laesst sich an dieser Fassung messen.** Was in den Abschnitten 1 bis
 8 steht, gilt als zugesagt. Weicht der Bau davon ab, ist das ein Fehler des

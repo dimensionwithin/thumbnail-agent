@@ -1,5 +1,45 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 8 (ER, 04.09.2026).** Drei Stellen -- und anders als bei den
+Fassungen 5, 6 und 7 aendert sich diesmal **eine Zusage der Abschnitte 1 bis
+8**. Es ist 2.12, sie aendert sich an zwei Punkten, und sie wird an beiden
+**strenger**: der Vertrag erlaubt danach weniger als vorher, an keiner Stelle
+mehr. Ein Bau, der gegen Fassung 7 geprueft wurde, wird davon nicht falsch; er
+ist an zwei Stellen enger gefuehrt.
+
+**Erstens: `--execute` ohne `--bestaetigt-durch=` endet mit 2, nicht als
+stiller Trockenlauf.** Fassung 7 sagte woertlich das Gegenteil ("Ohne
+`--bestaetigt-durch=` laeuft nur der Trockenlauf"). Der Bau (EP) hat
+abweichend gebaut und es gemeldet, und der Bau hat recht. **Grund:** ein
+`--execute`, das angenommen wird und stillschweigend nichts tut, sieht im
+Fehlerfall genauso aus wie im Erfolgsfall -- wer es tippt, meint es und glaubt
+danach, es habe gewirkt. Das Bestiarium dieses Projekts fuehrt zwei Argumente
+dieser Art -- `--dry-run`, das an zwei Stellen "nimm Beispieldaten" hiess
+statt "schreibt nicht" und schrieb, und `unbekannteArgumente`, dem freie
+Argumente unsichtbar waren, ausgerechnet in `publish.js` und `restore.js` --
+und beide haben zugeschlagen. Die Zusage ist damit nicht aufgeweicht, sondern
+verschaerft: ohne Ermaechtigung wird auf keinem Weg etwas hochgeladen, und es
+gibt auch keinen Lauf mehr, der aussieht, als haette er beinahe.
+
+**Zweitens: der "Rueckfall Rang 3" als moegliche Bindung einer Ermaechtigung
+ist gestrichen.** Er war keiner. Ein Rang-3-Lauf hat keinen Zettel, ohne
+Zettel gibt es keinen Titel (2.8), und Abschnitt 4 Schritt 5 bricht dort ab,
+bevor ueberhaupt ein Knopf erscheint -- die Form liess sich nie ausstellen und
+nie einloesen. An ihrer Stelle steht eine **Sperre mit eigener Meldung**. Ein
+Zweig, der heute nie laufen kann, ist ungeprueftes Programm, das wie Sorgfalt
+aussieht; genau das hat EK an seinem eigenen Nachbau gefunden. Der Wortlaut
+wird nachgezogen, weil der Bau es schon so haelt.
+
+**Drittens, in Abschnitt 10 und damit ohne Zusage:** ob die Abonnenten eine
+Benachrichtigung bekommen, wenn ein Video erst privat hochgeladen und spaeter
+oeffentlich gestellt wird. 2.14 bleibt dabei Wort fuer Wort, wie es war -- die
+Frage ist nicht, was der Aufruf mitschickt, sondern was daraus folgt.
+
+**Keine weitere Zusage der Abschnitte 1 bis 8 aendert sich** -- die Rangfolge,
+das Fenster, die Formatregel, die Sperre und die Tag-Regel bleiben, wie sie
+waren, und die vier offenen Punkte aus Abschnitt 11 bleiben vier. Wie diese
+Fassung entstanden ist, steht im Bericht ER.
+
 **Fassung 7 (EO, 04.09.2026).** Zwei Stellen, und nur diese zwei; beide sind
 Klarstellungen. Erstens sagte 3.3, keine Bilddatei werde geoeffnet, bevor ein
 Mensch bestaetigt hat. Der Satz nennt jetzt, fuer wen er gilt: fuer den
@@ -839,7 +879,7 @@ Rueckfall. Zwei Ermaechtigungen, nach dem Muster aus DR, getrennt:
 |---|---|---|
 | ermaechtigt zu | Aufruf 1 (Upload), das Warten, Aufruf 2 (Thumbnail), das Zuruecklesen | Aufruf 3 (oeffentlich stellen) |
 | geschrieben von | der Freigabeseite beim Klick auf "Hochladen" | der Freigabeseite beim Klick auf "Veroeffentlichen" |
-| gebunden an | Aufnahme; **sha256 der Videodatei**; Dateiname und sha256 des Bildes, das der Mensch gesehen hat; Zettel-Dateiname und Rang, oder "Rueckfall Rang 3"; Kanal | Aufnahme; **sha256 der Videodatei**; videoId aus dem Gedaechtnis; Kanal |
+| gebunden an | Aufnahme; **sha256 der Videodatei**; Dateiname und sha256 des Bildes, das der Mensch gesehen hat; Zettel-Dateiname und Rang -- 1, 2a oder 2b, siehe unten; Kanal | Aufnahme; **sha256 der Videodatei**; videoId aus dem Gedaechtnis; Kanal |
 | Zweck im Feld | ein Feld nennt den Zweck; eine Ermaechtigung fuer den Upload gilt nie fuer das Oeffentlichstellen, und umgekehrt | |
 | gueltig | zwei Minuten ab Erstellung; nicht aus der Zukunft | zwei Minuten; nicht aus der Zukunft |
 | einmalig | Zufallswert, 32 Bytes; verbraucht wird vor dem Aufruf, Liste der verbrauchten wie bei DR | ebenso |
@@ -860,8 +900,37 @@ Sicht bezeugte weniger als der Klick.
 
 Fehlt die Ermaechtigung, ist sie abgelaufen, verbraucht, fuer eine andere
 Aufnahme, eine andere sha256, einen anderen Zweck oder einen anderen Kanal,
-macht der Arbeiter den Aufruf nicht und endet mit 1, mit dem Grund. Ohne
-`--bestaetigt-durch=` laeuft nur der Trockenlauf.
+macht der Arbeiter den Aufruf nicht und endet mit 1, mit dem Grund.
+
+**Rang 3 traegt keine Ermaechtigung, und was dort steht, ist eine Sperre und
+kein Rueckfall.** Einloesbar sind die Raenge 1, 2a und 2b; kommt eine
+Ermaechtigung mit Rang 3, wird sie abgewiesen, und die Meldung sagt, dass 3
+ein bekannter Rang ist, der nur nicht einloesbar ist -- "unbekannter Rang"
+waere hier die falsche Auskunft. Bis Fassung 7 nannte die Zeile "gebunden an"
+oben als moegliche Bindung "Rueckfall Rang 3". Diese Form gibt es nicht: ein
+Rang-3-Lauf hat keinen Zettel, ohne Zettel gibt es keinen Titel (2.8), und
+Abschnitt 4 Schritt 5 bricht dort ab, bevor ein Knopf erscheint -- sie liess
+sich nie ausstellen und nie einloesen. **Grund, sie nicht trotzdem zu bauen:**
+ein Zweig, der heute nie laufen kann, ist ungeprueftes Programm, das wie
+Sorgfalt aussieht. Wird Rang 3 eines Tages ein Weg (11, Punkt 4), ist die
+Liste der einloesbaren Raenge die eine Stelle, an der das steht.
+
+**`--execute` ohne `--bestaetigt-durch=` endet mit 2**, und zwar bevor
+irgendetwas gelesen wird. Es wird **kein** stiller Trockenlauf daraus. Bis
+Fassung 7 stand hier das Gegenteil ("Ohne `--bestaetigt-durch=` laeuft nur der
+Trockenlauf"); der Bau (EP) hat abweichend gebaut und es gemeldet, und der Bau
+hat recht. **Grund:** ein `--execute`, das angenommen wird und stillschweigend
+nichts tut, sieht im Fehlerfall genauso aus wie im Erfolgsfall; wer es tippt,
+meint es. Das Bestiarium dieses Projekts fuehrt zwei Argumente dieser Art --
+`--dry-run`, das an zwei Stellen "nimm Beispieldaten" hiess statt "schreibt
+nicht" und schrieb, und `unbekannteArgumente`, dem freie Argumente unsichtbar
+waren, ausgerechnet in den beiden Skripten, die auf YouTube schreiben -- und
+beide haben zugeschlagen. Die Zusage wird damit nicht aufgeweicht, sondern
+verschaerft: ohne Ermaechtigung wird auf keinem Weg etwas hochgeladen. Der
+Trockenlauf bleibt, was er war -- er laeuft, wenn man **keines** der beiden
+Argumente mitgibt. `--bestaetigt-durch=` ohne `--execute` endet ebenso mit 2
+(3.1): die Ermaechtigung wuerde geprueft und verbraucht, und dann geschaehe
+nichts damit.
 
 ### 2.13 Kein eigener Dienst: die Freigabeseite bekommt einen zweiten Betriebsmodus
 
@@ -997,7 +1066,7 @@ stehen):
 |---|---|
 | `--aufnahme=<name>` | zwingend |
 | `--zettel=<dateiname>` | der Beipackzettel, wenn mehrere in Frage kamen (2.7); nur der Dateiname, kein Pfad; die Datei muss im Export-Ordner liegen und einer der Kandidaten sein |
-| `--bestaetigt-durch=<pfad>` | die Ermaechtigung (2.12); ohne sie Trockenlauf |
+| `--bestaetigt-durch=<pfad>` | die Ermaechtigung (2.12). Nur zusammen mit `--execute`: jedes der beiden ohne das andere endet mit **2**, bevor etwas gelesen wird. Der Trockenlauf laeuft ohne beide. |
 | `--execute` | wie beim Shorts-Uploader: ohne `--execute` kein Netz, nicht einmal `googleapis` geladen |
 
 Der Arbeiter kennt **kein** Wurzelargument. Die Videodatei kommt aus
@@ -1632,6 +1701,27 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   zweiten Rechner in einer anderen Zone koennte den Tag verschieben. Was das
   messen wuerde: ein Aufnahmename gegen die mtime der Rohaufnahme desselben
   Laufs, an einem Lauf nach 22:00 Ortszeit.
+- **Ob die Abonnenten benachrichtigt werden, wenn ein Video erst privat
+  hochgeladen und spaeter oeffentlich gestellt wird.** Was dokumentiert ist:
+  `notifySubscribers` ist ein Parameter von `videos.insert` und **nur** von
+  dort -- der Aufruf aus 2.5, der die Sichtbarkeit wechselt, kennt ihn nicht;
+  die Voreinstellung ist "benachrichtigen", und 2.14 setzt ihn ausdruecklich
+  darauf. Googles Beschreibung der Benachrichtigungen kennt als Ausloeser das
+  Hochladen sowie Aenderungen an Titel und Beschreibung. **Ob ein Wechsel der
+  Sichtbarkeit einen ausloest, steht nirgends.** Damit ist offen, was auf
+  genau diesem Weg geschieht: hochgeladen wird auf `private` (2.3), und zu dem
+  Zeitpunkt hat kein Abonnent etwas zu sehen; oeffentlich wird das Video erst
+  in Aufruf 3, fuer den es den Parameter nicht gibt. Es sind drei Ausgaenge
+  denkbar, und keiner ist gemessen: die Glocke laeutet beim Upload ins Leere,
+  sie laeutet beim Wechsel, oder sie laeutet gar nicht. **Warum das gemessen
+  werden muss und nicht nebenbei auffallen darf:** Joshua ist die Glocke
+  wichtig -- ein Langformvideo ist genau das, wofuer Abonnenten benachrichtigt
+  werden wollen (2.14). Faellt die Benachrichtigung auf diesem Weg aus, ist
+  das kein Schoenheitsfehler, sondern der Verlust dessen, wofuer 2.14
+  ueberhaupt entschieden wurde -- und er faellt an einem Video auf, das dann
+  schon oeffentlich ist. Was das messen wuerde: der erste Probelauf, mit einem
+  Video, und der Blick auf die Benachrichtigung **vor** dem zweiten Video,
+  nicht danach.
 
 ---
 

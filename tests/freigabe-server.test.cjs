@@ -1888,3 +1888,147 @@ test('DNa: die zugesagten Werte 0, 1 und 2 stehen unveraendert', () => {
   assert.equal(S.EXIT_ABBRUCH, 1);
   assert.equal(S.EXIT_AUFRUFFEHLER, 2);
 });
+
+// ---------------------------------------------------------------------------
+// EK: ZWEI ZUSTAENDE, EINE DEUTUNG -- UEBER DIE REPOGRENZE HINWEG
+// ---------------------------------------------------------------------------
+
+test('EK: kein anderer Ausgang des Dienstes traegt BEIDE Wortteile, an denen der ' +
+  'Knopf der Gegenseite die Sperrmeldung erkennt', () => {
+  // WAS DIE GEGENSEITE TUT, gemessen in EJa (Cutter-Repo,
+  // src/matrix_auto_cutter/shorts/freigabe_aufruf.py, Zeilen 129 und 303-318):
+  // sie faltet die GESAMTE gesammelte stderr-Meldung klein, ersetzt die
+  // Umlaute, und prueft dann, ob BEIDE Bruchstuecke "laeuft bereits" und
+  // "freigabesitzung" irgendwo darin vorkommen. Keine Zeilennummern, keine
+  // Positionen, kein Vorspann -- eine reine Teilstring-Suche ueber den ganzen
+  // Text. Gefragt wird das nur bei Rueckgabewert 1.
+  //
+  // DARAUS FOLGT DIE ZUSAGE, DIE HIER FESTGENAGELT WIRD: traegt IRGENDEIN
+  // anderer Ausgang beide Bruchstuecke, deutet der Knopf ihn als "die Sitzung
+  // ist schon offen" und meldet keinen Fehler. Zwei Zustaende, eine Deutung --
+  // der Umriss jedes Fehlers dieser Reihe, diesmal nicht in einer Datei,
+  // sondern zwischen zwei Repos.
+  //
+  // Das andere Repo hat davon keinen Test; dieser hier ist der einzige Ort, an
+  // dem die Zusage ueberhaupt geprueft werden kann.
+
+  // Die Normalisierung der Gegenseite, nachgebaut.
+  const flach = (t) => String(t).toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue').replace(/ß/g, 'ss');
+  const TEILE = ['laeuft bereits', 'freigabesitzung'];
+  const gedeutet = (t) => TEILE.every((teil) => flach(t).includes(teil));
+
+  // --- 1. Die Sperrmeldung MUSS gedeutet werden, in jedem Zweig und Modus ---
+  const ordner = wegwerfordner();
+  const gedeutetSoll = [];
+  try {
+    for (const modus of S.MODI) {
+      const erste = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME, modus });
+      assert.equal(erste.ok, true);
+      S.traegeSperrePortNach(erste, 8791);
+      const zweite = S.nimmSperre({ projektwurzel: ordner, aufnahme: AUFNAHME, modus });
+      assert.equal(zweite.ok, false);
+      // Der gewoehnliche Zweig ...
+      gedeutetSoll.push(S.meldeFremdeSperre(zweite, AUFNAHME));
+      // ... und die vier besonderen. Sie entstehen aus demselben Ergebnis mit
+      // je einem anderen Feld; keiner darf den Satz verlieren.
+      for (const abwandlung of [
+        { lauschtAufPort: true }, { lauschtAufPort: false }, { wettlauf: true },
+        // Eine unlesbare Sperrdatei. lauschtAufPort MUSS dabei null sein --
+        // nimmSperre setzt es nur, wenn `vorhanden` da ist (freigabe-server.js
+        // Zeile 741), und meldeFremdeSperre verlaesst sich darauf. Die Kopplung
+        // steht in keinem Feld, nur in der Reihenfolge zweier Zeilen; hier wird
+        // die echte Lage nachgebaut und nicht eine erfundene.
+        { vorhanden: null, lauschtAufPort: null,
+          leben: { grund: 'die Sperrdatei war nicht zu lesen' } },
+      ]) {
+        gedeutetSoll.push(S.meldeFremdeSperre(Object.assign({}, zweite, abwandlung), AUFNAHME));
+      }
+      S.gibSperreFrei(erste);
+    }
+  } finally { fs.rmSync(ordner, { recursive: true, force: true }); }
+  for (const t of gedeutetSoll) {
+    assert.ok(gedeutet(t), 'diese Sperrmeldung wuerde vom Knopf NICHT erkannt:\n' + t);
+  }
+
+  // --- 2. Jeder andere Ausgang darf NICHT gedeutet werden -------------------
+  //
+  // (a) Die Meldungen, die der Dienst als reine Funktionen baut.
+  const andere = [
+    ['pruefeModusVerbindung (--wurzel= im Longform-Modus)',
+      S.pruefeModusVerbindung(S.MODUS_LONGFORM, ['node', 'x', '--wurzel=Q'])],
+    ['meldeLongformOhneSeite',
+      S.meldeLongformOhneSeite(AUFNAHME, path.join('data', 'freigaben', 'x.json'))],
+    ['meldeBelegtenPort', S.meldeBelegtenPort(8791)],
+  ];
+
+  // (b) Die Ausgaenge, die nur ein echter Prozessstart hat. Alle enden mit 2 --
+  //     das ist Absicht: ein 2er faellt, BEVOR irgendetwas angefasst wird, und
+  //     kein Test dieser Datei fasst data/ dieses Repos an. Die Ausgaenge mit 1
+  //     hinter der Sperre (Leser, Port, Lieferung) liegen hinter einem
+  //     vollstaendigen Start; sie sind ueber (a) und ueber den Riegel in (3)
+  //     abgedeckt.
+  const starts = [
+    ['unbekannter Modus', ['--aufnahme=' + AUFNAHME, '--modus=vielleicht'], {}],
+    ['--wurzel= im Longform-Modus',
+      ['--aufnahme=' + AUFNAHME, '--modus=longform', '--wurzel=Q'], {}],
+    ['--aufnahme= fehlt', [], {}],
+    ['--aufnahme= schief', ['--aufnahme=31.08.2026'], {}],
+    ['freies Argument', ['--aufnahme=2026-08-29', '18-18-19'], {}],
+    ['unbekanntes Argument', ['--aufnahme=' + AUFNAHME, '--nur-pruefen'], {}],
+    ['--port= schief', ['--aufnahme=' + AUFNAHME, '--wurzel=Q', '--port=0'], {}],
+    ['keine Wurzel', ['--aufnahme=' + AUFNAHME], { SHORTS_RENDER_WURZEL: '' }],
+  ];
+  for (const [name, argumente, umgebung] of starts) {
+    const r = rufeDienst(argumente, umgebung);
+    assert.equal(r.code, 2, name + ' endet nicht mit 2:\n' + r.aus);
+    andere.push([name, r.aus]);
+  }
+
+  for (const [name, text] of andere) {
+    assert.ok(typeof text === 'string' && text.length > 0, name + ' hat keinen Text');
+    assert.ok(!gedeutet(text),
+      'Der Ausgang "' + name + '" traegt BEIDE Wortteile. Der Knopf der Gegenseite ' +
+      'wuerde ihn als "Sitzung laeuft schon" deuten und keinen Fehler melden:\n' + text);
+  }
+
+  // --- 3. Der Riegel gegen den naechsten Ausgang, den es noch nicht gibt ----
+  //
+  // Die Liste oben kennt nur die heutigen Ausgaenge. Damit ein kuenftiger sie
+  // nicht stillschweigend ueberholt, steht hier die schaerfere Zusage: das
+  // Bruchstueck "laeuft bereits" kommt im CODE des Dienstes GENAU EINMAL vor,
+  // und zwar in meldeFremdeSperre. Kommt es nur dort vor, kann kein anderer
+  // Ausgang beide Teile tragen -- einer allein genuegt der Gegenseite nicht.
+  const treffer = flach(NURCODE).split('laeuft bereits').length - 1;
+  assert.equal(treffer, 1,
+    'Das Bruchstueck "laeuft bereits" steht ' + treffer + '-mal im Code des Dienstes. ' +
+    'Solange es genau einmal dasteht, ist die Zusage oben mehr als eine Aufzaehlung.');
+  const anfang = NURCODE.indexOf('function meldeFremdeSperre');
+  const inSperrmeldung = NURCODE.slice(anfang, NURCODE.indexOf('\nfunction ', anfang + 10));
+  assert.ok(flach(inSperrmeldung).includes('laeuft bereits'),
+    'die einzige Fundstelle liegt nicht in meldeFremdeSperre');
+
+  // --- 4. Und der Text, den der Dienst DURCHREICHT -------------------------
+  //
+  // Der Dienst gibt das stderr des Lesers unveraendert weiter, und Vertrag 6
+  // sagt zu, dass er es mit dem des Longform-Arbeiters ebenso haelt. Ein
+  // durchgereichter Text steht dann im selben stderr wie die eigenen Meldungen
+  // -- die Gegenseite sieht EINEN Text und unterscheidet nicht, wer ihn
+  // geschrieben hat. Also darf auch keiner von beiden beide Teile tragen.
+  for (const modul of ['uebergabe-leser.js', 'longform-arbeiter.js']) {
+    const pfad = path.join(__dirname, '..', 'src', 'upload', modul);
+    if (!fs.existsSync(pfad)) continue;   // der Arbeiter kann noch fehlen
+    const quelle = fs.readFileSync(pfad, 'utf8');
+    assert.ok(!gedeutet(quelle),
+      modul + ' traegt beide Wortteile. Sein stderr wird durchgereicht; die ' +
+      'Gegenseite deutete den Befund dann als laufende Sitzung.');
+  }
+
+  // BENANNTE GRENZE, nicht wegdefiniert: geprueft sind die TEXTE des Dienstes
+  // und die Quelltexte der durchgereichten Module. Ein Wert, der in eine
+  // Meldung eingesetzt wird, koennte die Bruchstuecke theoretisch mitbringen --
+  // ein Ordnername etwa. Der Aufnahmename kann es nicht (er hat eine gepruefte
+  // Form), ein Pfad aus der .env schon. Das ist kein Loch, das dieser Test
+  // stopfen kann; es steht hier, damit es niemand fuer geprueft haelt.
+});

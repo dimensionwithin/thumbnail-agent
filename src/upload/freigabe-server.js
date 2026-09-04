@@ -1296,26 +1296,46 @@ function leseBereich(kopf, dateiGroesse) {
 // ist nicht mehr wahr und wandert darum mit, statt weiter behauptet zu werden.
 // Was an ihre Stelle tritt, ist enger als "es gibt jetzt POST":
 //
-//   GENAU EINE POST-Route, und sie NIMMT NICHTS ENTGEGEN -- kein Feld, keinen
-//   Wert, keinen Leib. Was beim Klick geschieht, steht schon vor dem Klick
-//   fest: es ist die Bindung aus der Befundzeile des Arbeiters, und dieser
-//   Dienst rechnet daran nichts nach. Ein Knopf, ueber dessen Wirkung die
-//   Seite mitentscheidet, waere ein anderer Knopf als der, auf dem etwas
-//   steht.
+//   POST-Routen, die NICHTS ENTGEGENNEHMEN -- kein Feld, keinen Wert, keinen
+//   Leib. Was beim Klick geschieht, steht schon vor dem Klick fest: es ist die
+//   Bindung aus der Befundzeile des Arbeiters, und dieser Dienst rechnet daran
+//   nichts nach. Ein Knopf, ueber dessen Wirkung die Seite mitentscheidet,
+//   waere ein anderer Knopf als der, auf dem etwas steht. (EU: aus der einen
+//   sind drei geworden, und die Zahl steht darum nicht mehr in diesem Satz --
+//   die Zusage ist die leere ENTGEGENNAHME, nicht die Anzahl.)
 //
 //   Dazu EINE lesende Route mehr: '/lauf', der Fortschritt. Sie nimmt genau
 //   einen Abfrageparameter, eine Zahl, und liefert die Zeilen ab dort.
 //
-// Was es weiterhin NICHT gibt: eine Route, die etwas oeffentlich stellt. Der
-// dritte Aufruf (Vertrag 2.5) ist nicht gebaut, und dieser Dienst hat keinen
-// Weg dorthin.
+// EU: ES GIBT JETZT EINE ROUTE, DIE ETWAS OEFFENTLICH STELLT -- UND EINE, DIE
+// DEN WEG DORTHIN GEHT UND ANHAELT.
+//
+// Der Satz darueber hiess bis EU "Was es weiterhin NICHT gibt: eine Route, die
+// etwas oeffentlich stellt. Der dritte Aufruf ist nicht gebaut, und dieser
+// Dienst hat keinen Weg dorthin." Er ist nicht mehr wahr und wandert mit.
+//
+// Der Modus hat damit DREI POST-Routen, und alle drei nehmen NICHTS entgegen
+// -- kein Feld, keinen Wert, keinen Leib. Was beim Klick geschieht, steht vor
+// dem Klick fest; welche der drei getroffen wird, entscheidet die Adresse und
+// nicht ein Wert in der Anfrage. Das ist der Grund, warum es drei sind und
+// nicht eine mit einem Feld "was denn": ein Feld waere eine Stelle, an der die
+// Seite ueber die Wirkung mitentscheidet.
+//
+//   POST /hochladen        laedt privat hoch (EP)
+//   POST /haltepunkt       geht den Weg des dritten Aufrufs bis unmittelbar
+//                          davor und HAELT AN. Stellt nichts oeffentlich.
+//   POST /veroeffentlichen stellt oeffentlich. Nicht zurueckzunehmen.
+//
+// Die beiden letzten schreiben je eine Ermaechtigung mit ihrem EIGENEN Zweck.
+// Der Zweck steht in der Datei, und der Arbeiter entscheidet daran, was er
+// tut -- nicht an einem Argument, das man vergessen kann.
 const ROUTEN_GET = {
   [MODUS_SHORTS]: new Set(['/', '/video', '/stand', '/kette', '/lauf']),
   [MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf']),
 };
 const ROUTEN_POST = {
   [MODUS_SHORTS]: new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']),
-  [MODUS_LONGFORM]: new Set(['/hochladen']),
+  [MODUS_LONGFORM]: new Set(['/hochladen', '/haltepunkt', '/veroeffentlichen']),
 };
 
 function gleichSicher(a, b) {
@@ -1461,6 +1481,20 @@ function baueDienst(sitzung) {
       if (pfad === '/hochladen') {
         if (modus === MODUS_LONGFORM) nimmLongformHochladen(res);
         else nimmHochladen(res);
+        return;
+      }
+      // EU: DER ZWECK KOMMT AUS DER ROUTENTABELLE UND NICHT AUS DER ANFRAGE.
+      //
+      // Diese beiden Zeilen sind die einzige Stelle, an der entschieden wird,
+      // WELCHEN Zweck eine zweite Ermaechtigung traegt -- und sie entscheiden
+      // es an der Adresse, die in ROUTEN_POST steht. Es gibt keinen Weg von
+      // etwas, das jemand schickt, zu diesem Wert.
+      if (pfad === '/haltepunkt') {
+        nimmLongformDrittenAufruf(res, GEDAECHTNIS_MODUL.ZWECK_HALTEPUNKT);
+        return;
+      }
+      if (pfad === '/veroeffentlichen') {
+        nimmLongformDrittenAufruf(res, GEDAECHTNIS_MODUL.ZWECK_VEROEFFENTLICHEN);
         return;
       }
       nimmUrteil(req, res);
@@ -2175,6 +2209,128 @@ function baueDienst(sitzung) {
         befehl: gestartet.befehl }, null, 2) + '\n');
   }
 
+  // -------------------------------------------------------------------------
+  // EU: POST /haltepunkt UND POST /veroeffentlichen -- DIE BEIDEN KLICKS DES
+  //     DRITTEN AUFRUFS
+  // -------------------------------------------------------------------------
+  //
+  // EINE FUNKTION, ZWEI ROUTEN, EIN UNTERSCHIED: der Zweck, den die Route
+  // hereingibt. Zwei Funktionen waeren zwei Fassungen desselben Ablaufs, und
+  // die eine, die abweicht, waere die, die veroeffentlicht.
+  //
+  // SIE NIMMT NICHTS ENTGEGEN. Kein Feld, kein Wert, kein Leib. Alles, was
+  // gebraucht wird, kommt aus der ZWEITEN BINDUNG, die der Arbeiter in seiner
+  // Befundzeile ausgegeben hat -- die videoId, die Pruefsumme der Videodatei,
+  // der beurteilte Titel, die Pruefsumme der Beschreibung, Name und Pruefsumme
+  // des Bildes. Dieser Dienst rechnet daran nichts nach; er wuesste es auch
+  // nicht besser, denn er hat noch nie einen Netzaufruf gemacht.
+  //
+  // DER ZWECK IST DIE SICHERUNG. Er wird hier in die Datei geschrieben, und
+  // der Arbeiter liest ihn dort. Eine Haltepunkt-Ermaechtigung kann auf keinem
+  // Weg zu einem Oeffentlichstellen fuehren -- nicht mit einem anderen
+  // Argument, nicht durch einen Aufruf von Hand, nicht durch eine Verzweigung,
+  // die jemand falsch nimmt.
+  function nimmLongformDrittenAufruf(res, zweck) {
+    if (fremdeWurzel(res)) return;
+
+    const knopf = longformDritterKnopfDa(sitzung);
+    if (!knopf.da) {
+      fehler(res, 409, 'kein_knopf', knopf.grund +
+        ' Es wurde nichts geschrieben, nichts gestartet und keine Ermaechtigung ausgestellt.');
+      return;
+    }
+
+    const b = sitzung.zweiteBindung;
+    const zufall = GEDAECHTNIS_MODUL.neuerZufall();
+    const pfad = GEDAECHTNIS_MODUL.ermaechtigungPfad(sitzung.projektwurzel, zufall);
+    // Die FORM kommt von dem, der sie prueft -- aus longform-gedaechtnis.js,
+    // genau wie bei der ersten. Sie hier ein zweites Mal hinzuschreiben hiesse,
+    // die Felder des scharfen Laufs an zwei Stellen zu pflegen; die zweite
+    // waere ausgerechnet die, die ihn ausloest.
+    let inhalt;
+    try {
+      inhalt = GEDAECHTNIS_MODUL.neueZweiteErmaechtigung({
+        aufnahme: sitzung.aufnahme,
+        videoSha256: b.video_sha256,
+        videoId: b.videoId,
+        urteil: b.urteil,
+        kanalId: sitzung.kanal.id,
+        kanalName: sitzung.kanal.name,
+        zweck,
+        zufall,
+        jetzt: Date.now(),
+      });
+    } catch (e) {
+      fehler(res, 500, 'ermaechtigung_nicht_baubar',
+        'Die zweite Ermaechtigung liess sich nicht bilden: ' + (e.message || e) +
+        ' Es wurde nichts geschrieben und nichts gestartet.');
+      return;
+    }
+    try {
+      schreibeErmaechtigung(pfad, inhalt);
+    } catch (e) {
+      fehler(res, 500, 'ermaechtigung_nicht_geschrieben',
+        'Die zweite Ermaechtigung liess sich nicht schreiben (' + (e.code || e.message) +
+        '): ' + pfad + '. Es wurde nichts gestartet.');
+      return;
+    }
+
+    const haltepunkt = zweck === GEDAECHTNIS_MODUL.ZWECK_HALTEPUNKT;
+    sitzung.lauf = {
+      laeuft: true,
+      gestartet_am: new Date().toISOString(),
+      kanal_name: sitzung.kanal.name,
+      bild: b.urteil.thumbnail.dateiname,
+      quelle: 'gedaechtnis',
+      // EU: DER ZWECK STEHT IM LAUF. Die Seite zeigt danach zwei verschiedene
+      // Schlusstexte -- "es ist nichts oeffentlich" und "es ist oeffentlich"
+      // --, und welcher gilt, darf sie nicht aus dem Rueckgabewert raten.
+      zweck,
+      ermaechtigung: pfad,
+      zeilen: [],
+      ende: null,
+      befehl: null,
+    };
+    const merke = (art, zeile) => { sitzung.lauf.zeilen.push({ art, zeile }); };
+    merke('dienst', 'Ermaechtigung geschrieben: ' + pfad);
+    merke('dienst', 'Zweck ' + zweck + '. Sie gilt ' +
+      (GEDAECHTNIS_MODUL.ERMAECHTIGUNG_GUELTIG_MS / 1000) + ' Sekunden, genau einmal, und ' +
+      'nur fuer diese Aufnahme, die Videodatei mit sha256 ' + b.video_sha256 + ', das Video ' +
+      b.videoId + ' auf dem Kanal "' + sitzung.kanal.name + '", den beurteilten Titel und ' +
+      'das Bild ' + b.urteil.thumbnail.dateiname + ' mit sha256 ' +
+      b.urteil.thumbnail.sha256 + '.');
+    merke('dienst', haltepunkt
+      ? 'DIESER LAUF STELLT NICHTS OEFFENTLICH. Er geht den Weg bis unmittelbar vor den ' +
+        'dritten Aufruf und haelt dort an. Ein Oeffentlichstellen braeuchte eine ' +
+        'Ermaechtigung mit dem anderen Zweck, und diese hier ist keine.'
+      : 'DIESER LAUF STELLT DAS VIDEO OEFFENTLICH. Das laesst sich nicht zuruecknehmen -- ' +
+        'was oeffentlich war, hat jemand gesehen. Der Arbeiter prueft vorher jedes Feld ' +
+        'gegen das, was er selbst vorfindet; weicht eines ab, geschieht nichts.');
+
+    const gestartet = starteLongformLauf(sitzung, pfad,
+      (art, zeile) => merke(art, zeile),
+      (code, signal) => {
+        sitzung.lauf.laeuft = false;
+        sitzung.lauf.ende = {
+          code, signal,
+          beendet_am: new Date().toISOString(),
+          ermaechtigung_noch_da: fs.existsSync(pfad),
+        };
+        merke('dienst', 'Der Arbeiter ist beendet (Rueckgabewert ' + code +
+          (signal ? ', Signal ' + signal : '') + ').');
+        merke('dienst', sitzung.lauf.ende.ermaechtigung_noch_da
+          ? 'ACHTUNG: die Ermaechtigungsdatei liegt noch da: ' + pfad + '. Der Arbeiter hat ' +
+            'sie nicht verbraucht -- er ist nicht bis dahin gekommen. Sie laeuft in ' +
+            'hoechstens zwei Minuten ab; wer sicher gehen will, loescht sie von Hand.'
+          : 'Die Ermaechtigung ist verbraucht und geloescht.');
+      });
+    sitzung.lauf.befehl = gestartet.befehl;
+
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({ gestartet: true, zweck, kanal: sitzung.kanal.name,
+        videoId: b.videoId, befehl: gestartet.befehl }, null, 2) + '\n');
+  }
+
   // GET /lauf im Longform-Modus. Eine eigene Funktion und nicht liefereLauf():
   // die Shorts-Fassung traegt `anzahl` und `kennungen` -- Angaben ueber eine
   // Lieferung von Ausschnitten, die es hier nicht gibt. Sie mit null zu fuellen
@@ -2192,7 +2348,13 @@ function baueDienst(sitzung) {
     antwort(res, 200, 'application/json; charset=utf-8',
       JSON.stringify({
         lauf: { gestartet_am: l.gestartet_am, kanal: l.kanal_name, bild: l.bild,
-          quelle: l.quelle, befehl: l.befehl },
+          quelle: l.quelle, befehl: l.befehl,
+          // EU: der Zweck des laufenden Schritts. Die Seite braucht ihn, um
+          // den richtigen Schlusstext zu zeigen -- "es ist nichts oeffentlich"
+          // und "es ist oeffentlich" sind zwei Saetze, und welcher gilt, darf
+          // sie nicht aus dem Rueckgabewert raten. `null` heisst: der
+          // Upload-Schritt (EP), der keinen Zweck in dieser Form trug.
+          zweck: l.zweck === undefined ? null : l.zweck },
         ab, gesamt: l.zeilen.length,
         zeilen: l.zeilen.slice(ab),
         laeuft: l.laeuft, ende: l.ende,
@@ -2493,19 +2655,25 @@ function pruefeModusVerbindung(modus, argv) {
 //
 // WAS DIESER MODUS TUT, VOLLSTAENDIG: Sperre nehmen (2.13), den Trockenlauf
 // des Arbeiters als Kindprozess starten (4, Schritt 2 bis 6), seine Ausgabe
-// woertlich ausliefern (4, Schritt 7, soweit gebaut), und dort aufhoeren.
+// woertlich ausliefern (4, Schritt 7), und je nach Lage einen von drei
+// Knoepfen anbieten -- Hochladen (EP), Haltepunkt oder Veroeffentlichen (EU).
+// Beim Klick schreibt er die Ermaechtigung und startet den Arbeiter erneut.
 //
 // WAS ER NICHT TUT, UND ZWAR MIT ABSICHT:
 //
-//   - Keine Ermaechtigung. Weder schreiben noch entgegennehmen, kein Knopf,
-//     der eine ausloest, kein Feld, das eine vorbereitet. Grund: eine
-//     Einmal-Ermaechtigung ohne Empfaenger liegt herum, bis jemand sie
-//     einloest. Sie kommt mit dem Arbeiter, der sie einloest (Vertrag 4,
-//     Schritte 8 bis 17), und keinen Schritt frueher.
-//   - Kein Netzaufruf, kein Upload, kein Start des schreibenden Arbeiters.
-//     Der Trockenlauf laeuft OHNE --execute und OHNE --bestaetigt-durch=; der
-//     Arbeiter selbst weist beide Argumente heute mit einer eigenen Meldung
-//     ab (EK), und dieser Dienst gibt sie ihm gar nicht erst.
+//   - EU: DIESER PUNKT HAT SICH ZWEIMAL GEAENDERT. Bis EP stand hier "Keine
+//     Ermaechtigung. Weder schreiben noch entgegennehmen"; seit EP schreibt er
+//     die erste, seit EU auch die zweite. Was bleibt, ist die Form: er
+//     schreibt sie beim KLICK und nie vorher, durch dieselbe eine Funktion wie
+//     bei den Shorts, und der Arbeiter verbraucht sie. Eine Ermaechtigung
+//     ohne Empfaenger entsteht hier nicht.
+//   - Kein Netzaufruf. Nicht einer, in keinem Modus, seit es diesen Dienst
+//     gibt. Den Kanal nennt er aus data/inventory.json; verbindlich wird die
+//     Angabe erst dadurch, dass der ARBEITER sie gegen den angemeldeten Kanal
+//     haelt.
+//   - Kein Aufruf des Arbeiters mit --execute ohne eine Ermaechtigung, die
+//     ein Klick erzeugt hat. Der Trockenlauf beim Start laeuft OHNE beide
+//     Argumente.
 //   - Keine zweite Darstellung dessen, was der Arbeiter sagt. Was er ueber
 //     Videodatei, Titel, Beschreibung, Hashtags, Tags und Thumbnail schreibt,
 //     geht Zeichen fuer Zeichen durch diesen Dienst hindurch auf die Seite.
@@ -2697,6 +2865,25 @@ function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
     // (Vertrag 5.3).
     gedaechtnis: (trocken.befund && trocken.befund.gedaechtnis) || null,
 
+    // EU: DIE FRAGE (Vertrag 2.4, 4 Schritt 14) UND DIE ZWEITE BINDUNG.
+    //
+    // Beide kommen WOERTLICH aus der Befundzeile des Arbeiters, und aus
+    // demselben Grund wie die erste Bindung: er hat das Gedaechtnis gelesen,
+    // er hat das Bild gegen die Platte gehalten, und er ist es auch, der die
+    // zweite Ermaechtigung gleich dagegen prueft. Eine zweite Rechnung hier
+    // waere die, die eines Tages abweicht -- und die abweichende waere die,
+    // die ein Video oeffentlich stellt.
+    //
+    // `frage` ist, was die Seite ZEIGT; `zweiteBindung` ist, woran die
+    // Ermaechtigung HAENGT. Getrennt, weil in der Frage Dinge stehen, die
+    // nichts binden (die Befunde von YouTube etwa), und in der Bindung nichts
+    // stehen darf, das nicht binden soll.
+    frage: (trocken.befund && trocken.befund.frage) || null,
+    zweiteBindung: (trocken.befund && trocken.befund.zweite_bindung)
+      ? trocken.befund.zweite_bindung
+      : { moeglich: false, grund: 'Der Arbeiter hat keine Befundzeile mit einer zweiten ' +
+        'Bindung ausgegeben. Ohne sie haengt eine Ermaechtigung an nichts (Vertrag 2.12).' },
+
     // Der Kanal steht auf dem Knopf. Dieser Dienst fragt dafuer NICHT das Netz
     // -- er hat noch nie einen Netzaufruf gemacht --, sondern nimmt, was der
     // letzte `npm run inventory` auf die Platte geschrieben hat. Verbindlich
@@ -2712,6 +2899,11 @@ function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
     // fertiges Ergebnis in der Sitzung, weil sich der Zustand aendert -- nach
     // dem Klick laeuft ein Lauf, und dann ist der Knopf zu.
     knopfBereit: longformKnopfDa,
+    // EU: dieselbe Bauart fuer die beiden Knoepfe des dritten Aufrufs. Die
+    // Seite bekommt die FUNKTION herein und bildet die Bedingung nicht selbst;
+    // eine zweite Bedingung waere eine Seite, die einen Knopf zeigt, den der
+    // Dienst ablehnt, oder einen verschweigt, den er annaehme.
+    dritterKnopfBereit: longformDritterKnopfDa,
 
     // Der scharfe Lauf, solange keiner laeuft: null. Nicht ein leeres Objekt
     // -- "es laeuft keiner" und "es lief einer und er hat nichts gesagt" sind
@@ -2808,23 +3000,29 @@ function nimmBildAuf(befund, sperre) {
 const ERLAUBTE_BILDTYPEN = Object.freeze(['image/jpeg', 'image/png']);
 
 // ---------------------------------------------------------------------------
-// EP: DER KNOPF DES LONGFORM-MODUS (Vertrag 4, Schritte 7 bis 13)
+// EP/EU: DIE KNOEPFE DES LONGFORM-MODUS (Vertrag 4, Schritte 7 bis 17)
 // ---------------------------------------------------------------------------
 //
 // WAS SICH HIER AENDERT, UND WAS AUSDRUECKLICH NICHT.
 //
-// Bis EN hatte dieser Modus KEINE POST-Route, und der Satz darueber lautete:
-// "Die leere POST-Liste ist die Zusage selbst." Diese Zusage ist ab EP nicht
-// mehr wahr, und sie wird darum NEU FORMULIERT statt weiter behauptet. Was an
-// ihre Stelle tritt, ist enger als "es gibt jetzt POST":
+// Bis EN hatte dieser Modus KEINE POST-Route, bis EU genau eine. Beide Saetze
+// waren die Zusage selbst, und beide werden NEU FORMULIERT statt weiter
+// behauptet. Was an ihre Stelle tritt, ist enger als "es gibt jetzt drei":
 //
-//   Der Modus hat GENAU EINE POST-Route, und sie nimmt NICHTS entgegen -- kein
-//   Feld, keinen Wert, keinen Leib. Was beim Klick geschieht, steht schon vor
-//   dem Klick fest: es ist die Bindung, die der Arbeiter in seiner Befundzeile
-//   ausgegeben hat, und der Dienst rechnet daran nichts nach. Ein Knopf, der
-//   etwas entgegennimmt, waere ein Knopf, ueber dessen Wirkung die Seite
-//   mitentscheidet; dieser hier hat nur eine Wirkung, und sie stand oben auf
-//   dem Schirm.
+//   Jede POST-Route dieses Modus nimmt NICHTS entgegen -- kein Feld, keinen
+//   Wert, keinen Leib. Was beim Klick geschieht, steht schon vor dem Klick
+//   fest: es ist die Bindung, die der Arbeiter in seiner Befundzeile
+//   ausgegeben hat, und der Dienst rechnet daran nichts nach. WELCHE der drei
+//   getroffen wird, entscheidet die Adresse; sie steht in ROUTEN_POST, und es
+//   gibt keinen Weg von etwas, das jemand schickt, zu diesem Wert.
+//
+//   AUF EINER LAGE GIBT ES HOECHSTENS EINE SORTE KNOPF. Entweder liegt noch
+//   kein Video oben -- dann gibt es "Hochladen" und die beiden anderen nicht
+//   --, oder es liegt eines mit Bild oben -- dann gibt es "Haltepunkt" und
+//   "Veroeffentlichen" und "Hochladen" nicht. Die beiden Bindungen schliessen
+//   sich aus, und das ist keine Bequemlichkeit der Anzeige, sondern die Sache:
+//   eine Ermaechtigung zum Hochladen, die auf einem schon hochgeladenen Video
+//   eingeloest wuerde, ermaechtigte zu einem ZWEITEN.
 //
 // WAS DIESER DIENST DAMIT SCHREIBT: eine Datei mehr als bisher -- die
 // Ermaechtigung. Die Sperre der Sitzung ist die erste; beide gehen durch je
@@ -2870,6 +3068,44 @@ function longformKnopfDa(sitzung) {
     return { da: false, grund: 'Der Kanal laesst sich nicht benennen. ' +
       ((sitzung.kanal && sitzung.kanal.grund) || '') + ' Ein Knopf, der nicht sagt, WOHIN ' +
       'er sendet, ist keine Bestaetigung.' };
+  }
+  return { da: true, grund: null };
+}
+
+// EU: OB ES DIE BEIDEN KNOEPFE DES DRITTEN AUFRUFS GIBT.
+//
+// SERVERSEITIG geprueft, wie longformKnopfDa() -- der Browser sperrt sie
+// zusaetzlich, aber das ist Bequemlichkeit. Diese Funktion ist die Zusage.
+//
+// EINE FUNKTION FUER BEIDE KNOEPFE, und das ist Absicht: der Haltepunkt und
+// das Veroeffentlichen stehen auf DERSELBEN Lage oder auf keiner. Zwei
+// Funktionen waeren zwei Bedingungen, und eines Tages liesse die eine etwas
+// durch, was die andere sperrt -- und die durchlaessige waere die, die
+// veroeffentlicht.
+//
+// SIE PRUEFT DIE ZWEITE BINDUNG UND NICHT DIE ERSTE. Die beiden schliessen
+// sich aus: liegt ein Video mit gesetztem Thumbnail oben, gibt es keinen
+// Upload-Knopf; liegt keines oben, gibt es diese beiden nicht.
+function longformDritterKnopfDa(sitzung) {
+  const l = sitzung.lauf;
+  if (l && l.laeuft) {
+    return { da: false, grund: 'Es laeuft gerade ein Lauf. Zwei gleichzeitig gibt es nicht.' };
+  }
+  if (l && l.ende) {
+    return { da: false, grund: 'Dieser Lauf ist abgeschlossen. Ein weiterer braucht einen ' +
+      'neuen Start des Dienstes -- dann laeuft der Trockenlauf noch einmal, und ein Mensch ' +
+      'sieht die LAGE VON JETZT statt die von vorher. Die Ermaechtigung haengt an dem, was ' +
+      'in der Frage stand; eine zweite auf einer veralteten Frage bezeugte nichts.' };
+  }
+  if (!sitzung.zweiteBindung || sitzung.zweiteBindung.moeglich !== true) {
+    return { da: false, grund: (sitzung.zweiteBindung && sitzung.zweiteBindung.grund) ||
+      'Der Arbeiter hat keine zweite Bindung ausgegeben. Ohne sie haengt eine Ermaechtigung ' +
+      'an nichts (Vertrag 2.12).' };
+  }
+  if (!sitzung.kanal || !sitzung.kanal.ok) {
+    return { da: false, grund: 'Der Kanal laesst sich nicht benennen. ' +
+      ((sitzung.kanal && sitzung.kanal.grund) || '') + ' Ein Knopf, der nicht sagt, WO er ' +
+      'etwas oeffentlich stellt, ist keine Bestaetigung.' };
   }
   return { da: true, grund: null };
 }
@@ -3338,7 +3574,7 @@ module.exports = {
   pruefeModusVerbindung, meldeLongformOhneVorschau,
   LONGFORM_ARBEITER, LONGFORM_CODES_MIT_SEITE, LONGFORM_ZUSATZ,
   ruftLongformTrocken, longformAusgang, baueLongformSitzung,
-  longformKnopfDa, starteLongformLauf, GEDAECHTNIS_MODUL,
+  longformKnopfDa, longformDritterKnopfDa, starteLongformLauf, GEDAECHTNIS_MODUL,
   LONGFORM_BEFUND_TYPE, ERLAUBTE_BILDTYPEN, trenneBefundzeile, nimmBildAuf,
   ROUTEN_GET, ROUTEN_POST,
   FREIGABE_SCHEMA_VERSION, FREIGABE_ARTIFACT_TYPE,

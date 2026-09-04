@@ -1300,6 +1300,47 @@ pre.lf-strom { margin: 0; padding: 12px 14px;
 .lf-gedaechtnis { border: 1px solid #2e333c; background: #14171d; border-radius: 6px;
   padding: 12px 16px; margin-top: 12px; max-width: 100ch; color: #cbd2de;
   font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+
+/* EU: DIE FRAGE UND DIE BEIDEN KNOEPFE DES DRITTEN AUFRUFS.
+
+   DER UNTERSCHIED ZWISCHEN DEN BEIDEN KNOEPFEN IST NICHT NUR DIE FARBE. Der
+   eine haelt an, der andere ist nicht zurueckzunehmen -- und darum steht auf
+   dem einen "anhalten" und auf dem anderen "OEFFENTLICH", jeweils im Wort und
+   nicht nur im Ton. Wer Farben nicht unterscheiden kann, liest den Satz; die
+   Farbe ist die zweite Auskunft und nie die erste.
+
+   DER AUFFAELLIGKEITSKASTEN IST DIE WICHTIGSTE STELLE DIESER SEITE. "Ein
+   Video, an dem etwas nicht stimmt, darf nicht so aussehen wie eines, an dem
+   alles stimmt" -- also sieht es anders aus, und zwar von weitem. */
+.lf-frage { border: 1px solid #2e333c; background: #14171d; border-radius: 8px;
+  padding: 16px 20px; max-width: 100ch; margin-top: 12px; }
+.lf-frage h3 { margin: 18px 0 6px; font-size: 13px; color: #9aa3b2;
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.lf-frage h3:first-child { margin-top: 0; }
+.lf-frage p { margin: 6px 0 0; color: #cbd2de; font-size: 13.5px; }
+.lf-frage dl { display: grid; grid-template-columns: max-content 1fr;
+  gap: 4px 12px; margin: 8px 0 0; font-size: 13px; }
+.lf-frage dt { color: #9aa3b2; }
+.lf-frage dd { margin: 0; color: #e6e8ec; word-break: break-all;
+  font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+pre.lf-text { margin: 8px 0 0; padding: 12px 14px;
+  background: #101218; border: 1px solid #262b33; border-radius: 6px;
+  white-space: pre-wrap; word-break: break-word;
+  font: 12.5px/1.55 "Cascadia Mono", Consolas, monospace; color: #c8d0dd; }
+.lf-vergleich { margin: 8px 0 0; font-size: 13px; color: #cbd2de;
+  white-space: pre-wrap; word-break: break-word;
+  border-left: 2px solid #3a4150; padding: 2px 0 2px 12px; }
+.lf-auff { border-radius: 6px; padding: 12px 16px; margin-top: 14px;
+  max-width: 100ch; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+.lf-auff.still { border: 1px solid #2e333c; background: #14171d; color: #9aa3b2; }
+.lf-auff.laut { border: 2px solid #6b4a1f; background: #241d13; color: #f0d3a6; }
+.lf-auff.sperrend { border: 2px solid #7a2f22; background: #241413; color: #ff9a86; }
+.lf-knopf.gefahr { border-color: #7a2f22; background: #1d1311; }
+.lf-knopf.gefahr h2 { color: #ffb3a2; }
+.lf-knopf button.gefahr { border-color: #a63b28; background: #4a1e17; color: #ffd9d0; }
+.lf-knopf button.gefahr:hover:enabled { background: #5e261d; }
+.lf-knopf button.halt { border-color: #4a505c; background: #232833; color: #cbd2de; }
+.lf-knopf button.halt:hover:enabled { background: #2d3340; }
 `;
 
 // Das Skript der Longform-Ansicht.
@@ -1476,6 +1517,158 @@ if (D.gedaechtnisSatz) {
   setze(kel('gedaechtnisKasten'), D.gedaechtnisSatz);
 }
 
+// -------------------------------------------------------------------------
+// EU: DIE FRAGE UND DIE BEIDEN KNOEPFE DES DRITTEN AUFRUFS
+// -------------------------------------------------------------------------
+//
+// ALLES HIER GEHT DURCH setze(). Es gibt weiterhin genau eine Stelle, an der
+// Text in den Baum geht -- auch die Beschreibung, auch die Auffaelligkeiten,
+// auch der Statusblock. Keine Schleife baut Elemente aus Zeilen; wo mehrere
+// Punkte stehen, stehen sie als EIN Textstueck mit Leerzeilen dazwischen.
+// Beim Mutationslauf zu EL ist an genau so einer zweiten Stelle eine Kuerzung
+// durchgerutscht.
+if (D.frage && D.frage.moeglich) {
+  kel('frageKasten').hidden = false;
+  setze(kel('frageKopf'), 'Das Video liegt PRIVAT auf dem Kanal: ' + D.frage.videoId);
+
+  for (const [id, wert] of [
+    ['fVideoId', D.frage.videoId],
+    ['fHoch', D.frage.hochgeladen_am],
+    ['fThumb', D.frage.thumbnail_gesetzt_am || '(nicht gesetzt)'],
+    ['fRueck', D.frage.rueckgelesen_am || '(nicht gelesen)'],
+  ]) setze(kel(id), String(wert));
+
+  setze(kel('fTitelGesendet'), String(D.frage.titel.gesendet));
+  setze(kel('fTitelYoutube'), String(D.frage.titel.laut_youtube));
+  setze(kel('fTitelVergleich'), D.frage.titel.gleich === true
+    ? 'Beide sind gleich. Was oeffentlich wuerde, ist dieser Titel.'
+    : D.frage.titel.gleich === false
+      ? 'SIE SIND VERSCHIEDEN. Entweder hat jemand den Titel im Studio geaendert, oder die ' +
+        'API gibt ihn veraendert zurueck. Was oeffentlich wuerde, ist der von YouTube.'
+      : 'Nicht vergleichbar -- eine der beiden Angaben fehlt.');
+
+  setze(kel('fBeschreibung'), D.frage.beschreibung.heute_gebaut === null
+    ? '(nicht vorhanden)' : D.frage.beschreibung.heute_gebaut);
+  setze(kel('fBeschreibungSatz'), D.frage.beschreibung.satz);
+  setze(kel('fHashtags'), Array.isArray(D.frage.hashtags)
+    ? D.frage.hashtags.join(' ') : '(keine)');
+  setze(kel('fTags'), '(' + D.frage.tags.length + ') ' +
+    (D.frage.tags.join(', ') || '(keine)'));
+
+  if (D.frage.thumbnail) {
+    for (const [id, wert] of [
+      ['fBildName', D.frage.thumbnail.dateiname],
+      ['fBildSha', D.frage.thumbnail.sha256],
+      ['fBildBytes', String(D.frage.thumbnail.bytes) + ' Bytes'],
+      ['fBildRang', 'Rang ' + JSON.stringify(D.frage.thumbnail.rang) + ', Zettel ' +
+        (D.frage.thumbnail.zettel === null ? '(keiner)' : D.frage.thumbnail.zettel)],
+    ]) setze(kel(id), String(wert));
+    setze(kel('fBildPlatte'), D.frage.thumbnail.auf_der_platte.ok
+      ? 'Die Datei auf der Platte ist unveraendert -- dieselben Bytes wie die, die ans Video ' +
+        'geheftet wurden.'
+      : 'ABWEICHUNG: ' + String(D.frage.thumbnail.auf_der_platte.satz));
+  }
+  // Was YouTube ausliefert: die Adressen als EIN Textstueck. Die Bilder selbst
+  // holt diese Seite NICHT -- das waere ein Aufruf an einen fremden Rechner,
+  // und ihre Richtlinie laesst nur diesen Dienst zu.
+  const tn = D.frage.youtube_thumbnails;
+  setze(kel('fYtThumbs'), (tn && Object.keys(tn).length)
+    ? Object.keys(tn).map((n) => n + ': ' + String((tn[n] || {}).url) +
+      ((tn[n] || {}).width ? '   (' + tn[n].width + 'x' + tn[n].height + ')' : '')).join('\n')
+    : 'NICHT VORHANDEN. YouTube hat kein snippet.thumbnails zurueckgegeben. Das ist keine ' +
+      'Bestaetigung und keine Ablehnung, sondern eine fehlende Auskunft -- im Studio ' +
+      'nachsehen.');
+
+  setze(kel('fAuskuenfte'), D.frage.auskuenfte.map((a) =>
+    a.name + ': ' + (a.da ? JSON.stringify(a.wert) + '   (aus: ' + a.quelle + ')'
+      : 'nicht vorhanden')).join('\n'));
+  const roh = (o, was) => (o && typeof o === 'object')
+    ? Object.keys(o).map((n) => n + ': ' + JSON.stringify(o[n])).join('\n')
+    : 'NICHT VORHANDEN -- YouTube hat ' + was + ' nicht zurueckgegeben.';
+  setze(kel('fStatusRoh'), roh(D.frage.status_roh, 'den status-Block'));
+  setze(kel('fProcessingRoh'), roh(D.frage.processing_roh, 'den processingDetails-Block'));
+
+  // ---- DIE AUFFAELLIGKEITEN ---------------------------------------------
+  //
+  // Hier steht IMMER etwas, auch wenn nichts aufgefallen ist. Eine leere
+  // Liste, die man uebersieht, sieht aus wie eine, die es nicht gibt.
+  const auff = D.frage.auffaelligkeiten;
+  const kasten = kel('fAuff');
+  if (!auff.length) {
+    kasten.className = 'lf-auff still';
+    setze(kasten, 'NICHTS AUFGEFALLEN. Das heisst: keiner der Vergleiche dieses Baus hat ' +
+      'angeschlagen -- nicht, dass mit dem Video alles in Ordnung ist. Was YouTube ueber ' +
+      'ein Langformvideo meldet, ist nicht gemessen (Vertrag 10, erster Punkt).');
+  } else {
+    kasten.className = 'lf-auff ' + (D.frage.sperrend > 0 ? 'sperrend' : 'laut');
+    setze(kasten, (D.frage.sperrend > 0
+      ? 'ES GIBT ' + D.frage.sperrend + ' BEFUND(E), DIE EINEN KNOPF AUSSCHLIESSEN.\n\n'
+      : 'AUFGEFALLEN IST FOLGENDES. Es gibt trotzdem einen Knopf -- ob das reicht, ' +
+        'entscheiden Sie; das ist der Sinn dieser Frage.\n\n') +
+      auff.map((a) => (a.schwere === 'sperrend' ? '[SPERREND] ' : '[LAUT] ') + a.satz)
+        .join('\n\n'));
+  }
+}
+
+// ---- DIE BEIDEN KNOEPFE --------------------------------------------------
+//
+// SIE STEHEN NEBENEINANDER UND SIND NICHT DASSELBE. Der eine geht den ganzen
+// Weg und haelt unmittelbar vor dem letzten Aufruf an; der andere macht ihn.
+// Was der eine tut, laesst sich zuruecknehmen, weil er nichts tut; was der
+// andere tut, nicht.
+if (D.dritterKnopf.da) {
+  kel('drittKasten').hidden = false;
+  setze(kel('drittKopf'), 'Dieses Video oeffentlich stellen: ' + D.dritterKnopf.videoId);
+  const halt = kel('knopfHalt');
+  const echt = kel('knopfEcht');
+  setze(halt, D.dritterKnopf.beschriftung_halt);
+  setze(echt, D.dritterKnopf.beschriftung_echt);
+
+  const klick = (knopf, adresse, andere) => {
+    knopf.addEventListener('click', async () => {
+      halt.disabled = true;
+      echt.disabled = true;
+      setze(knopf, 'laeuft …');
+      setze(andere, 'gesperrt -- es laeuft ein Lauf');
+      kel('laufKasten').hidden = false;
+      try {
+        const antwort = await fetch(adresse, {
+          method: 'POST',
+          headers: { 'X-Freigabe-Token': D.token },
+          signal: AbortSignal.timeout(ZEITGRENZE_START_MS),
+        });
+        let leib = null;
+        try { leib = await antwort.json(); } catch (e) { leib = null; }
+        if (!antwort.ok) {
+          const grund = (leib && leib.meldung) ? leib.meldung : ('HTTP ' + antwort.status);
+          setze(kel('drittFehler'),
+            'Der Dienst hat den Start abgelehnt: ' + grund).hidden = false;
+          setze(knopf, 'nicht gestartet');
+          return;
+        }
+      } catch (e) {
+        setze(kel('drittFehler'), 'Der Dienst hat nicht geantwortet: ' +
+          (e && e.message ? e.message : e) +
+          '\n\nOB ETWAS GESTARTET WURDE, IST VON HIER AUS NICHT ZU SEHEN. Im Terminal ' +
+          'nachsehen, in dem der Dienst laeuft, und im Studio unter dem Video.').hidden = false;
+        setze(knopf, 'ungewiss');
+        verfolgeLauf();
+        return;
+      }
+      setze(knopf, 'gestartet');
+      verfolgeLauf();
+    });
+  };
+  klick(halt, '/haltepunkt', echt);
+  klick(echt, '/veroeffentlichen', halt);
+} else if (D.frage && D.frage.moeglich) {
+  // Nur dann, wenn ueberhaupt eine Frage ansteht. Sonst waere "es gibt hier
+  // keinen Knopf zum Veroeffentlichen" ein Satz, der auf jeder Seite stuende
+  // und darum auf keiner gelesen wird.
+  kel('drittGesperrt').hidden = false;
+  setze(kel('drittGrund'), D.dritterKnopf.grund);
+}
+
 function schlaf(ms) { return new Promise((f) => setTimeout(f, ms)); }
 
 // Der Strom des Arbeiters, als EIN Stueck Text -- durch dieselbe setze(), die
@@ -1514,24 +1707,69 @@ async function verfolgeLauf() {
       // KEINE ZUSTIMMUNGSFARBE FUER DEN 0er. Er heisst, dass der Arbeiter zu
       // Ende gelaufen ist, und nicht, dass das Ergebnis gut ist -- das
       // entscheidet ein Mensch an dem, was oben steht.
+      //
+      // EU: WELCHER SCHLUSSSATZ GILT, KOMMT AUS DEM ZWECK DES LAUFS und nicht
+      // aus dem Rueckgabewert. Die drei Saetze -- "privat hochgeladen",
+      // "angehalten, nichts oeffentlich", "oeffentlich" -- beschreiben drei
+      // verschiedene Zustaende der Welt, und keiner davon laesst sich aus einer
+      // Zahl ablesen. Der Haltepunkt endet ausserdem ABSICHTLICH mit 1: er ist
+      // unterwegs stehengeblieben, und ein 0 hiesse "fertig".
       const durch = daten.ende.code === 0;
-      kel('laufEnde').className = 'lf-ende-kasten ' + (durch ? 'ausgang' : 'weg');
-      setze(kel('laufEnde'), (durch
-        ? 'Der Arbeiter ist mit Rueckgabewert 0 beendet. Was hochgeladen wurde, mit welchem ' +
-          'Titel, welcher Beschreibung und welchem Bild, und was YouTube dazu gemeldet hat, ' +
-          'steht oben in seinen eigenen Worten -- diese Seite gibt nichts davon mit eigenen ' +
-          'wieder.'
-        : 'Der Arbeiter ist mit Rueckgabewert ' + daten.ende.code + ' beendet. Der Grund ' +
-          'steht oben im Wortlaut. SEIN ERSTER SATZ SAGT, OB EIN VIDEO AUF DEM KANAL LIEGT ' +
-          '-- ein Abbruch auf diesem Weg kann NACH dem Upload fallen.') +
-        '\n\n' + (daten.ende.ermaechtigung_noch_da
+      const zweck = (daten.lauf && daten.lauf.zweck) || null;
+      const istHalt = zweck === 'veroeffentlichen_haltepunkt';
+      const istEcht = zweck === 'veroeffentlichen';
+      kel('laufEnde').className = 'lf-ende-kasten ' +
+        ((durch || istHalt) ? 'ausgang' : 'weg');
+      let kopf;
+      if (istHalt) {
+        kopf = 'Der Lauf ist am Haltepunkt angekommen (Rueckgabewert ' + daten.ende.code +
+          '). Das ist KEIN Fehler: dieser Lauf endet absichtlich mit einem Befund und nicht ' +
+          'mit einer 0, denn 0 hiesse "fertig", und fertig ist er nicht. Oben steht Feld ' +
+          'fuer Feld, was gesendet WUERDE.';
+      } else if (istEcht) {
+        kopf = durch
+          ? 'Der Arbeiter ist mit Rueckgabewert 0 beendet. Was gesendet wurde, was ' +
+            'zurueckkam und wann genau, steht oben in seinen eigenen Worten -- diese Seite ' +
+            'gibt nichts davon mit eigenen wieder.'
+          : 'Der Arbeiter ist mit Rueckgabewert ' + daten.ende.code + ' beendet. SEIN ERSTER ' +
+            'SATZ SAGT, OB DAS VIDEO OEFFENTLICH IST -- ein Abbruch auf diesem Weg kann VOR ' +
+            'oder NACH dem letzten Aufruf fallen, und das ist nicht dasselbe.';
+      } else {
+        kopf = durch
+          ? 'Der Arbeiter ist mit Rueckgabewert 0 beendet. Was hochgeladen wurde, mit welchem ' +
+            'Titel, welcher Beschreibung und welchem Bild, und was YouTube dazu gemeldet hat, ' +
+            'steht oben in seinen eigenen Worten -- diese Seite gibt nichts davon mit eigenen ' +
+            'wieder.'
+          : 'Der Arbeiter ist mit Rueckgabewert ' + daten.ende.code + ' beendet. Der Grund ' +
+            'steht oben im Wortlaut. SEIN ERSTER SATZ SAGT, OB EIN VIDEO AUF DEM KANAL LIEGT ' +
+            '-- ein Abbruch auf diesem Weg kann NACH dem Upload fallen.';
+      }
+      let schluss;
+      if (istHalt) {
+        schluss = 'HIER IST SCHLUSS -- UND ES IST NICHTS OEFFENTLICH. Dieser Lauf hat den ' +
+          'letzten Aufruf NICHT gemacht; die Liste der Aufrufe oben zeigt es. Das Video ist ' +
+          'privat und bleibt es.\n\nDie Ermaechtigung ist trotzdem verbraucht -- sie galt ' +
+          'fuer diesen einen Lauf. Wer jetzt wirklich veroeffentlichen will, startet den ' +
+          'Dienst neu und klickt dort auf den anderen Knopf; der Statusblock wird dann noch ' +
+          'einmal gelesen, denn der von eben ist alt.';
+      } else if (istEcht) {
+        schluss = 'HIER IST SCHLUSS -- UND DIESER SCHRITT LAESST SICH NICHT ZURUECKNEHMEN. ' +
+          'Ist das Video oeffentlich, hat es moeglicherweise schon jemand gesehen; ein ' +
+          'spaeteres Zuruecksetzen auf privat macht das nicht rueckgaengig.\n\nDieser Bau ' +
+          'setzt nichts zurueck und raeumt nichts weg. Wer die Sichtbarkeit aendern will, ' +
+          'tut es im Studio -- und dort ist ohnehin nachzusehen, ob unter dem Video etwas ' +
+          'steht, das hier nicht steht.';
+      } else {
+        schluss = 'HIER IST SCHLUSS FUER DIESEN SCHRITT. Das Video ist PRIVAT. Fuer die ' +
+          'Frage und den zweiten Klick wird dieser Dienst BEENDET (Strg+C im Terminal) und ' +
+          'im Longform-Modus NEU GESTARTET: dann liest der Trockenlauf das Gedaechtnis von ' +
+          'jetzt, und die Frage steht auf der Lage von jetzt statt auf der von vor dem ' +
+          'Upload.';
+      }
+      setze(kel('laufEnde'), kopf + '\n\n' + (daten.ende.ermaechtigung_noch_da
         ? 'Die Ermaechtigungsdatei liegt noch da -- der Arbeiter hat sie nicht verbraucht. ' +
           'Sie laeuft von selbst ab.'
-        : 'Die Ermaechtigung ist verbraucht und geloescht.') +
-        '\n\nHIER IST SCHLUSS. Das Video ist PRIVAT. Das oeffentliche Stellen gibt es in ' +
-        'diesem Bau nicht -- weder auf dieser Seite noch im Arbeiter noch als Aufruf, den ' +
-        'man von Hand ausloesen koennte. Es braeuchte eine ZWEITE Ermaechtigung mit einem ' +
-        'anderen Zweck, und einen Bau, den es noch nicht gibt.');
+        : 'Die Ermaechtigung ist verbraucht und geloescht.') + '\n\n' + schluss);
       kel('laufEnde').hidden = false;
       return;
     }
@@ -1572,6 +1810,13 @@ function baueLongformSeite(sitzung) {
     ? sitzung.knopfBereit(sitzung)
     : { da: false, grund: 'Diese Sitzung sagt nicht, ob ein Knopf zulaessig ist. Ohne ' +
       'diese Auskunft wird keiner gezeigt.' };
+  // EU: dasselbe fuer die beiden Knoepfe des dritten Aufrufs, ueber dieselbe
+  // Naht. Fehlt die Funktion, gibt es keinen Knopf -- eine Sitzung, die nicht
+  // sagt, ob etwas zulaessig ist, bekommt kein Ja geschenkt.
+  const dritt = typeof sitzung.dritterKnopfBereit === 'function'
+    ? sitzung.dritterKnopfBereit(sitzung)
+    : { da: false, grund: 'Diese Sitzung sagt nicht, ob ein Knopf zum Veroeffentlichen ' +
+      'zulaessig ist. Ohne diese Auskunft wird keiner gezeigt.' };
   const nutzlast = {
     aufnahme: sitzung.aufnahme,
     befehl: t.befehl,
@@ -1621,6 +1866,34 @@ function baueLongformSeite(sitzung) {
     // Der Stand des Gedaechtnisses als EIN Satz, den der Arbeiter formuliert
     // hat. Diese Seite gibt ihn nicht mit eigenen Worten wieder.
     gedaechtnisSatz: (sitzung.gedaechtnis && sitzung.gedaechtnis.satz) || null,
+
+    // EU: DIE FRAGE (Vertrag 2.4) UND DIE BEIDEN KNOEPFE DES DRITTEN AUFRUFS.
+    //
+    // `frage` geht WOERTLICH und VOLLSTAENDIG mit -- Titel, Beschreibung,
+    // Bild, jede Auskunft von YouTube, die beiden rohen Bloecke und die Liste
+    // dessen, was aufgefallen ist. Diese Seite waehlt nichts davon aus und
+    // kuerzt nichts: was der Arbeiter fuer nennenswert haelt, steht auf dem
+    // Schirm. Ein Feld, das die Seite stillschweigend wegliesse, waere genau
+    // das, an dem ein Video haengt, an dem etwas nicht stimmt.
+    frage: sitzung.frage || null,
+
+    // OB ES DIE BEIDEN KNOEPFE GIBT, ENTSCHEIDET DER DIENST -- dieselbe
+    // Funktion, an der die beiden POST-Routen den Klick pruefen. Eine zweite
+    // Bedingung hier waere eine Seite, die einen Knopf zeigt, den der Dienst
+    // ablehnt, oder einen verschweigt, den er annaehme.
+    dritterKnopf: dritt.da ? {
+      da: true,
+      grund: null,
+      videoId: sitzung.zweiteBindung.videoId,
+      kanal: sitzung.kanal.name,
+      // ZWEI BESCHRIFTUNGEN, UND SIE SAGEN, WAS GESCHIEHT. Nicht "weiter" und
+      // "fertig": auf dem einen steht, dass er anhaelt, auf dem anderen, dass
+      // das Video oeffentlich wird.
+      beschriftung_halt: 'Nur ansehen: bis unmittelbar vor den letzten Aufruf gehen und dort ' +
+        'ANHALTEN (stellt nichts oeffentlich)',
+      beschriftung_echt: 'JETZT OEFFENTLICH STELLEN: ' + sitzung.zweiteBindung.videoId +
+        ' auf "' + sitzung.kanal.name + '" — nicht zurueckzunehmen',
+    } : { da: false, grund: dritt.grund },
   };
   return [
     '<!doctype html>',
@@ -1656,10 +1929,12 @@ function baueLongformSeite(sitzung) {
     '<div class="kopfzeile" id="kopf1"></div>',
     '<div class="kopfzeile" id="kopf2"></div>',
     '<div class="kopfwerkzeug">',
-    '<span class="kopfzeile">Diese Seite hat <b>einen</b> Knopf, und er laedt das Video ' +
-      '<b>privat</b> hoch. Sie stellt nichts oeffentlich &mdash; das gibt es in diesem Bau ' +
-      'nicht. Beenden: <kbd>Strg</kbd>+<kbd>C</kbd> in dem Terminal, in dem der Dienst ' +
-      'laeuft. Er gibt dabei seine Sperre frei.</span>',
+    '<span class="kopfzeile">Diese Seite hat Knoepfe, und je nach Lage <b>einen</b> von ' +
+      'zwei Sorten: entweder <b>Hochladen</b> (privat, nichts wird oeffentlich) oder &mdash; ' +
+      'wenn schon ein privates Video mit Bild auf dem Kanal liegt &mdash; <b>Anhalten</b> ' +
+      'und <b>Oeffentlich stellen</b>. Der letzte ist der einzige Knopf dieses Projekts, den ' +
+      'niemand zuruecknehmen kann. Beenden: <kbd>Strg</kbd>+<kbd>C</kbd> in dem Terminal, in ' +
+      'dem der Dienst laeuft. Er gibt dabei seine Sperre frei.</span>',
     '</div></header>',
     '<main class="lf">',
 
@@ -1769,6 +2044,125 @@ function baueLongformSeite(sitzung) {
       'stimmt oder nichts zu tun ist &mdash; der Grund steht darueber, in den Worten des ' +
       'Arbeiters.</p>',
     '</div>',
+    '</section>',
+
+    // 4b. EU: DIE FRAGE (Vertrag 2.4, 4 Schritt 14).
+    //
+    //     Sie steht NACH dem Text des Arbeiters und VOR den beiden Knoepfen des
+    //     dritten Aufrufs, und beides aus demselben Grund wie beim ersten
+    //     Knopf: was man bestaetigt, liest man davor.
+    //
+    //     WAS SIE ZEIGT, ZEIGT SIE VOLLSTAENDIG. Der Titel zweimal (gesendet
+    //     und wie YouTube ihn fuehrt), die Beschreibung im Wortlaut mit dem
+    //     Beleg, ob es die gesendete ist, das Bild von der Platte und die
+    //     Adressen dessen, was YouTube ausliefert, die fuenf Auskuenfte
+    //     einzeln und die beiden ROHEN Bloecke unveraendert. Was fehlt, steht
+    //     als "nicht vorhanden" da und nicht als Luecke.
+    '<section class="lf-abschnitt" id="frageKasten" hidden>',
+    '<h2>Die Frage &mdash; was am Video haengt</h2>',
+    '<p>Der Upload ist gelaufen. Was hier steht, ist das, worueber jetzt entschieden wird: ' +
+      'was YouTube ueber dieses Video sagt und was daran haengt. <b>Danach ist es ' +
+      'oeffentlich, und das nimmt niemand zurueck.</b></p>',
+    '<div class="lf-frage">',
+    '<h3 id="frageKopf"></h3>',
+    '<dl>',
+    '<dt>Kennung</dt><dd id="fVideoId"></dd>',
+    '<dt>hochgeladen</dt><dd id="fHoch"></dd>',
+    '<dt>Bild gesetzt</dt><dd id="fThumb"></dd>',
+    '<dt>zurueckgelesen</dt><dd id="fRueck"></dd>',
+    '</dl>',
+
+    '<h3>Der Titel</h3>',
+    '<dl>',
+    '<dt>wie gesendet</dt><dd id="fTitelGesendet"></dd>',
+    '<dt>laut YouTube</dt><dd id="fTitelYoutube"></dd>',
+    '</dl>',
+    '<div class="lf-vergleich" id="fTitelVergleich"></div>',
+
+    '<h3>Die Beschreibung, im Wortlaut und vollstaendig</h3>',
+    '<pre class="lf-text" id="fBeschreibung"></pre>',
+    '<div class="lf-vergleich" id="fBeschreibungSatz"></div>',
+    '<dl>',
+    '<dt>Hashtagzeile</dt><dd id="fHashtags"></dd>',
+    '<dt>Tags</dt><dd id="fTags"></dd>',
+    '</dl>',
+
+    '<h3>Das Bild</h3>',
+    '<dl>',
+    '<dt>Datei</dt><dd id="fBildName"></dd>',
+    '<dt>sha256</dt><dd id="fBildSha"></dd>',
+    '<dt>Groesse</dt><dd id="fBildBytes"></dd>',
+    '<dt>Herkunft</dt><dd id="fBildRang"></dd>',
+    '</dl>',
+    '<div class="lf-vergleich" id="fBildPlatte"></div>',
+    '<p>Das Bild selbst steht weiter oben auf dieser Seite &mdash; es ist dieselbe Datei. ' +
+      'Was YouTube daraus gemacht hat, steht als Adresse darunter; die Bilder von dort holt ' +
+      'diese Seite <b>nicht</b>, das waere ein Aufruf an einen fremden Rechner. Die ' +
+      'Vorschaubilder im CDN hinken ausserdem nach (DX hat 25 Minuten gemessen).</p>',
+    '<pre class="lf-text" id="fYtThumbs"></pre>',
+
+    '<h3>Was YouTube gemeldet hat</h3>',
+    '<p>Jede der fuenf Auskuenfte steht hier, auch die, die fehlen. &bdquo;nicht ' +
+      'vorhanden&ldquo; heisst: das Feld stand nicht in der Antwort &mdash; gemessen an 21 ' +
+      'Shorts (DY) ist das der Normalfall, wenn nichts vorliegt. Es ist nicht dasselbe wie ' +
+      '&bdquo;leer&ldquo;.</p>',
+    '<pre class="lf-text" id="fAuskuenfte"></pre>',
+    '<h3>Der status-Block, unveraendert</h3>',
+    '<pre class="lf-text" id="fStatusRoh"></pre>',
+    '<h3>Der processingDetails-Block, unveraendert</h3>',
+    '<pre class="lf-text" id="fProcessingRoh"></pre>',
+
+    '<h3>Was aufgefallen ist</h3>',
+    '<div class="lf-auff still" id="fAuff"></div>',
+    '</div>',
+    '</section>',
+
+    // 4c. EU: DIE BEIDEN KNOEPFE DES DRITTEN AUFRUFS.
+    //
+    //     Sie stehen ganz unten, nach allem, was sie bestaetigen. Und sie sind
+    //     ZWEI und nicht einer mit einem Haken: ein Haken laesst sich
+    //     uebersehen, zwei Knoepfe nicht. Der obere haelt an, der untere ist
+    //     nicht zurueckzunehmen.
+    '<section class="lf-abschnitt" id="drittAbschnitt">',
+    '<div class="lf-knopf gefahr" id="drittKasten" hidden>',
+    '<h2 id="drittKopf"></h2>',
+    '<p><b>Was der erste Knopf tut:</b> er geht den ganzen Weg des letzten Schritts &mdash; ' +
+      'anmelden, Kanal pruefen, das Video zuruecklesen, den Titel gegen den beurteilten ' +
+      'halten, das Bild gegen die Platte, den Statusblock holen, den Anfragekoerper bauen ' +
+      '&mdash; und <b>haelt unmittelbar davor an</b>. Er stellt nichts oeffentlich. Was ' +
+      'gesendet wuerde, steht danach Feld fuer Feld auf dem Schirm.</p>',
+    '<p><b>Was der zweite Knopf tut:</b> dasselbe, und dann sendet er. <b>Danach ist das ' +
+      'Video oeffentlich.</b> Es steht auf der Kanalseite und in der Suche; wer es gesehen ' +
+      'hat, hat es gesehen. Ein spaeteres Zuruecksetzen auf privat macht das nicht ' +
+      'rueckgaengig, und dieser Bau kann es ohnehin nicht &mdash; er loescht nichts, setzt ' +
+      'nichts zurueck und wiederholt keinen Aufruf.</p>',
+    '<p><b>Geaendert wird genau ein Feld:</b> die Sichtbarkeit. Titel, Beschreibung, Tags, ' +
+      'Kategorie, Sprache und Bild bleiben, wie sie sind. Der Aufruf schickt den ' +
+      'vollstaendigen Statusblock zurueck, den er unmittelbar vorher gelesen hat &mdash; ' +
+      'sonst loeschte er die Felder, die er nicht nennt.</p>',
+    '<p><b>Beide Knoepfe schreiben eine Einmal-Ermaechtigung</b>, jeder mit seinem eigenen ' +
+      'Zweck. Sie gilt zwei Minuten und genau einmal, und sie ist an dieses Video, diese ' +
+      'Videodatei, den beurteilten Titel und dieses Bild gebunden. Der Zweck steht in der ' +
+      'Datei: eine Ermaechtigung des ersten Knopfes kann auf keinem Weg veroeffentlichen.</p>',
+    '<button id="knopfHalt" class="halt" type="button"></button>',
+    '<button id="knopfEcht" class="gefahr" type="button"></button>',
+    '<div class="lf-fehler" id="drittFehler" hidden></div>',
+    '</div>',
+    '<div class="lf-gesperrt" id="drittGesperrt" hidden>',
+    '<h2>Es gibt hier keinen Knopf zum Veroeffentlichen</h2>',
+    '<p id="drittGrund"></p>',
+    '<p>Ein fehlender Knopf ist kein Fehler dieser Seite. Er heisst, dass etwas nicht ' +
+      'stimmt oder nichts zu tun ist &mdash; der Grund steht darueber, in den Worten des ' +
+      'Arbeiters.</p>',
+    '</div>',
+    '</section>',
+
+    // 4d. EU: DER LAUF. Er stand bis EU im Abschnitt "Hochladen" und gehoert
+    //     dorthin nicht mehr: seit es drei Knoepfe gibt, kann ihn jeder von
+    //     ihnen fuellen. Ein Fortschrittskasten, der unter dem falschen Knopf
+    //     steht, sieht aus, als gehoerte er zu dem, den man nicht gedrueckt
+    //     hat.
+    '<section class="lf-abschnitt">',
     '<div class="lf-lauf" id="laufKasten" hidden>',
     '<h3>Was der Arbeiter dabei sagt</h3>',
     '<p>Woertlich seine Ausgabe, ungekuerzt, in der Reihenfolge, in der sie kommt. Zeilen ' +
@@ -1783,18 +2177,23 @@ function baueLongformSeite(sitzung) {
     //    ist fertig" die naheliegendste Lesart, und sie ist falsch.
     '<section class="lf-ende">',
     '<h2>Hier hoert dieser Weg auf</h2>',
-    '<p><b>Das Video ist danach privat und bleibt es.</b> Niemand ausser dem Kanalinhaber ' +
-      'sieht es. Es steht in keinem Feed, in keiner Benachrichtigung und auf keiner ' +
-      'Kanalseite.</p>',
-    '<p><b>Das oeffentliche Stellen gibt es in diesem Bau nicht.</b> Nicht auf dieser ' +
-      'Seite, nicht im Arbeiter, nicht als Argument und nicht als Aufruf, den man von Hand ' +
-      'ausloesen koennte. Der dritte Aufruf (Vertrag 2.5, Schritte 14 bis 17) ist nicht ' +
-      'gebaut &mdash; der Name der Methode kommt in diesem Projekt nirgends vor, und die ' +
-      'Tests rechnen das ueber die ganze geliehene Kette nach.</p>',
-    '<p><b>Was dazugehoeren wird</b>, wenn er gebaut ist: eine <b>zweite</b> ' +
-      'Ermaechtigung mit einem anderen Zweck, geschrieben von einem zweiten Klick, nachdem ' +
-      'ein Mensch gesehen hat, was YouTube nach der Verarbeitung meldet. Die erste ersetzt ' +
-      'sie nicht und ist ohnehin verbraucht.</p>',
+    '<p><b>Nach dem Hochladen ist das Video privat und bleibt es</b>, bis jemand hier ein ' +
+      'zweites Mal klickt. Niemand ausser dem Kanalinhaber sieht es; es steht in keinem ' +
+      'Feed und auf keiner Kanalseite.</p>',
+    '<p><b>Der zweite Klick ist der, den niemand zuruecknimmt.</b> Was oeffentlich war, hat ' +
+      'jemand gesehen. Dieser Bau kann es nicht rueckgaengig machen: er loescht kein Video, ' +
+      'setzt keines auf privat zurueck und wiederholt keinen Aufruf (Vertrag 7). Wer die ' +
+      'Sichtbarkeit spaeter aendern will, tut es im Studio.</p>',
+    '<p><b>Die beiden Klicks sind getrennt, und dazwischen liegt ein Neustart.</b> Nach dem ' +
+      'Upload steht diese Seite auf der Lage von vorher &mdash; die Frage gehoert auf die ' +
+      'Lage von jetzt. Beenden Sie den Dienst und starten Sie ihn im Longform-Modus neu: ' +
+      'dann liest der Trockenlauf das Gedaechtnis, das der Upload geschrieben hat, und ' +
+      'stellt die Frage darauf.</p>',
+    '<p><b>Was der letzte Aufruf aendert:</b> ein einziges Feld, die Sichtbarkeit. Titel, ' +
+      'Beschreibung, Tags, Kategorie, Sprache und Bild bleiben unangetastet. Er schickt den ' +
+      'vollstaendigen Statusblock zurueck, den er unmittelbar vorher gelesen hat &mdash; ' +
+      'ein unvollstaendiger loeschte die Felder, die er nicht nennt, an einem Video, das ' +
+      'danach schon oeffentlich waere.</p>',
     '<p><b>Was diese Sitzung schreibt:</b> ihre Sperre unter <code>data/freigaben/</code> ' +
       '(beim Beenden wieder weg) und &mdash; erst beim Klick &mdash; die eine ' +
       'Ermaechtigung unter <code>data/ermaechtigungen/</code>, die der Arbeiter verbraucht ' +

@@ -257,6 +257,26 @@ function doppelgaenger({
         processingFailureReason: weg(),
       };
     },
+
+    // EU: DIE BEIDEN METHODEN DES DRITTEN AUFRUFS -- HIER ALS FALLE.
+    //
+    // Seit EU verlangt das Kanalobjekt sie; ein Doppelgaenger ohne sie wird gar
+    // nicht erst angenommen. Sie stehen darum hier, aber sie WERFEN: KEIN Lauf
+    // dieser Datei geht den Weg des dritten Aufrufs, und wenn doch einer
+    // dorthin geriete, soll er nicht still durchlaufen, sondern platzen. Die
+    // Zusage von EP -- dieser Weg stellt nichts oeffentlich -- ist damit nicht
+    // mehr "es gibt den Aufruf nicht", sondern "kein Lauf hier macht ihn", und
+    // das wird gemessen statt behauptet.
+    async liesStatus() {
+      throw new Error('DOPPELGAENGER: liesStatus gehoert zum dritten Aufruf. Kein Lauf in ' +
+        'tests/ep-privat.test.cjs darf dorthin kommen -- der Weg dieser Datei endet beim ' +
+        'privaten Video. Was den dritten Aufruf prueft, steht in tests/eu-oeffentlich.test.cjs.');
+    },
+    async stelleOeffentlich() {
+      throw new Error('DOPPELGAENGER: stelleOeffentlich WURDE GERUFEN. Ein Lauf dieser Datei ' +
+        'hat versucht, ein Video oeffentlich zu stellen. Das ist der Fehler, gegen den EP ' +
+        'gebaut ist.');
+    },
   });
 }
 
@@ -316,11 +336,19 @@ test('EP-N1: ein voller Lauf macht GENAU die fuenf Aufrufe, in dieser Reihenfolg
       'thumbnails.set',   // Aufruf 2  (Schritt 12)
       'videos.list',      // Schritt 13: zuruecklesen
     ]);
-    // Und von jeder SCHREIBENDEN Sorte genau einer.
-    for (const name of K.SCHREIBENDE_AUFRUFE) {
+    // Und von jeder SCHREIBENDEN Sorte, die zu DIESEM Weg gehoert, genau
+    // einer. EU: die Liste der schreibenden Aufrufe ist um den dritten
+    // gewachsen, und der gehoert hier ausdruecklich NICHT dazu -- der Weg
+    // dieser Datei endet beim privaten Video. Er wird darum abgezogen und
+    // getrennt geprueft: nicht einmal, sondern KEINMAL.
+    const HIER_SCHREIBEND = K.SCHREIBENDE_AUFRUFE.filter((a) => a !== 'videos.update');
+    assert.equal(HIER_SCHREIBEND.length, 2);
+    for (const name of HIER_SCHREIBEND) {
       assert.equal(r.aufrufe.filter((a) => a === name).length, 1,
         name + ' ist nicht genau einmal gemacht worden: ' + r.aufrufe.join(', '));
     }
+    assert.equal(r.aufrufe.filter((a) => a === 'videos.update').length, 0,
+      'dieser Weg hat den dritten Aufruf gemacht: ' + r.aufrufe.join(', '));
     // Der Doppelgaenger fuehrt Namen UND Reihenfolge.
     const voll = r.kanal.aufrufe();
     assert.deepEqual(voll.map((a) => a.nr), [1, 2, 3, 4, 5]);
@@ -381,28 +409,53 @@ test('EP-N1: die Zaehlung steht im PROGRAMM und nicht nur im Test', () => {
 });
 
 // ===========================================================================
-// NACHWEIS 2: videos.update IST NICHT ERREICHBAR
+// NACHWEIS 2: DER DRITTE AUFRUF IST AN GENAU EINER STELLE ERREICHBAR
 // ===========================================================================
 //
-// Wie in EG und EK: als Test, nicht als Zusicherung. Der dritte Aufruf ist der
-// naechste Auftrag, und die Grenze zwischen den beiden ist der Sinn dieses
-// Schnitts.
+// EU: DIESE UEBERSCHRIFT HAT SICH GEAENDERT. Bis EU hiess sie "videos.update
+// IST NICHT ERREICHBAR", und das war die Zusage von EP: der dritte Aufruf war
+// nicht gebaut, sein Name kam nirgends vor, und der Test rechnete es ueber die
+// ganze geliehene Kette nach. Er ist jetzt gebaut. Die Zusage wird darum
+// ERSETZT und nicht weiter behauptet -- was an ihre Stelle tritt, ist enger
+// als "es gibt ihn jetzt":
+//
+//   Der Aufruf existiert an GENAU EINER Stelle (src/upload/longform-kanal.js),
+//   er ist von dort aus die EINZIGE Methode, die ihn macht, und keine andere
+//   Datei dieses Projekts hat einen Weg zu einem API-Klienten. Der Arbeiter
+//   spricht ausschliesslich ueber die sieben Methoden des Kanalobjekts; einen
+//   `yt`-Klienten sieht er nie.
+//
+// UND: KEIN LAUF DIESER DATEI MACHT IHN. Der Doppelgaenger oben wirft, wenn
+// eine der beiden Methoden des dritten Aufrufs gerufen wird. Das ist die
+// Zusage von EP, in gemessener Form -- der Weg BIS ZUM PRIVATEN VIDEO stellt
+// nichts oeffentlich, und das gilt nach EU genauso.
+//
+// Die uebrigen verbotenen Aufrufe (Vertrag 7) bleiben, wo sie waren: sie
+// duerfen in KEINER Datei vorkommen, auch nicht im Kommentar.
 
 // Die Methoden, die dieser Weg NIE macht (Vertrag 7). `videos.update` steht
-// vorn, weil es die eine ist, die nahe liegt.
+// hier NICHT MEHR -- es ist seit EU gebaut, und die Liste ist keine
+// Wunschliste, sondern eine Tatsachenliste. Was gebaut ist, wird anders
+// geprueft: strukturell, weiter unten.
 const NIE = Object.freeze([
-  'videos.update', 'videos.delete', 'videos.rate', 'videos.reportAbuse',
+  'videos.delete', 'videos.rate', 'videos.reportAbuse',
   'playlistItems.', 'playlists.', 'captions.', 'commentThreads', 'comments.',
   'liveBroadcasts', 'membershipsLevels', 'watermarks.',
 ]);
 
-// DER VEROEFFENTLICHUNGSTERMIN STEHT NICHT IN `NIE`, UND DAS IST KEIN
-// VERSEHEN. Die SHORTS-Linie benutzt ihn -- sie plant Termine, das ist ihr
-// ganzer Zweck --, und uploader.js gehoert zur geliehenen Kette. Ein Test, der
-// ihn dort verboete, verboete den Shorts-Weg. Er ist darum eine Zusage der
-// LONGFORM-Module und wird unten an ihnen geprueft, dort aber schaerfer: sie
-// duerfen ihn nicht einmal im Kommentar tragen.
-const NIE_IM_LONGFORM = Object.freeze(['videos.update', 'publishAt']);
+// DER VEROEFFENTLICHUNGSTERMIN UND DER DRITTE AUFRUF: BEIDE DUERFEN NUR IN
+// EINER EINZIGEN DATEI STEHEN, und zwar in der, die die API-Namen fuehrt.
+//
+// `publishAt` muss dort stehen: es ist ein SETZBARES Feld des Teils `status`,
+// und der Koerper des dritten Aufrufs entsteht dadurch, dass es
+// ausgeschlossen wird. Ein Ausschluss braucht den Namen. Ueberall sonst gilt
+// weiter, was seit EK gilt -- der Name kommt nicht vor, auch nicht im
+// Kommentar.
+//
+// Der Freigabedienst und die Longform-Ansicht tragen beide Namen NICHT. Sie
+// sind der Weg vom Klick zum Arbeiter, und sie sollen ueber den Inhalt des
+// Aufrufs nichts wissen; was sie darueber saegten, waere eine zweite Fassung.
+const NUR_IM_KANALMODUL = Object.freeze(['publishAt']);
 
 const LONGFORM_MODULE = Object.freeze([
   'src/upload/longform-arbeiter.js',
@@ -419,7 +472,7 @@ function geliehenKette() {
     .sort();
 }
 
-test('EP-N2: keine Datei der geliehenen Kette kennt videos.update', () => {
+test('EP-N2: keine Datei der geliehenen Kette kennt einen der verbotenen Aufrufe', () => {
   const dateien = geliehenKette();
   // Der Test prueft ins Leere, wenn die Kette leer ist.
   assert.ok(dateien.length >= 8,
@@ -429,9 +482,9 @@ test('EP-N2: keine Datei der geliehenen Kette kennt videos.update', () => {
   assert.ok(dateien.some((d) => d.endsWith('uploader.js')));
 
   // GEPRUEFT WIRD DER CODE, NICHT DER KOMMENTAR. Der Shorts-Uploader erklaert
-  // in seinem Kopf, dass er kein videos.update macht -- ein Satz, der die
-  // Zusage NENNT, ist nicht ihre Verletzung. Was zaehlt, ist, ob eine Zeile
-  // den Aufruf machen koennte.
+  // in seinem Kopf, was er nicht macht -- ein Satz, der die Zusage NENNT, ist
+  // nicht ihre Verletzung. Was zaehlt, ist, ob eine Zeile den Aufruf machen
+  // koennte.
   const funde = [];
   for (const datei of dateien) {
     const nurCode = fs.readFileSync(datei, 'utf8').split('\n')
@@ -454,20 +507,32 @@ test('EP-N2: keine Datei der geliehenen Kette kennt videos.update', () => {
   assert.ok(kanalCode.includes('thumbnails.set'));
 });
 
-test('EP-N2: die Longform-Module tragen videos.update nicht einmal im Kommentar', () => {
-  // SCHAERFER ALS OBEN, und nur fuer die drei Module dieses Weges. Ein
-  // Kommentar, der den Namen traegt, ist die erste Zeile, die ihn enthaelt --
-  // und die zweite ist die, die ihn benutzt.
+test('EP-N2: der Veroeffentlichungstermin steht in genau einer Datei', () => {
+  // SCHAERFER ALS OBEN, und nur fuer die Module dieses Weges: ein Kommentar,
+  // der den Namen traegt, ist die erste Zeile, die ihn enthaelt.
+  //
+  // Die Ausnahme ist longform-kanal.js, und sie ist notwendig: der Koerper des
+  // dritten Aufrufs entsteht dadurch, dass dieses Feld ausgeschlossen wird,
+  // und ein Ausschluss braucht den Namen.
   for (const datei of LONGFORM_MODULE) {
+    if (datei.endsWith('longform-kanal.js')) continue;
     const text = fs.readFileSync(path.join(WURZEL, datei), 'utf8');
-    for (const wort of NIE_IM_LONGFORM) {
+    for (const wort of NUR_IM_KANALMODUL) {
       assert.ok(!text.includes(wort), datei + ' nennt ' + wort);
     }
   }
-  // Der Freigabedienst ebenso -- ganz, denn sein Shorts-Teil braucht keinen
-  // von beiden.
+  // Und im Kanalmodul steht er -- sonst haette der Ausschluss keinen
+  // Gegenstand, und dieser Test praefte eine Abwesenheit, die niemand
+  // herstellen muss.
+  const kanal = fs.readFileSync(path.join(WURZEL, 'src/upload/longform-kanal.js'), 'utf8');
+  for (const wort of NUR_IM_KANALMODUL) {
+    assert.ok(kanal.includes(wort), 'longform-kanal.js nennt ' + wort + ' nicht');
+  }
+
+  // Der Freigabedienst ebenso frei davon -- ganz, denn sein Shorts-Teil
+  // braucht ihn nicht.
   const dienst = fs.readFileSync(path.join(WURZEL, 'src/upload/freigabe-server.js'), 'utf8');
-  for (const wort of NIE_IM_LONGFORM) {
+  for (const wort of NUR_IM_KANALMODUL) {
     assert.ok(!dienst.includes(wort), 'freigabe-server.js nennt ' + wort);
   }
   // Die Seite nur in ihrem LONGFORM-Teil: ihre Shorts-Haelfte faerbt die
@@ -475,7 +540,7 @@ test('EP-N2: die Longform-Module tragen videos.update nicht einmal im Kommentar'
   const seite = fs.readFileSync(path.join(WURZEL, 'src/upload/freigabe-seite.js'), 'utf8');
   const longformTeil = seite.slice(seite.indexOf('// EL: DIE LONGFORM-ANSICHT'));
   assert.ok(longformTeil.length > 3000, 'der Longform-Teil der Seite wurde nicht gefunden');
-  for (const wort of NIE_IM_LONGFORM) {
+  for (const wort of NUR_IM_KANALMODUL.concat(['videos.update'])) {
     assert.ok(!longformTeil.includes(wort),
       'die Longform-Ansicht nennt ' + wort);
   }
@@ -485,15 +550,17 @@ test('EP-N2: die Longform-Module tragen videos.update nicht einmal im Kommentar'
     'der Schnitt zwischen den beiden Haelften trifft nicht');
 });
 
-test('EP-N2: der Kanal hat GENAU die fuenf Methoden, und keine fuehrt weiter', () => {
+test('EP-N2: der Kanal hat GENAU die sieben Methoden, und keine fuehrt weiter', () => {
   const k = doppelgaenger();
-  // Abgezaehlt, nicht "enthaelt": eine sechste, die sich dazustellt, faellt
+  // Abgezaehlt, nicht "enthaelt": eine achte, die sich dazustellt, faellt
   // hier auf.
   assert.deepEqual(Object.keys(k).sort(),
     K.METHODENNAMEN.concat(['aufrufe', 'aufrufnamen']).sort());
-  // Und die fuenf machen genau die vier Aufrufe (videos.list zweimal).
+  assert.equal(K.METHODENNAMEN.length, 7);
+  // Und die sieben machen genau die vier Aufrufe (videos.list dreimal).
   assert.deepEqual(K.METHODENNAMEN.map((m) => K.METHODEN[m]).sort(),
-    ['channels.list', 'thumbnails.set', 'videos.insert', 'videos.list', 'videos.list'].sort());
+    ['channels.list', 'thumbnails.set', 'videos.insert', 'videos.list', 'videos.list',
+      'videos.list', 'videos.update'].sort());
   for (const name of K.METHODENNAMEN) {
     assert.ok(K.ALLE_AUFRUFE.includes(K.METHODEN[name]),
       'die Methode ' + name + ' macht einen Aufruf, der in keiner Liste steht');
@@ -502,25 +569,31 @@ test('EP-N2: der Kanal hat GENAU die fuenf Methoden, und keine fuehrt weiter', (
   for (const a of K.ALLE_AUFRUFE) {
     assert.ok(!NIE.includes(a), 'ein verbotener Aufruf steht in der Liste: ' + a);
   }
+  // Und der dritte Aufruf steht bei den SCHREIBENDEN und nicht bei den
+  // lesenden: er wird gezaehlt, und ein zweiter wirft.
+  assert.ok(K.SCHREIBENDE_AUFRUFE.includes('videos.update'));
+  assert.ok(!K.LESENDE_AUFRUFE.includes('videos.update'));
 });
 
 test('EP-N2: der Zaehler reicht NICHT durch -- was er nicht kennt, kommt nicht heraus', () => {
   // DIE GEGENPROBE, und sie ist der eigentliche Nachweis: ein inneres Objekt,
-  // das eine Methode `stelleOeffentlich` traegt, kommt damit nicht nach
-  // draussen. zaehlenderKanal baut sein Ergebnis AUS der Methodenliste und
-  // nicht aus dem, was das innere Objekt mitbringt.
+  // das eine Methode traegt, die nicht in METHODEN steht, kommt damit nicht
+  // nach draussen. zaehlenderKanal baut sein Ergebnis AUS der Methodenliste
+  // und nicht aus dem, was das innere Objekt mitbringt.
   const heimlich = {
     nenneKanal: async () => ({ gefunden: true, id: 'x', name: 'y' }),
     ladeVideoHoch: async () => ({ videoId: 'x' }),
     liesVerarbeitung: async () => ({}),
     setzeThumbnail: async () => ({}),
     liesVideoVoll: async () => ({}),
-    stelleOeffentlich: async () => { throw new Error('das darf nicht erreichbar sein'); },
+    liesStatus: async () => ({}),
+    stelleOeffentlich: async () => ({}),
+    loescheVideo: async () => { throw new Error('das darf nicht erreichbar sein'); },
   };
   const k = K.zaehlenderKanal(heimlich);
-  assert.equal(k.stelleOeffentlich, undefined,
+  assert.equal(k.loescheVideo, undefined,
     'eine Methode, die nicht in METHODEN steht, ist von aussen erreichbar');
-  assert.ok(!Object.keys(k).includes('stelleOeffentlich'));
+  assert.ok(!Object.keys(k).includes('loescheVideo'));
   // Und das innere Objekt selbst liegt nirgends offen: kein Feld des
   // Ergebnisses zeigt darauf.
   for (const [name, wert] of Object.entries(k)) {
@@ -534,15 +607,24 @@ test('EP-N2: der Zaehler reicht NICHT durch -- was er nicht kennt, kommt nicht h
 });
 
 test('EP-N2: der echte Kanal haelt seinen Klienten in der Schliessung', () => {
-  // rohKanal(yt) gibt fuenf Funktionen zurueck und KEIN Feld, das auf `yt`
+  // rohKanal(yt) gibt sieben Funktionen zurueck und KEIN Feld, das auf `yt`
   // zeigt. Wer das Objekt in der Hand hat, kommt von ihm aus an nichts, was
   // hier nicht steht.
+  //
+  // EU: DAS IST DER NACHWEIS, DER AN DIE STELLE DES ALTEN GETRETEN IST. Bis EU
+  // liess dieser Test `yt.videos.update` werfen und zeigte damit, dass niemand
+  // dorthin kommt. Der Weg dorthin ist jetzt gebaut -- also wird er GEZAEHLT
+  // statt verboten: die Attrappe merkt sich jeden Aufruf, und danach steht da,
+  // dass genau einer der sieben ihn macht.
+  const gerufen = [];
   const yt = {
-    videos: { insert: async () => ({}), list: async () => ({}), update: async () => {
-      throw new Error('videos.update darf von hier aus nicht erreichbar sein');
-    } },
-    channels: { list: async () => ({ data: { items: [] } }) },
-    thumbnails: { set: async () => ({}) },
+    videos: {
+      insert: async () => { gerufen.push('videos.insert'); return {}; },
+      list: async () => { gerufen.push('videos.list'); return { data: { items: [] } }; },
+      update: async () => { gerufen.push('videos.update'); return { data: {} }; },
+    },
+    channels: { list: async () => { gerufen.push('channels.list'); return { data: { items: [] } }; } },
+    thumbnails: { set: async () => { gerufen.push('thumbnails.set'); return {}; } },
   };
   const roh = K.rohKanal(yt);
   assert.deepEqual(Object.keys(roh).sort(), K.METHODENNAMEN.slice().sort());
@@ -553,18 +635,72 @@ test('EP-N2: der echte Kanal haelt seinen Klienten in der Schliessung', () => {
   // Auch nicht ueber den Zaehler.
   const k = K.zaehlenderKanal(roh);
   for (const wert of Object.values(k)) assert.notEqual(wert, yt);
+
+  // KEIN FELD DES OBJEKTS FUEHRT ZU `yt`, und keine andere Datei dieses
+  // Projekts hat ueberhaupt einen Klienten. Das ist der strukturelle Grund,
+  // aus dem der dritte Aufruf nur ueber diese eine Methode geht: der Arbeiter
+  // sieht nie ein `yt`, er sieht die sieben Methoden.
+  const arbeiter = fs.readFileSync(path.join(WURZEL, 'src/upload/longform-arbeiter.js'), 'utf8')
+    .split('\n').filter((z) => !z.trim().startsWith('//')).join('\n');
+  assert.ok(!/\byt\./.test(arbeiter),
+    'der Arbeiter greift auf einen API-Klienten zu');
+  const gedaechtnis = fs.readFileSync(
+    path.join(WURZEL, 'src/upload/longform-gedaechtnis.js'), 'utf8')
+    .split('\n').filter((z) => !z.trim().startsWith('//')).join('\n');
+  assert.ok(!/\byt\./.test(gedaechtnis),
+    'das Gedaechtnismodul greift auf einen API-Klienten zu');
 });
 
-test('EP-N2: die Anzeige sagt trotzdem, dass es den Schritt gibt und dass er fehlt', () => {
-  // Ein Weg, der den Namen nicht nennt und den Schritt verschweigt, waere
-  // keine Sicherung, sondern eine Luecke. Wo die Anzeige vom
-  // Oeffentlichstellen spricht, tut sie es ueber die Vertragsstelle.
+test('EU-vorweg: der dritte Aufruf geht durch GENAU EINE Methode, und die nimmt keinen Koerper',
+  async () => {
+    // Der Nachweis in einer Zeile: `stelleOeffentlich` bekommt die videoId und
+    // den gelesenen Statusblock. Einen Anfragekoerper nimmt sie NICHT
+    // entgegen -- der Parameter existiert nicht. Wer einen unvollstaendigen
+    // schicken wollte, muesste eine zweite Stelle bauen.
+    const gesehen = [];
+    const yt = {
+      videos: {
+        insert: async () => ({ data: {} }),
+        list: async () => ({ data: { items: [{ status: { privacyStatus: 'private',
+          embeddable: true, license: 'youtube', publicStatsViewable: false,
+          selfDeclaredMadeForKids: false, containsSyntheticMedia: false } }] } }),
+        update: async (a) => { gesehen.push(a); return { data: { id: 'x', status: {} } }; },
+      },
+      channels: { list: async () => ({ data: { items: [] } }) },
+      thumbnails: { set: async () => ({ data: {} }) },
+    };
+    const roh = K.rohKanal(yt);
+    // Die Signatur: ein Objekt mit genau videoId und status. Ein `koerper`
+    // oder `requestBody` waere die Tuer, um die es hier geht.
+    const quelle = String(roh.stelleOeffentlich);
+    assert.match(quelle, /async stelleOeffentlich\(\{ videoId, status \}\)/,
+      'die Methode nimmt etwas anderes entgegen als videoId und status: ' + quelle);
+
+    await roh.stelleOeffentlich({ videoId: 'x', status: { privacyStatus: 'private',
+      embeddable: true, license: 'youtube', publicStatsViewable: false,
+      selfDeclaredMadeForKids: false, containsSyntheticMedia: false } });
+    assert.equal(gesehen.length, 1);
+    assert.deepEqual(gesehen[0].part, ['status']);
+    assert.equal(gesehen[0].requestBody.snippet, undefined);
+    assert.equal(gesehen[0].requestBody.status.privacyStatus, 'public');
+  });
+
+test('EP-N2: die Anzeige nach dem Upload sagt, wo DIESER Lauf aufhoert', () => {
+  // EU: DIESER TEST HAT SICH GEAENDERT. Bis EU prueft er, dass die Anzeige
+  // sagt, das Oeffentlichstellen sei "nicht gebaut". Es ist gebaut. Was er
+  // jetzt prueft, ist enger und weiterhin die Sache, um die es geht: die
+  // Anzeige nach dem UPLOAD darf nicht wie ein Abschluss aussehen. Nach einem
+  // Lauf, der eben etwas auf einen Kanal geschrieben hat, ist "es ist fertig"
+  // die naheliegendste Lesart -- und sie ist falsch.
   const l = lage('n2-anzeige');
   try {
     const befund = trocken(l);
     const text = befund.saetze.join('\n');
     assert.ok(text.includes('Vertrag 2.5'), 'die Vorschau nennt die Vertragsstelle nicht');
-    assert.ok(text.includes('DAS OEFFENTLICHE STELLEN GIBT ES NICHT'));
+    assert.ok(text.includes('DIESER KLICK STELLT NICHTS OEFFENTLICH'),
+      'die Vorschau sagt nicht, dass dieser Klick nichts oeffentlich stellt');
+    assert.ok(text.includes('ZWEITES Mal klickt'),
+      'die Vorschau sagt nicht, dass es einen zweiten Klick braucht');
 
     // Und der Abschluss nach einem Lauf sagt es noch einmal, an der Stelle, an
     // der ein Mensch "es ist fertig" lesen wuerde.
@@ -581,9 +717,10 @@ test('EP-N2: die Anzeige sagt trotzdem, dass es den Schritt gibt und dass er feh
     }).join('\n');
     assert.ok(schluss.includes('HIER IST SCHLUSS'));
     assert.ok(schluss.includes('DAS VIDEO IST PRIVAT UND BLEIBT ES'));
-    assert.ok(schluss.includes('DAS OEFFENTLICHE STELLEN GIBT ES IN DIESEM BAU NICHT'));
-    assert.ok(schluss.includes('Vertrag 2.5'));
-    assert.ok(!schluss.includes('videos.update'), 'der Abschluss nennt die Methode');
+    assert.ok(schluss.includes('DIESER LAUF HAT NICHTS OEFFENTLICH GESTELLT'));
+    assert.ok(schluss.includes('ZWEITE Ermaechtigung'));
+    assert.ok(schluss.includes('NEU GESTARTET'),
+      'der Abschluss sagt nicht, dass der Dienst fuer die Frage neu gestartet wird');
   } finally { l.weg(); }
 });
 
@@ -1111,14 +1248,24 @@ test('EP-N4: ein FERTIGER Schritt ist kein Befund -- er endet mit 0 und tut nich
 
       const befund2 = trocken(l);
       assert.equal(befund2.abbruch, null, 'ein fertiger Schritt ist kein Abbruch');
-      assert.equal(befund2.gedaechtnis.weiter.ab, null);
+      // EU: `weiter.ab` ist nicht mehr null, sondern 'oeffentlich' -- der
+      // Stand `thumbnail_gesetzt` ist seit EU kein Endzustand mehr, sondern
+      // der, an dem die Frage aus 2.4 steht. Was hier trotzdem gilt und
+      // gemessen wird: eine Ermaechtigung zum HOCHLADEN hat auf dieser Lage
+      // nichts einzuloesen.
+      assert.equal(befund2.gedaechtnis.weiter.ab, 'oeffentlich');
       assert.equal(L.bindungsZeile(befund2).moeglich, false);
 
       const e2 = schreibeErmaechtigung(l, befund1);   // Bindung aus Lauf 1
       const r2 = await scharf(l, befund2, e2.pfad);
       assert.equal(r2.code, L.EXIT_OK, 'ein fertiger Schritt endet nicht mit 0');
       assert.deepEqual(r2.aufrufe, []);
-      assert.ok(r2.aus.includes('NICHTS ZU TUN'));
+      assert.ok(r2.aus.includes('NICHTS HOCHZULADEN'));
+      // UND DIE UPLOAD-ERMAECHTIGUNG BLEIBT LIEGEN: sie wurde nicht geprueft
+      // und nicht verbraucht. Eine, die hier eingeloest wuerde, ermaechtigte
+      // zu einem zweiten Video.
+      assert.ok(fs.existsSync(e2.pfad),
+        'die Upload-Ermaechtigung ist verbraucht worden, obwohl es nichts einzuloesen gab');
       assert.ok(r2.aus.includes('zweite Ermaechtigung') || r2.aus.includes('ZWEITE'),
         'es wird nicht gesagt, was fehlte: ' + r2.aus);
       // Es ist bei einem Video geblieben.

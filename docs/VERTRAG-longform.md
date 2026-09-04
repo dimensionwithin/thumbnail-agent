@@ -1,5 +1,53 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 10 (EV, 05.09.2026).** Drei Aenderungen, alle in Abschnitt 2, alle
+aus dem Bau -- und **drei Zusagen der Abschnitte 1 bis 8 aendern sich**. Keine
+davon erlaubt auf dem Kanal etwas, was vorher verboten war; zwei verweigern
+zusaetzlich, die dritte nimmt zurueck, was der Vertrag zu Unrecht zugesagt
+hatte.
+
+**Erstens: die zweite Ermaechtigung haengt an einer fuenften Bindung.** 2.12
+nannte vier -- Aufnahme, sha256 der Videodatei, videoId, Kanal. Dazu tritt das
+**Urteil**: Titel, Pruefsumme der Beschreibung, Bilddatei mit Pruefsumme.
+Verglichen wird gegen das, was YouTube beim Zuruecklesen gemeldet hat, nicht
+gegen das Gesendete. **Grund:** ein Vergleich gegen das Gesendete laese jede
+Normalisierung der API als Aenderung, und der Weg liefe nie; YouTube-damals
+gegen YouTube-jetzt ist unempfindlich gegen Normalisierung und empfindlich
+gegen eine Aenderung im Studio -- genau herum, wie es sein soll. **Richtung:
+enger.** Eine Ermaechtigung, die diese Bindung nicht traegt oder deren Urteil
+nicht mehr passt, wird abgewiesen; der Weg wird dadurch nur schwerer.
+
+**Zweitens: die Ermaechtigungsdatei kennt einen dritten Zweck, den
+Haltepunkt.** Er ist ausdruecklich **kein Argument**. Ein `--halt` waere ein
+Schalter, den man vergessen kann, und wer ihn vergisst, veroeffentlicht; als
+Zweck steht er in der Datei, die der Knopf schreibt, und eine
+Haltepunkt-Ermaechtigung kann auf keinem Weg ein Update ausloesen. **Richtung:
+nichts Zusaetzliches auf dem Kanal.** Dieser Zweck ermaechtigt zu **keinem**
+schreibenden Aufruf; der Satz "kein schreibender Aufruf ohne Ermaechtigung"
+bleibt Wort fuer Wort. Was mit ihm dazukommt, sei genannt und nicht
+verschwiegen: ein Lauf, der anmeldet, den Kanal prueft und das Video
+zurueckliest -- lesende Aufrufe also --, ohne dass danach etwas geschieht. Er
+nimmt dem Haltepunkt die Form, in der man ihn vergessen kann, und das ist sein
+ganzer Zweck.
+
+**Drittens: zwischen den beiden Klicks steht ein Neustart des Dienstes.** 2.13
+las sich, als zeige dieselbe Sitzung die zweite Frage. Sie tut es nicht: die
+Seite entsteht **einmal**, beim Start, aus dem Trockenlauf; eine Frage, die auf
+der Lage von vor dem Upload steht, ist eine Wiederholung und keine Frage.
+**Richtung: der Vertrag sagt weniger zu als vorher.** Hier hat nicht der Bau
+abgewichen, sondern der Vertrag behauptet, was der Dienst nie geleistet hat --
+ein Bau, der gegen Fassung 9 geprueft wurde, erfuellte diesen Halbsatz nicht,
+und Fassung 10 streicht die Behauptung, statt sie einzufordern. Es ist eine
+**Rauheit und keine Eleganz**, sie wird dreimal angesagt, und was es kostete,
+sie wegzubauen, steht in 2.13: ein Kindprozess, der am Ende eines Laufs haengt
+statt an einem Klick, und ein zweiter Weg, auf dem die Seite entsteht.
+
+**Keine weitere Zusage der Abschnitte 1 bis 8 aendert sich** -- die Rangfolge,
+das Fenster, die Formatregel, die Sperre, die Tag-Regel und die enge Zusage aus
+2.5 bleiben, wie sie waren, und die vier offenen Punkte aus Abschnitt 11
+bleiben vier. Wie diese Fassung entstanden ist, steht in den Berichten EU (der
+Bau) und EV (die Eintragung).
+
 **Fassung 9 (ET, 04.09.2026).** Zwei Aenderungen, beide in 2.7 -- und wie bei
 Fassung 8 aendert sich dabei **eine Zusage der Abschnitte 1 bis 8**. Es ist die
 Bedeutung von `bestaetigt`, und sie wird **enger**: der Vertrag verlangt dafuer
@@ -970,8 +1018,8 @@ Rueckfall. Zwei Ermaechtigungen, nach dem Muster aus DR, getrennt:
 |---|---|---|
 | ermaechtigt zu | Aufruf 1 (Upload), das Warten, Aufruf 2 (Thumbnail), das Zuruecklesen | Aufruf 3 (oeffentlich stellen) |
 | geschrieben von | der Freigabeseite beim Klick auf "Hochladen" | der Freigabeseite beim Klick auf "Veroeffentlichen" |
-| gebunden an | Aufnahme; **sha256 der Videodatei**; Dateiname und sha256 des Bildes, das der Mensch gesehen hat; Zettel-Dateiname und Rang -- 1, 2a oder 2b, siehe unten; Kanal | Aufnahme; **sha256 der Videodatei**; videoId aus dem Gedaechtnis; Kanal |
-| Zweck im Feld | ein Feld nennt den Zweck; eine Ermaechtigung fuer den Upload gilt nie fuer das Oeffentlichstellen, und umgekehrt | |
+| gebunden an | Aufnahme; **sha256 der Videodatei**; Dateiname und sha256 des Bildes, das der Mensch gesehen hat; Zettel-Dateiname und Rang -- 1, 2a oder 2b, siehe unten; Kanal | Aufnahme; **sha256 der Videodatei**; videoId aus dem Gedaechtnis; Kanal; **das Urteil** -- Titel, Pruefsumme der Beschreibung, Bilddatei mit Pruefsumme (unten) |
+| Zweck im Feld | ein Feld nennt den Zweck; eine Ermaechtigung fuer den Upload gilt nie fuer das Oeffentlichstellen, und umgekehrt. **Drei Zwecke**, nicht zwei: der Upload, das Oeffentlichstellen und der **Haltepunkt** (unten) | |
 | gueltig | zwei Minuten ab Erstellung; nicht aus der Zukunft | zwei Minuten; nicht aus der Zukunft |
 | einmalig | Zufallswert, 32 Bytes; verbraucht wird vor dem Aufruf, Liste der verbrauchten wie bei DR | ebenso |
 | geprueft gegen | das, was der Arbeiter selbst vorfindet: Argumente, Platte, Gedaechtnis, `channels.list` | ebenso |
@@ -988,6 +1036,53 @@ Weg hat keine Terminalfrage, in der ein Wort etwas bezeugen koennte; die
 Freigabeseite ist der einzige Ort, an dem Bild, Standbild und Befund
 nebeneinander stehen, und dort wird geklickt. Ein Wort im Terminal ohne diese
 Sicht bezeugte weniger als der Klick.
+
+**Die fuenfte Bindung der zweiten Ermaechtigung: das Urteil.** Neben Aufnahme,
+sha256 der Videodatei, videoId und Kanal traegt sie, was der Mensch beurteilt
+hat: den **Titel**, die **Pruefsumme der Beschreibung** und die **Bilddatei mit
+ihrer Pruefsumme**. Der Wortlaut der Beschreibung steht dabei weder in der
+Ermaechtigung noch im Gedaechtnis (5.2 verbietet ihn dort ausdruecklich); eine
+Pruefsumme ist kein Wortlaut.
+
+**Woran das Urteil gemessen wird, und warum ausgerechnet daran.** Titel und
+Beschreibung stehen in der Ermaechtigung so, **wie YouTube sie beim
+Zuruecklesen gemeldet hat** -- nicht so, wie der Arbeiter sie gesendet hat. Vor
+Aufruf 3 wird gegen dieselbe Quelle verglichen: YouTube-damals gegen
+YouTube-jetzt. **Grund:** ein Vergleich gegen das Gesendete laese jede
+Normalisierung der API als Aenderung, und der Weg liefe nie; der Vergleich
+gegen das Zurueckgelesene ist unempfindlich gegen Normalisierung und
+empfindlich gegen eine Aenderung im Studio -- genau herum, wie es sein soll.
+Die Bilddatei ist die Ausnahme und aus gutem Grund: sie liegt auf der Platte,
+und sie wird unmittelbar vor Aufruf 3 noch einmal gegen die Platte gehalten,
+weil der Compositor in der Zwischenzeit unter demselben Namen neu exportiert
+haben kann -- dann ist der Beleg dafuer, was am Video haengt, weg. **Diese
+Bindung verweigert zusaetzlich und erlaubt nichts:** eine Ermaechtigung, die
+sie nicht traegt oder deren Urteil nicht mehr passt, wird abgewiesen. Was sie
+**nicht** traegt: das Bild als Bytes, den Statusblock und die
+Thumbnail-URLs von YouTube -- die URLs nicht, weil sie sich aendern koennen,
+ohne dass sich das Bild aendert; eine Bindung, die von selbst bricht, ist keine
+Bindung, sondern ein Alarm, den man abstellt.
+
+**Der dritte Zweck: der Haltepunkt, und warum er ein Zweck ist und kein
+Argument.** Neben `upload` und dem Oeffentlichstellen gibt es einen dritten
+Zweck. Eine Ermaechtigung, die ihn traegt, ermaechtigt zu **genau einem Lauf,
+der nichts oeffentlich stellt**: er geht den ganzen Weg des dritten Aufrufs --
+anmelden, Kanal pruefen, das Video zuruecklesen, den Statusblock holen, den
+Anfragekoerper bauen -- und haelt unmittelbar vor dem Absenden an. Was gesendet
+wuerde, steht danach Feld fuer Feld auf dem Schirm und im Gedaechtnis. **Grund
+fuer den Zweck und gegen ein Argument:** ein `--halt` waere ein Schalter, den
+man vergessen kann, und wer ihn vergisst, veroeffentlicht. Als Zweck ist es
+umgekehrt -- eine Haltepunkt-Ermaechtigung kann auf **keinem** Weg zum dritten
+Aufruf fuehren: nicht mit einem anderen Argument, nicht von Hand, nicht durch
+eine falsch genommene Verzweigung, denn der Zweig, der den Aufruf macht, nimmt
+nur den Zweck des Oeffentlichstellens an. Was der Mensch geklickt hat, steht in
+der Datei, die der Knopf schreibt, und nicht in der Kommandozeile. Es ist
+**derselbe** Mechanismus, kein zweiter: dieselbe Pruefung, dieselbe
+Verbrauchsliste, derselbe Ordner, dasselbe Zeitfenster. Der Haltepunkt
+**verbraucht** seine Ermaechtigung; er ist ein Lauf und keine Vorschau, und was
+er verbraucht hat, liegt danach nicht mehr herum. **Auch dieser Zweck
+verweigert zusaetzlich und erlaubt nichts:** er ist kein zweiter Weg zum
+Aufruf, sondern einer, der ausdruecklich vor ihm endet.
 
 Fehlt die Ermaechtigung, ist sie abgelaufen, verbraucht, fuer eine andere
 Aufnahme, eine andere sha256, einen anderen Zweck oder einen anderen Kanal,
@@ -1032,15 +1127,37 @@ Einzelinstanz-Sperre** (Anlegen mit `wx`, verwaiste Sperre uebernehmen,
 freigeben in jedem Ausgang), demselben Aufrufer aus der Shorts-Linie. Im
 Longform-Modus zeigt die Seite die Vorschau des Arbeiters (Trockenlauf,
 woertlich, wie beim Shorts-Uploader), schreibt beim Klick die erste
-Ermaechtigung und startet den Arbeiter mit `--bestaetigt-durch=`, zeigt
-danach den Stand aus dem Gedaechtnis und der Rueckleseantwort, schreibt beim
-zweiten Klick die zweite Ermaechtigung und startet den Arbeiter erneut.
+Ermaechtigung und startet den Arbeiter mit `--bestaetigt-durch=`. Den Stand aus
+dem Gedaechtnis und der Rueckleseantwort zeigt **ein neuer Start** desselben
+Dienstes; dort steht der zweite Klick, der die zweite Ermaechtigung schreibt und
+den Arbeiter erneut startet (unten).
 
 **Grund.** Ein zweiter Dienst waere eine zweite Bindung, ein zweites Token,
 eine zweite Sperre, ein zweiter Port, und jede davon eine Stelle, die eines
 Tages anders gebaut ist als die erste. Die Sicherungen des Freigabedienstes
 sind gemessen (DJ, DJa, DR); ein Modus erbt sie, ein Dienst muesste sie neu
 beweisen.
+
+**Zwischen den beiden Klicks steht ein Neustart des Dienstes, und das ist eine
+Rauheit und keine Eleganz.** Die Seite entsteht **einmal**, beim Start, aus dem
+Trockenlauf des Arbeiters; danach holt sie keinen Stand nach. Die Frage aus 2.4
+steht damit auf der Lage von **vor** dem Upload -- und eine Frage auf einer Lage
+von vorher ist eine Wiederholung und keine Frage. Wer den zweiten Klick sehen
+will, beendet den Dienst und startet ihn im Longform-Modus neu; dann liest der
+Trockenlauf das Gedaechtnis, das der Upload eben geschrieben hat, und stellt die
+Frage darauf. **Das wird dreimal angesagt** -- in der Abschlussanzeige des
+Arbeiters nach dem Upload, in der Meldung der Seite am Ende des Laufs und im
+Erklaerungsblock der Seite --, damit niemand den Bau fuer kaputt haelt, wenn
+nach dem Upload kein zweiter Knopf erscheint.
+
+**Was es kostete, sie wegzubauen.** Zweierlei, und beides ist teurer als die
+Rauheit. Erstens muesste der Arbeiter als Kindprozess am **Ende eines Laufs**
+haengen statt an einem Klick -- der Dienst wartet dann auf ein Ende, das 45
+Minuten entfernt sein kann, und ob ein solcher Kindprozess das Schliessen der
+Sitzung ueberlebt, ist nicht gemessen (10). Zweitens gaebe es einen **zweiten
+Weg, auf dem die Seite entsteht**: einen zum Start und einen nach dem Lauf. Zwei
+Wege zu derselben Seite sind zwei Fassungen derselben Regel, und die zweite ist
+die, die der Mensch vor Augen hat, wenn es darauf ankommt.
 
 **Die Sperre gilt je Aufnahme und Modus.** Entschieden am 03.09.; damit ist
 der offene Punkt 11.3 der Fassung 2 geschlossen. Eine Shorts-Sitzung und eine

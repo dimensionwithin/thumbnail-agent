@@ -1,7 +1,8 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
-// EP: DAS LONGFORM-GEDAECHTNIS (Vertrag 5) UND DIE ERSTE ERMAECHTIGUNG (2.12)
+// EP/EU: DAS LONGFORM-GEDAECHTNIS (Vertrag 5) UND DIE BEIDEN ERMAECHTIGUNGEN
+//        (2.12)
 // ---------------------------------------------------------------------------
 //
 // WARUM DIESE BEIDEN IN EINER DATEI UND NICHT IM ARBEITER.
@@ -99,16 +100,22 @@ const GEDAECHTNIS_SCHEMA_VERSION = '1.0';
 const GEDAECHTNIS_TMP_FORM = /^\..+\.json\.tmp\.\d+\.\d+$/;
 
 // DIE STAENDE (5.2). Diese Liste ist vollstaendig; welche davon DIESER Bau
-// setzen kann, ist die zweite Liste. Die beiden auseinanderzuhalten ist der
-// Punkt: `oeffentlich` steht oben, weil ein Gedaechtnis es tragen KANN --
-// geschrieben hat es dann Aufruf 3, den es hier nicht gibt.
+// setzen kann, ist die zweite Liste. Seit EU sind sie gleich: `oeffentlich`
+// schreibt Aufruf 3, und den gibt es jetzt.
 const STAENDE = Object.freeze([
   'hochgeladen', 'verarbeitet', 'verarbeitung_abgebrochen', 'abgelehnt',
   'thumbnail_gesetzt', 'oeffentlich',
 ]);
+// EU: `oeffentlich` KOMMT DAZU. Bis EU war diese Liste um genau einen Wert
+// kuerzer als STAENDE, und der fehlende war der, den dieser Bau nicht setzen
+// konnte. Er kann es jetzt; die Liste wird darum BERICHTIGT und nicht
+// stehengelassen. Die beiden Listen sind seit EU gleich lang -- sie bleiben
+// trotzdem zwei, weil sie zwei Fragen beantworten ("welche Staende gibt es"
+// und "welche schreibt dieser Bau"), und die naechste Fassung koennte sie
+// wieder auseinandertreiben.
 const STAENDE_DIESES_BAUS = Object.freeze([
   'hochgeladen', 'verarbeitet', 'verarbeitung_abgebrochen', 'abgelehnt',
-  'thumbnail_gesetzt',
+  'thumbnail_gesetzt', 'oeffentlich',
 ]);
 
 function gedaechtnisOrdner(projektwurzel) {
@@ -337,15 +344,51 @@ function schreibeGedaechtnis(pfad, gedaechtnis, jetzt) {
 //
 // UND AN EINEM ZWECK. Eine Ermaechtigung fuer den Upload gilt nie fuer das
 // Oeffentlichstellen (2.12, 7). Der Zweck steht als eigenes Feld da und wird
-// woertlich verglichen; alles ausser 'upload' wird abgelehnt. Der Name des
-// zweiten Zwecks steht hier ABSICHTLICH NICHT: er gehoert zu einem Aufruf,
-// den es noch nicht gibt, und ein Wert im Quelltext, den nichts erzeugt und
-// nichts einloest, sieht nach einem gebauten Weg aus.
+// woertlich verglichen; alles ausser 'upload' wird abgelehnt.
+//
+// EU: DIE ZWEI ANDEREN ZWECKE STEHEN JETZT AUCH HIER. Bis EU stand an dieser
+// Stelle der Satz, der Name des zweiten Zwecks stehe "ABSICHTLICH NICHT" da,
+// weil er zu einem Aufruf gehoere, den es noch nicht gibt. Den Aufruf gibt es
+// jetzt; der Satz wird darum BERICHTIGT statt weiter behauptet.
 
 const ERMAECHTIGUNG_ARTIFACT_TYPE = 'adw_longform_ermaechtigung';
 const ERMAECHTIGUNG_SCHEMA_VERSION = '1.0';
 
 const ZWECK_UPLOAD = 'upload';
+
+// ---------------------------------------------------------------------------
+// EU: DIE ZWECKE DES DRITTEN AUFRUFS -- ZWEI, UND WARUM ZWEI
+// ---------------------------------------------------------------------------
+//
+// `veroeffentlichen` loest Aufruf 3 aus. `veroeffentlichen_haltepunkt` loest
+// ihn NICHT aus: derselbe Lauf, bis unmittelbar davor, und dort Schluss.
+//
+// WARUM DER HALTEPUNKT EIN ZWECK IST UND KEIN ARGUMENT. Der Auftrag verlangt
+// einen Weg, den ersten echten Durchgang bis vor den letzten Aufruf zu fuehren
+// und dort stehenzubleiben -- und er verlangt ausdruecklich, dass es "kein
+// Argument sein darf, das angenommen wird und nichts bewirkt". Ein Schalter
+// `--halt` waere genau das gewesen, und schlimmer: er waere ein Schalter, den
+// man VERGESSEN kann. Wer ihn vergisst, veroeffentlicht.
+//
+// Als Zweck ist es umgekehrt. Eine Haltepunkt-Ermaechtigung kann auf KEINEM
+// Weg zum dritten Aufruf fuehren -- nicht mit einem anderen Argument,
+// nicht durch einen Aufruf von Hand, nicht durch einen Fehler im Arbeiter, der
+// eine Verzweigung falsch nimmt: der Vergleich unten ist woertlich, und der
+// Zweig, der den Aufruf macht, nimmt nur `veroeffentlichen` an. Was der Mensch
+// geklickt hat, steht in der Datei und nicht in der Kommandozeile.
+//
+// UND ES IST DERSELBE MECHANISMUS, kein zweiter. Beide gehen durch dieselbe
+// Pruefung, dieselbe Verbrauchsliste, denselben Ordner, dasselbe Zeitfenster.
+// Der Haltepunkt VERBRAUCHT seine Ermaechtigung; er ist ein Lauf und keine
+// Vorschau, und was er verbraucht hat, liegt danach nicht mehr herum.
+const ZWECK_VEROEFFENTLICHEN = 'veroeffentlichen';
+const ZWECK_HALTEPUNKT = 'veroeffentlichen_haltepunkt';
+const ZWECKE_DRITTER_AUFRUF = Object.freeze([ZWECK_VEROEFFENTLICHEN, ZWECK_HALTEPUNKT]);
+
+// Alle Zwecke, die dieses Projekt kennt. Die Liste steht da, damit "unbekannter
+// Zweck" und "bekannter Zweck am falschen Ort" zwei Meldungen bekommen: das
+// eine ist eine fremde Datei, das andere ein Griff daneben.
+const ZWECKE = Object.freeze([ZWECK_UPLOAD].concat(ZWECKE_DRITTER_AUFRUF));
 
 // DIE RAENGE, DIE EINE ERMAECHTIGUNG TRAGEN KANN (2.7, 2.12).
 //
@@ -653,6 +696,367 @@ function pruefeErmaechtigung({
   return { ok: true, daten: d };
 }
 
+// ---------------------------------------------------------------------------
+// TEIL 3 -- DIE ZWEITE ERMAECHTIGUNG (Vertrag 2.12, EU)
+// ---------------------------------------------------------------------------
+//
+// WOFUER SIE STEHT, UND WARUM SIE NICHT DIE ERSTE IST.
+//
+// Die erste bezeugt: ein Mensch hat gesehen, WAS hochginge. Sie ist
+// zuruecknehmbar in dem einen Sinn, der zaehlt -- ein privates Video laesst
+// sich im Studio loeschen, und niemand hat es gesehen.
+//
+// Die zweite bezeugt: ein Mensch hat gesehen, was auf dem Kanal LIEGT -- den
+// Titel, wie YouTube ihn fuehrt, das Bild, das wirklich daran haengt, und
+// jeden Befund, den YouTube dazu gemeldet hat -- und will, dass es oeffentlich
+// wird. Was danach oeffentlich war, hat jemand gesehen; das nimmt niemand
+// zurueck. Die beiden liegen bis zu 45 Minuten auseinander, und zwischen ihnen
+// liegt das, was die zweite ueberhaupt erst moeglich macht (2.12).
+//
+// WORAN SIE HAENGT. Vertrag 2.12 nennt vier Bindungen: Aufnahme, sha256 der
+// Videodatei, videoId aus dem Gedaechtnis, Kanal. Dieser Bau traegt eine
+// FUENFTE, und das ist eine Abweichung vom Wortlaut der Tabelle, die im
+// Bericht steht: das URTEIL. Es ist die Antwort auf den Satz des Auftrags,
+// die Ermaechtigung sei "an genau das gebunden, was der Mensch gesehen hat".
+//
+//   urteil.titel                 der Titel, WIE YOUTUBE IHN BEIM ZURUECKLESEN
+//                                GENANNT HAT -- nicht der gesendete. Der
+//                                Vergleich laeuft spaeter gegen dieselbe
+//                                Quelle: YouTube damals gegen YouTube jetzt.
+//                                Gegen den gesendeten zu vergleichen hiesse,
+//                                jede Normalisierung der API als Aenderung zu
+//                                lesen, und der Weg liefe nie.
+//   urteil.beschreibung_sha256   die Pruefsumme der Beschreibung, ebenfalls
+//                                wie zurueckgelesen. Der TEXT steht weder hier
+//                                noch im Gedaechtnis (5.2 verbietet ihn dort
+//                                ausdruecklich); eine Pruefsumme ist kein
+//                                Wortlaut.
+//   urteil.thumbnail             Dateiname und sha256 der Bilddatei von der
+//                                Platte, die geheftet wurde. Sie wird
+//                                unmittelbar vor dem dritten Aufruf noch
+//                                einmal gegen die Platte gehalten: der
+//                                Compositor kann in der Zwischenzeit unter
+//                                demselben Namen neu exportiert haben, und
+//                                dann ist der Beleg dafuer, WAS am Video
+//                                haengt, weg.
+//
+// DIE ABWEICHUNG IST IN DIE ENGE RICHTUNG. Sie erlaubt nichts, was 2.12
+// verbietet; sie verweigert zusaetzlich. Eine Ermaechtigung, die eine dieser
+// Bindungen nicht traegt, wird abgelehnt -- der Weg wird dadurch nur
+// schwerer, nie leichter.
+//
+// WAS SIE NICHT TRAEGT: das Bild als Bytes, den Statusblock, die
+// Thumbnail-URLs von YouTube. Die URLs nicht, weil sie sich aendern koennen,
+// ohne dass sich das Bild aendert (DX hat 25 Minuten Nachhinken gemessen) --
+// eine Bindung, die von selbst bricht, ist keine Bindung, sondern ein Alarm,
+// den man abstellt.
+
+function neueZweiteErmaechtigung({
+  aufnahme, videoSha256, videoId, urteil, kanalId, kanalName, zweck, zufall, jetzt,
+}) {
+  if (!ZWECKE_DRITTER_AUFRUF.includes(zweck)) {
+    throw new Error('neueZweiteErmaechtigung: der Zweck ist ' + JSON.stringify(zweck) +
+      '. Zulaessig sind ' + ZWECKE_DRITTER_AUFRUF.map((z) => JSON.stringify(z)).join(' und ') +
+      '. Es wird keine Ermaechtigung mit einem Zweck geschrieben, den niemand einloest.');
+  }
+  const haltepunkt = zweck === ZWECK_HALTEPUNKT;
+  return {
+    artifact_type: ERMAECHTIGUNG_ARTIFACT_TYPE,
+    schema_version: ERMAECHTIGUNG_SCHEMA_VERSION,
+    zweck,
+    aufnahme,
+    video_sha256: videoSha256,
+    videoId,
+    urteil: {
+      titel: urteil.titel,
+      beschreibung_sha256: urteil.beschreibung_sha256 === undefined
+        ? null : urteil.beschreibung_sha256,
+      thumbnail: { dateiname: urteil.thumbnail.dateiname, sha256: urteil.thumbnail.sha256 },
+    },
+    kanal_id: kanalId,
+    kanal_name: kanalName,
+    erstellt_am: new Date(jetzt).toISOString(),
+    zufall,
+    warum: haltepunkt
+      ? 'Diese Datei ermaechtigt zu GENAU EINEM Lauf, und der stellt NICHTS oeffentlich. Er ' +
+        'geht den ganzen Weg des dritten Aufrufs -- anmelden, Kanal pruefen, das Video ' +
+        'zuruecklesen, den Statusblock holen, den Anfragekoerper bauen -- und haelt ' +
+        'unmittelbar VOR dem Absenden an. Was gesendet WUERDE, steht danach Feld fuer Feld ' +
+        'auf dem Schirm und im Gedaechtnis. Den dritten Aufruf macht dieser Lauf nicht, auf ' +
+        'keinem Weg und mit keinem Argument: der Zweig, der ihn macht, nimmt diesen Zweck ' +
+        'nicht an. Zum wirklichen Oeffentlichstellen braucht es einen zweiten Klick und ' +
+        'eine Ermaechtigung mit dem Zweck "' + ZWECK_VEROEFFENTLICHEN + '".'
+      : 'Diese Datei ermaechtigt zu GENAU EINEM Lauf: ein Video, das privat auf dem Kanal ' +
+        'liegt, OEFFENTLICH stellen. Das laesst sich nicht zuruecknehmen -- was oeffentlich ' +
+        'war, hat jemand gesehen, und die Abonnenten sind beim Upload benachrichtigt worden ' +
+        '(Vertrag 2.14). Geschrieben wurde sie beim Klick auf "Veroeffentlichen" in der ' +
+        'Freigabeoberflaeche, nachdem ein Mensch den Titel, die Beschreibung, das Bild am ' +
+        'Video und jeden Befund von YouTube gesehen hat. Sie gilt zwei Minuten, nur fuer ' +
+        'diese Aufnahme, nur fuer die Videodatei mit dieser sha256, nur fuer dieses eine ' +
+        'Video auf dem Kanal, nur fuer diesen Kanal und nur einmal. Sie ermaechtigt NICHT ' +
+        'zu einem Upload; dafuer gibt es eine erste mit dem Zweck "' + ZWECK_UPLOAD + '". ' +
+        'Der Arbeiter prueft jedes Feld gegen das, was er selbst vorfindet, verbraucht die ' +
+        'Datei und loescht sie. Er aendert am Video NUR die Sichtbarkeit: kein Titel, keine ' +
+        'Beschreibung, keine Tags, kein Termin (Vertrag 2.5, 7).',
+  };
+}
+
+// DER ZWECK, NACHGESEHEN -- UND SONST NICHTS.
+//
+// WOFUER SIE DA IST: der Arbeiter bekommt EINEN Pfad und muss wissen, welchen
+// der beiden Wege er geht. Er kann das nicht raten, und er darf es nicht aus
+// einem Argument nehmen (dann waere der Zweck ein Argument). Also sieht er in
+// der Datei nach.
+//
+// SIE PRUEFT NICHTS UND VERBRAUCHT NICHTS. Jede Pruefung -- Typ, Fassung,
+// Zeit, Verbrauch, Bindung -- macht danach die Funktion des gewaehlten Weges,
+// vollstaendig und in ihrer eigenen Reihenfolge. Diese hier entscheidet nur,
+// WELCHE das ist. Findet sie nichts Brauchbares, gibt sie null zurueck; der
+// Arbeiter geht dann den Upload-Weg, und dessen Pruefung sagt mit ihrer
+// eigenen Meldung, was mit der Datei nicht stimmt. So entsteht keine zweite
+// Fehlermeldung fuer denselben Mangel.
+//
+// DIE PFADSPERRE GILT AUCH HIER. Sie liest eine Datei; ein frei gewaehlter
+// Pfad waere ein Leseweg mit Argumentangabe.
+function liesZweck(projektwurzel, pfad) {
+  if (typeof pfad !== 'string' || !pfad.trim()) return null;
+  if (!pfadLiegtUnter(ermaechtigungOrdner(projektwurzel), pfad)) return null;
+  let text;
+  try { text = fs.readFileSync(pfad, 'utf8'); } catch (e) { return null; }
+  let d;
+  try { d = JSON.parse(text); } catch (e) { return null; }
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) return null;
+  return typeof d.zweck === 'string' ? d.zweck : null;
+}
+
+// ALLE LOKALEN PRUEFUNGEN DER ZWEITEN ERMAECHTIGUNG.
+//
+// DIESELBE REIHENFOLGE WIE OBEN, und das ist keine Kosmetik: wer die beiden
+// nebeneinanderlegt, soll sehen, wo sie gleich sind und wo nicht. Gleich sind
+// Pfadsperre, Typ, Fassung, Zweck, Zufallswert, Verbrauchsliste, Zeitfenster,
+// Aufnahme, Videodatei, Kanalform. Verschieden ist, was danach kommt: dort
+// stehen videoId und Urteil statt Bild und Zettel.
+//
+// KEINE ZWEI TEILEN SICH EINE MELDUNG, und keine teilt sich eine mit denen der
+// ersten Ermaechtigung. Jede sagt AUCH, welche Bindung nicht getragen hat und
+// was das heisst -- ein "die Ermaechtigung passt nicht" laesst einen Menschen
+// vor einem oeffentlichen oder eben nicht oeffentlichen Video stehen, ohne zu
+// wissen, warum.
+//
+// `videoId` und `urteil` kommen aus dem GEDAECHTNIS dieses Laufs und nicht aus
+// einem Argument (2.5 Punkt 2). Der Titelvergleich gegen YOUTUBE steht nicht
+// hier, sondern beim Arbeiter: er braucht einen Netzaufruf, und alles hier
+// soll ohne einen einzigen entscheidbar sein.
+//
+// Gibt { ok: true, daten } oder { ok: false, code, meldung }.
+function pruefeZweiteErmaechtigung({
+  projektwurzel, pfad, aufnahme, videoSha256, videoId, urteil, jetzt,
+}) {
+  const nein = (code, meldung) => ({ ok: false, code, meldung });
+
+  // 0. WO SIE LIEGEN DARF.
+  const ordner = ermaechtigungOrdner(projektwurzel);
+  if (typeof pfad !== 'string' || !pfad.trim()) {
+    return nein('zweite_pfad_leer',
+      '--bestaetigt-durch= ist leer. Ohne Pfad gibt es keine zweite Ermaechtigung, und ohne ' +
+      'sie wird nichts oeffentlich gestellt.');
+  }
+  if (!pfadLiegtUnter(ordner, pfad)) {
+    return nein('zweite_pfad_fremd',
+      'Die zweite Ermaechtigung liegt nicht unter ' + ordner + ', sondern bei ' + pfad +
+      '. Der Arbeiter loescht diese Datei nach der Pruefung -- ein frei gewaehlter Pfad ' +
+      'waere damit ein Loeschbefehl. Es wird nichts gelesen, nichts geloescht und nichts ' +
+      'oeffentlich gestellt.');
+  }
+
+  // 1. DA?
+  let text;
+  try {
+    text = fs.readFileSync(pfad, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      return nein('zweite_fehlt',
+        'Es gibt keine zweite Ermaechtigung unter ' + pfad + '. Ohne sie wird nichts ' +
+        'oeffentlich gestellt. Wurde sie schon verbraucht, ist sie geloescht -- dann in der ' +
+        'Longform-Ansicht erneut klicken, und ein Mensch sieht wieder, was am Video haengt.');
+    }
+    return nein('zweite_nicht_lesbar',
+      'Die zweite Ermaechtigung ist nicht lesbar (' + (e.code || e.message) + '): ' + pfad +
+      '. Solange nicht feststeht, wozu sie ermaechtigt, wird nichts oeffentlich gestellt.');
+  }
+  let d;
+  try { d = JSON.parse(text); } catch (e) {
+    return nein('zweite_kein_json',
+      'Die zweite Ermaechtigung ist kein JSON (' + e.message + '): ' + pfad);
+  }
+  if (d === null || typeof d !== 'object' || Array.isArray(d)) {
+    return nein('zweite_kein_objekt',
+      'Die zweite Ermaechtigung enthaelt kein Objekt: ' + pfad);
+  }
+  if (d.artifact_type !== ERMAECHTIGUNG_ARTIFACT_TYPE) {
+    return nein('zweite_fremder_typ',
+      'artifact_type ist ' + JSON.stringify(d.artifact_type) + ', erwartet ist ' +
+      JSON.stringify(ERMAECHTIGUNG_ARTIFACT_TYPE) + '. Das ist keine Ermaechtigung dieses ' +
+      'Weges; sie wird nicht eingeloest und nicht verbraucht.');
+  }
+  if (d.schema_version !== ERMAECHTIGUNG_SCHEMA_VERSION) {
+    return nein('zweite_fremde_version',
+      'schema_version ist ' + JSON.stringify(d.schema_version) + ', dieser Arbeiter kennt ' +
+      JSON.stringify(ERMAECHTIGUNG_SCHEMA_VERSION) + '. Eine fremde Fassung wird nicht nach ' +
+      'den Regeln der bekannten gelesen -- schon gar nicht vor einem Aufruf, den niemand ' +
+      'zurueckdreht.');
+  }
+
+  // 2. DER ZWECK. VOR dem Zufallswert, damit eine Ermaechtigung fuer den
+  //    falschen Zweck nicht nebenbei verbraucht wird und fuer ihren eigenen
+  //    Zweck weiter taugt.
+  if (!ZWECKE_DRITTER_AUFRUF.includes(d.zweck)) {
+    return nein('zweite_fremder_zweck',
+      'Die Ermaechtigung nennt den Zweck ' + JSON.stringify(d.zweck) + '. Dieser Weg loest ' +
+      'ausschliesslich ' + ZWECKE_DRITTER_AUFRUF.map((z) => JSON.stringify(z)).join(' und ') +
+      ' ein. Eine Ermaechtigung fuer den Upload gilt hier NICHT (Vertrag 2.12, 7) -- die ' +
+      'erste ersetzt die zweite nicht, und sie wird weder verbraucht noch geloescht.');
+  }
+
+  // 3. DER ZUFALLSWERT -- erst die Form, dann die Verbrauchsliste.
+  if (typeof d.zufall !== 'string' || !ZUFALL_FORM.test(d.zufall)) {
+    return nein('zweite_zufall_form',
+      'Der Zufallswert der zweiten Ermaechtigung ist ' + JSON.stringify(d.zufall) +
+      ' und keine 64 Hexziffern. Ohne ihn laesst sich nicht sagen, ob sie schon einmal ' +
+      'eingeloest wurde -- und ein zweites Oeffentlichstellen desselben Videos waere ein ' +
+      'zweiter dritter Aufruf (Vertrag 7).');
+  }
+  const verbraucht = U.leseVerbrauchte(projektwurzel);
+  if (verbraucht.fehler) {
+    return nein('zweite_verbrauchsliste_unlesbar', verbraucht.fehler +
+      ' Solange nicht feststeht, welche Ermaechtigungen schon verbraucht sind, wird keine ' +
+      'angenommen und nichts oeffentlich gestellt.');
+  }
+  const schon = verbraucht.liste.find((v) => v && v.zufall === d.zufall);
+  if (schon) {
+    return nein('zweite_verbraucht',
+      'Diese zweite Ermaechtigung wurde schon verbraucht' +
+      (schon.verbraucht_am ? ' (am ' + schon.verbraucht_am + ')' : '') +
+      '. Sie gilt fuer GENAU EINEN Lauf. Ob dieser Lauf das Video oeffentlich gestellt hat, ' +
+      'steht im Gedaechtnis und nicht hier; der dritte Aufruf wird jedenfalls KEIN zweites ' +
+      'Mal gemacht (Vertrag 7). Wer den Schritt noch einmal ansehen will, startet den Dienst ' +
+      'neu -- dann liest der Trockenlauf die Lage von jetzt.');
+  }
+
+  // 4. DER AUGENBLICK.
+  if (typeof d.erstellt_am !== 'string' || !ISO_UTC.test(d.erstellt_am) ||
+      !Number.isFinite(Date.parse(d.erstellt_am))) {
+    return nein('zweite_zeit_form',
+      'erstellt_am der zweiten Ermaechtigung ist ' + JSON.stringify(d.erstellt_am) +
+      ' und kein Zeitstempel in UTC (RFC 3339 mit Z).');
+  }
+  const alter = jetzt - Date.parse(d.erstellt_am);
+  if (alter < -ERMAECHTIGUNG_ZUKUNFT_MS) {
+    return nein('zweite_zukunft',
+      'Die zweite Ermaechtigung ist auf ' + d.erstellt_am + ' datiert und liegt damit ' +
+      Math.round(-alter / 1000) + ' Sekunden in der ZUKUNFT (jetzt ist ' +
+      new Date(jetzt).toISOString() + '). Dienst und Arbeiter laufen an derselben Uhr; eine ' +
+      'Ermaechtigung, die noch nicht begonnen hat, bezeugt keinen Augenblick.');
+  }
+  if (alter > ERMAECHTIGUNG_GUELTIG_MS) {
+    return nein('zweite_abgelaufen',
+      'Die zweite Ermaechtigung ist ' + Math.round(alter / 1000) + ' Sekunden alt, gueltig ' +
+      'sind ' + (ERMAECHTIGUNG_GUELTIG_MS / 1000) + '. Erstellt am ' + d.erstellt_am +
+      ', jetzt ist ' + new Date(jetzt).toISOString() + '. Sie soll den Augenblick des Klicks ' +
+      'bezeugen und nicht den Nachmittag -- in der Longform-Ansicht neu klicken.');
+  }
+
+  // 5. DIE AUFNAHME.
+  if (d.aufnahme !== aufnahme) {
+    return nein('zweite_fremde_aufnahme',
+      'Die zweite Ermaechtigung gilt fuer die Aufnahme ' + JSON.stringify(d.aufnahme) +
+      ', oeffentlich gestellt werden soll ' + JSON.stringify(aufnahme) + '. Eine ' +
+      'Ermaechtigung fuer eine andere Aufnahme gilt hier nicht.');
+  }
+
+  // 6. DIE VIDEODATEI.
+  if (typeof d.video_sha256 !== 'string' || !SHA256_FORM.test(d.video_sha256)) {
+    return nein('zweite_video_sha_form',
+      'video_sha256 der zweiten Ermaechtigung ist ' + JSON.stringify(d.video_sha256) +
+      ' und keine sha256-Summe. Ohne sie ist nicht zu sagen, welches Video gemeint ist.');
+  }
+  if (d.video_sha256 !== videoSha256) {
+    return nein('zweite_video_sha',
+      'Die zweite Ermaechtigung gehoert zu einer Videodatei mit der Pruefsumme ' +
+      d.video_sha256 + ', der Eintrag dieses Laufs traegt ' + videoSha256 + '. Das ist nicht ' +
+      'dasselbe Video. Es wird nichts oeffentlich gestellt.');
+  }
+
+  // 7. DIE KENNUNG -- die Bindung, die es bei der ersten nicht gab.
+  //
+  //    Sie kommt aus dem Gedaechtnis dieses Laufs (Vertrag 2.5 Punkt 2), und
+  //    hier wird sie gegen die aus der Ermaechtigung gehalten. Ein Video
+  //    oeffentlich zu stellen, ueber das niemand geurteilt hat, ist der eine
+  //    Fehler dieses Weges, den niemand mehr zurueckdreht.
+  if (typeof d.videoId !== 'string' || !d.videoId) {
+    return nein('zweite_video_id_form',
+      'Die zweite Ermaechtigung traegt keine Kennung des Videos. Ohne sie ist nicht zu ' +
+      'sagen, WELCHES Video oeffentlich werden soll -- es wird keines.');
+  }
+  if (d.videoId !== videoId) {
+    return nein('zweite_video_id',
+      'Die zweite Ermaechtigung gilt fuer ein ANDERES Video: sie nennt die Kennung ' +
+      d.videoId + ', das Gedaechtnis dieses Laufs nennt ' + String(videoId) + '. Es wird ' +
+      'nichts oeffentlich gestellt. Ein Video oeffentlich zu stellen, ueber das dieser ' +
+      'Mensch nicht geurteilt hat, laesst sich nicht zuruecknehmen (Vertrag 2.5, 2.12).');
+  }
+
+  // 8. DAS URTEIL -- Titel, Beschreibung, Bild. Die Form jetzt; die Werte
+  //    unmittelbar vor dem Aufruf, teils gegen die Platte, teils gegen
+  //    YouTube (dort, wo es einen Netzaufruf braucht).
+  if (d.urteil === null || typeof d.urteil !== 'object' || Array.isArray(d.urteil)) {
+    return nein('zweite_urteil_form',
+      'Das Feld urteil ist ' + JSON.stringify(d.urteil) + '. Ohne es haengt die ' +
+      'Ermaechtigung nicht an dem, WAS der Mensch gesehen hat, sondern nur daran, DASS er ' +
+      'geklickt hat. Es wird nichts oeffentlich gestellt.');
+  }
+  if (d.urteil.thumbnail === null || typeof d.urteil.thumbnail !== 'object' ||
+      typeof d.urteil.thumbnail.dateiname !== 'string' || d.urteil.thumbnail.dateiname === '' ||
+      typeof d.urteil.thumbnail.sha256 !== 'string' ||
+      !SHA256_FORM.test(d.urteil.thumbnail.sha256)) {
+    return nein('zweite_urteil_bild_form',
+      'urteil.thumbnail ist ' + JSON.stringify(d.urteil.thumbnail) + ' und traegt nicht ' +
+      'Dateiname und sha256. Ohne beide ist nicht zu sagen, welches Bild an dem Video hing, ' +
+      'ueber das geurteilt wurde.');
+  }
+  if (typeof d.urteil.titel !== 'string') {
+    return nein('zweite_urteil_titel_form',
+      'urteil.titel ist ' + JSON.stringify(d.urteil.titel) + ' und keine Zeichenkette. Der ' +
+      'Titel ist das, was unter dem Video steht, sobald es oeffentlich ist; eine ' +
+      'Ermaechtigung ohne ihn bezeugt ihn nicht.');
+  }
+  if (d.urteil.thumbnail.dateiname !== urteil.thumbnail.dateiname) {
+    return nein('zweite_urteil_bild_name',
+      'Die zweite Ermaechtigung nennt als Bild am Video ' +
+      JSON.stringify(d.urteil.thumbnail.dateiname) + ', das Gedaechtnis dieses Laufs nennt ' +
+      JSON.stringify(urteil.thumbnail.dateiname) + '. Zwei Angaben ueber dasselbe Bild, die ' +
+      'auseinandergehen, werden nicht aufgeloest, sondern abgewiesen. Es wird nichts ' +
+      'oeffentlich gestellt.');
+  }
+  if (d.urteil.thumbnail.sha256 !== urteil.thumbnail.sha256) {
+    return nein('zweite_urteil_bild_sha_gedaechtnis',
+      'Die zweite Ermaechtigung nennt fuer das Bild ' + d.urteil.thumbnail.dateiname +
+      ' die Pruefsumme ' + d.urteil.thumbnail.sha256 + ', das Gedaechtnis dieses Laufs ' +
+      'nennt ' + String(urteil.thumbnail.sha256) + '. Das Gedaechtnis hat sich zwischen dem ' +
+      'Urteil und diesem Lauf geaendert. Es wird nichts oeffentlich gestellt.');
+  }
+
+  // 9. DER KANAL -- die FORM jetzt, der Vergleich spaeter (U.pruefeKanal).
+  if (typeof d.kanal_id !== 'string' || !d.kanal_id.trim()) {
+    return nein('zweite_kanal_form',
+      'kanal_id fehlt in der zweiten Ermaechtigung. Der Knopf hat einen Kanal genannt; ohne ' +
+      'diese Angabe laesst sich nicht pruefen, ob es derselbe ist, auf dem das Video ' +
+      'oeffentlich wuerde.');
+  }
+
+  return { ok: true, daten: d };
+}
+
 // Der Vergleich nach channels.list und das Verbrauchen -- beide WOERTLICH die
 // des Uploaders. Sie stehen hier als Weiterreichung und nicht als Nachbau:
 // `pruefeKanal` liest `kanal_id`/`kanal_name`, und diese Ermaechtigung traegt
@@ -672,8 +1076,10 @@ module.exports = {
   neuesGedaechtnis, leseGedaechtnis, schonHochgeladen, schreibeGedaechtnis,
 
   ERMAECHTIGUNG_ARTIFACT_TYPE, ERMAECHTIGUNG_SCHEMA_VERSION, ZWECK_UPLOAD,
+  ZWECK_VEROEFFENTLICHEN, ZWECK_HALTEPUNKT, ZWECKE_DRITTER_AUFRUF, ZWECKE,
   ERLAUBTE_RAENGE, ERMAECHTIGUNG_GUELTIG_MS, ERMAECHTIGUNG_ZUKUNFT_MS, ZUFALL_FORM,
   ISO_UTC,
   ermaechtigungOrdner, ermaechtigungPfad, neuerZufall, neueErmaechtigung,
   pruefeErmaechtigung, pruefeKanal, verbraucheErmaechtigung,
+  neueZweiteErmaechtigung, pruefeZweiteErmaechtigung, liesZweck,
 };

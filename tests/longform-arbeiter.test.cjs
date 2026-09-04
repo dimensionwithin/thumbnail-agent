@@ -274,9 +274,22 @@ test('EK-N1d: der Longform-Weg nimmt die Shorts-Liste NIE', () => {
 //
 // Die beiden Protokolle stehen ohne die Doppelpunkt-Schraegstriche, damit
 // diese Zeilen nicht selbst der Fund sind, den sie suchen.
-const NIRGENDS = ['videos.update', 'publishAt'];
+// EU: `videos.update` STEHT NICHT MEHR IN `NIRGENDS`. Bis EU war der dritte
+// Aufruf nicht gebaut, und der Test rechnete nach, dass sein Name im Arbeiter
+// nicht einmal im Kommentar vorkommt. Er ist gebaut; die Zusage wird darum
+// ERSETZT und nicht weiter behauptet.
+//
+// Was an ihre Stelle tritt, ist die Regel, die schon fuer die beiden anderen
+// schreibenden Aufrufe galt: der NAME steht nur im Kommentar, nie im Code. Im
+// Code steht `K.SCHREIBENDE_AUFRUFE[2]` -- der Arbeiter fuehrt keine eigene
+// Liste der API-Namen, sondern liest die eine.
+//
+// `publishAt` bleibt in `NIRGENDS`: der Veroeffentlichungstermin ist im
+// Arbeiter kein Feldname, sondern `K.STATUS_FELDER_NIE[0]`, und auch im
+// Kommentar hat er hier nichts zu suchen (Vertrag 7).
+const NIRGENDS = ['publishAt'];
 const NUR_IM_KOMMENTAR = [
-  'googleapis', 'videos.insert', 'thumbnails.set',
+  'googleapis', 'videos.insert', 'thumbnails.set', 'videos.update',
   'http' + '://', 'https' + '://',
 ];
 
@@ -285,11 +298,12 @@ const NUR_IM_KOMMENTAR = [
 const QUELLE_NURCODE = QUELLE.split('\n')
   .filter((z) => !z.trim().startsWith('//')).join('\n');
 
-test('EK-N2: videos.update und publishAt kommen im Arbeiter nirgends vor', () => {
+test('EK-N2: der Veroeffentlichungstermin kommt im Arbeiter nirgends vor', () => {
   for (const wort of NIRGENDS) {
     assert.ok(!QUELLE.includes(wort),
       'Der Longform-Arbeiter darf ' + JSON.stringify(wort) + ' nirgends enthalten, auch ' +
-      'nicht im Kommentar. Das Oeffentlichstellen ist der naechste Auftrag.');
+      'nicht im Kommentar. Der Veroeffentlichungstermin steht in genau einer Datei ' +
+      '(longform-kanal.js), und dort nur, damit er ausgeschlossen werden kann.');
   }
 });
 
@@ -867,9 +881,16 @@ test('EK-P2: die Vorschau nennt alle vier offenen Punkte und sagt, wo der Weg au
       'sie sagt nicht, wofuer das Gedaechtnis da ist');
     assert.ok(!text.includes('Es gibt keinen Knopf und keine Ermaechtigung'),
       'die Vorschau behauptet noch, es gebe keinen Knopf -- das stimmt seit EP nicht mehr');
-    // Und sie sagt, wo dieser Weg endet.
-    assert.ok(text.includes('DAS OEFFENTLICHE STELLEN GIBT ES NICHT'),
-      'die Vorschau sagt nicht, dass der dritte Aufruf fehlt');
+    // Und sie sagt, wo DIESER Klick endet. EU: der Satz "das oeffentliche
+    // Stellen gibt es nicht" ist weg, weil es das gibt. An seine Stelle tritt
+    // die Grenze des einen Klicks -- und der Hinweis, dass es einen zweiten
+    // braucht.
+    assert.ok(text.includes('DIESER KLICK STELLT NICHTS OEFFENTLICH'),
+      'die Vorschau sagt nicht, was dieser Klick nicht tut');
+    assert.ok(text.includes('ZWEITES Mal klickt'),
+      'die Vorschau sagt nicht, dass es einen zweiten Klick braucht');
+    assert.ok(!text.includes('ist nicht gebaut'),
+      'die Vorschau behauptet noch, der dritte Aufruf sei nicht gebaut');
     assert.ok(text.includes('NICHT GEMESSEN (Vertrag 10'),
       'die wichtigste Einschraenkung des Vertrags steht nicht in der Vorschau');
     lage.weg();

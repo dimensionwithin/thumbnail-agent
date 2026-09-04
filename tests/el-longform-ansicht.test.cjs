@@ -350,8 +350,8 @@ test('EL-N2a: die Ansicht kennt keinen Feldnamen und kein Befundwort des Arbeite
     // das Bild und seine Grenze (2.10)
     'THUMBNAIL_EXPORT_DIR', 'MiB',
     // Beschreibung, Hashtags, Tags (2.9) und der Upload (2.5, 2.14)
-    'Hashtag', 'hashtag', 'Codepunkte', 'privacyStatus', 'notifySubscribers',
-    'publishAt', 'videos.insert', 'thumbnails.set',
+    'Codepunkte', 'privacyStatus', 'notifySubscribers',
+    'publishAt', 'videos.insert', 'thumbnails.set', 'videos.update',
   ];
   // EN: "sha256" IST AUS DER LISTE HERAUSGENOMMEN, und das ist eine Aenderung
   // an der Zusage und keine Aufweichung. Sie ist es aus einem Grund, der
@@ -373,7 +373,23 @@ test('EL-N2a: die Ansicht kennt keinen Feldnamen und kein Befundwort des Arbeite
   // des Arbeiters darf in der ausgelieferten Seite stehen, das nicht der
   // Arbeiter selbst geschrieben hat -- geprueft am Text UND an der
   // Befundzeile, weiter unten in EN-N2a.
-  const AUS_DER_BEFUNDZEILE = ['sha256'];
+  //
+  // EU: "Hashtag" IST AUS `VERBOTEN` HERAUSGENOMMEN, aus demselben Grund, aus
+  // dem "sha256" es bei EN wurde -- und der Grund gehoert genauso benannt.
+  //
+  // Seit EU traegt die Befundzeile die FRAGE (Vertrag 2.4): Titel,
+  // Beschreibung, Hashtagzeile, Tags, Bild, jede Auskunft von YouTube und die
+  // Liste dessen, was aufgefallen ist. Die Ansicht zeigt sie Feld fuer Feld
+  // und beschriftet die Felder. Ein Feldname aus einer Auskunft, die der
+  // Arbeiter AUSDRUECKLICH fuer diesen Dienst herausgibt, ist kein Auslegen
+  // seines Textes -- er ist das Gegenteil davon.
+  //
+  // WAS DAMIT NICHT AUFWEICHT: die Ansicht rechnet an keinem dieser Felder
+  // etwas nach, urteilt ueber keines und leitet aus keinem etwas ab. Sie setzt
+  // sie hin. Der Riegel dafuer ist EL-N2b darunter, und der ist unberuehrt:
+  // im Skript gibt es weiterhin keine einzige Zeichenkettenoperation auf dem
+  // Text des Arbeiters.
+  const AUS_DER_BEFUNDZEILE = ['sha256', 'Hashtag'];
   // Geprueft wird zweierlei, und die Trennung ist beim Bau von EL noetig
   // geworden: der CODE dieser Ansicht -- was sie TUT --, und die
   // AUSGELIEFERTE Seite -- was ueber die Leitung geht. Die Begruendungen in
@@ -767,89 +783,124 @@ test('EL-N3: die Schreibfalle schnappt zu, wenn man sie verletzt', () => {
   }
 });
 
-test('EP: die Longform-Seite hat GENAU EINEN Knopf, ein <button>, und kein Formular', () => {
-  // DIE ZUSAGE HAT SICH GEAENDERT UND WIRD NEU FORMULIERT.
-  //
-  // Bis EP hiess sie: "die Seite traegt kein Element, das etwas schicken
-  // koennte" -- kein Knopf, kein fetch, kein Ereignis, kein connect-src, nicht
-  // einmal das Sitzungstoken. Sie war wahr, solange dieser Modus nichts konnte.
-  // Seit EP hat er einen Knopf, und der Satz waere eine Unwahrheit in einem
-  // Test, den der naechste Leser fuer eine Sicherung haelt.
-  //
-  // WAS AN SEINE STELLE TRITT, IST ENGER ALS "ES GIBT JETZT EINEN KNOPF":
-  //
-  //   - GENAU EIN <button>, und kein zweites. Ein zweiter Knopf auf dieser
-  //     Seite waere der, der oeffentlich stellt -- und den gibt es nicht.
-  //   - KEIN FORMULAR und kein Eingabefeld. Der Klick schickt NICHTS ausser
-  //     dem Sitzungstoken; was geschieht, stand vor dem Klick fest.
-  //   - form-action bleibt 'none', connect-src wird 'self' und nur 'self'.
-  const sitzung = longformSitzung();
-  try {
-    const html = SEITE.baueLongformSeite(sitzung);
+test('EP/EU: die Longform-Seite hat GENAU DREI Knoepfe, alle <button>, und kein Formular',
+  () => {
+    // DIE ZUSAGE HAT SICH ZWEIMAL GEAENDERT UND WIRD ZWEIMAL NEU FORMULIERT.
+    //
+    // Bis EP hiess sie: "die Seite traegt kein Element, das etwas schicken
+    // koennte". Bis EU: "GENAU EIN <button>, und kein zweites. Ein zweiter
+    // Knopf auf dieser Seite waere der, der oeffentlich stellt -- und den gibt
+    // es nicht." Den gibt es jetzt. Der Satz waere eine Unwahrheit in einem
+    // Test, den der naechste Leser fuer eine Sicherung haelt.
+    //
+    // WAS AN SEINE STELLE TRITT, IST ENGER ALS "ES GIBT JETZT DREI":
+    //
+    //   - GENAU DREI <button>, abgezaehlt. Hochladen, Anhalten,
+    //     Veroeffentlichen. Ein vierter, der sich dazustellt, faellt hier auf.
+    //   - AUF EINER LAGE IST HOECHSTENS EINE SORTE SICHTBAR. Die beiden
+    //     Bindungen schliessen sich aus; das prueft der Test darunter am
+    //     ausgefuehrten Skript und nicht am HTML.
+    //   - KEIN FORMULAR und kein Eingabefeld. Der Klick schickt NICHTS ausser
+    //     dem Sitzungstoken; was geschieht, stand vor dem Klick fest.
+    //   - form-action bleibt 'none', connect-src bleibt 'self' und nur 'self'.
+    const sitzung = longformSitzung();
+    try {
+      const html = SEITE.baueLongformSeite(sitzung);
 
-    // Was es weiterhin NICHT gibt: alles, worin ein Mensch etwas eintraegt
-    // oder woraus eine Adresse ausserhalb dieses Dienstes werden koennte.
-    for (const stueck of ['<form', '<input', '<textarea', '<select',
-      'XMLHttpRequest', 'navigator.sendBeacon', 'onclick', 'onsubmit', 'formaction']) {
-      assert.ok(!html.includes(stueck),
-        'die Longform-Seite traegt ' + stueck + ' -- der Knopf schickt nichts ausser dem ' +
-        'Sitzungstoken, und dabei soll es bleiben');
-    }
-
-    // GENAU EIN Knopf. Abgezaehlt und nicht "mindestens einer": ein zweiter,
-    // der sich eines Tages dazustellt, soll hier auffallen.
-    assert.equal((html.match(/<button/g) || []).length, 1,
-      'die Longform-Seite hat mehr oder weniger als einen Knopf');
-
-    // Und er stellt nichts oeffentlich -- weder er noch sonst etwas auf dieser
-    // Seite. Das ist die Zusage dieses Schnitts.
-    for (const wort of ['veroeffentlich', 'Veroeffentlich', 'oeffentlich stellen',
-      'videos.update']) {
-      const treffer = (html.match(new RegExp(wort, 'g')) || []).length;
-      if (wort === 'videos.update') {
-        assert.equal(treffer, 0, 'die Seite nennt den dritten Aufruf beim Namen');
+      // Was es weiterhin NICHT gibt: alles, worin ein Mensch etwas eintraegt
+      // oder woraus eine Adresse ausserhalb dieses Dienstes werden koennte.
+      for (const stueck of ['<form', '<input', '<textarea', '<select',
+        'XMLHttpRequest', 'navigator.sendBeacon', 'onclick', 'onsubmit', 'formaction']) {
+        assert.ok(!html.includes(stueck),
+          'die Longform-Seite traegt ' + stueck + ' -- die Knoepfe schicken nichts ausser ' +
+          'dem Sitzungstoken, und dabei soll es bleiben');
       }
-    }
 
-    // Die Sicherung im Kopf: der Weg hinaus ist genau EINER, und der fuehrt zu
-    // diesem Dienst.
-    assert.match(html, /default-src 'none'/);
-    assert.match(html, /connect-src 'self'/);
-    assert.match(html, /form-action 'none'/);
-    assert.ok(!/connect-src [^;"]*https?:/.test(html),
-      'connect-src laesst einen fremden Rechner zu');
+      // GENAU DREI Knoepfe. Abgezaehlt und nicht "mindestens drei".
+      assert.equal((html.match(/<button/g) || []).length, 3,
+        'die Longform-Seite hat mehr oder weniger als die drei Knoepfe');
 
-    // Das Sitzungstoken steht jetzt in der Seite -- es MUSS, sonst kaeme der
-    // Klick nicht am Torwaechter vorbei. Der Satz "es liegt nicht in der Seite
-    // herum" wandert damit mit; was bleibt, ist, dass es genau zweimal
-    // gebraucht wird und nirgends in eine fremde Adresse geht.
-    assert.ok(html.includes(sitzung.token),
-      'das Sitzungstoken fehlt -- dann kann der Knopf nicht wirken');
-    assert.equal((html.match(/X-Freigabe-Token/g) || []).length, 2,
-      'die Seite setzt die Tokenkopfzeile an mehr oder weniger als den zwei Aufrufen');
-    assert.equal((html.match(/fetch\(/g) || []).length, 2,
-      'die Seite macht mehr oder weniger als die zwei zugesagten Aufrufe');
-    for (const m of html.matchAll(/fetch\('([^']*)'/g)) {
-      assert.ok(m[1].startsWith('/'),
-        'ein fetch geht an eine Adresse, die nicht dieser Dienst ist: ' + m[1]);
-    }
-  } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
-});
+      // UND DER GEFAEHRLICHE IST ALS SOLCHER BESCHRIFTET. Er sagt im WORT und
+      // nicht nur in der Farbe, was er tut -- wer Farben nicht unterscheiden
+      // kann, liest den Satz.
+      // Die Beschriftungen selbst stehen nur da, wenn es die Knoepfe gibt --
+      // sie kommen aus der Sitzung. Was IMMER dasteht, ist der Text darueber,
+      // und der muss beide voneinander unterscheiden.
+      assert.ok(html.includes('haelt unmittelbar davor an'),
+        'der Text sagt nicht, dass der eine Knopf anhaelt');
+      assert.ok(html.includes('Danach ist das ') && html.includes('oeffentlich'),
+        'der Text sagt nicht, was der andere Knopf bewirkt');
+      assert.ok(html.includes('macht das nicht ') && html.includes('rueckgaengig'),
+        'der Text sagt nicht, dass es kein Zurueck gibt');
+      // Und die Beschriftung des gefaehrlichen Knopfes sagt es im WORT, wenn
+      // es ihn gibt -- geprueft am ausgefuehrten Skript weiter unten.
+      assert.ok(SEITE.baueLongformSeite(Object.assign({}, sitzung, {
+        zweiteBindung: { moeglich: true, videoId: 'DOPPELGAENGER-OHNE-ECHTE-KENNUNG' },
+        dritterKnopfBereit: () => ({ da: true, grund: null }),
+      })).includes('nicht zurueckzunehmen'),
+      'die Beschriftung des Knopfes sagt nicht, dass es kein Zurueck gibt');
 
-test('EP: der Longform-Modus hat GENAU EINE POST-Route, und sie heisst /hochladen', () => {
+      // Die Sicherung im Kopf: der Weg hinaus ist genau EINER, und der fuehrt
+      // zu diesem Dienst.
+      assert.match(html, /default-src 'none'/);
+      assert.match(html, /connect-src 'self'/);
+      assert.match(html, /form-action 'none'/);
+      assert.ok(!/connect-src [^;"]*https?:/.test(html),
+        'connect-src laesst einen fremden Rechner zu');
+
+      // Das Sitzungstoken steht in der Seite -- es MUSS, sonst kaeme kein
+      // Klick am Torwaechter vorbei. Es geht in jede Kopfzeile dieses Dienstes
+      // und in keine fremde Adresse.
+      assert.ok(html.includes(sitzung.token),
+        'das Sitzungstoken fehlt -- dann koennen die Knoepfe nicht wirken');
+      // EU: AUS ZWEI fetch SIND DREI GEWORDEN UND NICHT VIER, und das ist die
+      // interessantere Zahl. Die beiden Knoepfe des dritten Aufrufs teilen
+      // sich EINEN fetch; was sie unterscheidet, ist die Adresse, die ihnen
+      // beim Anmelden mitgegeben wird. Zwei Kopien desselben Aufrufs waeren
+      // zwei Stellen, an denen eine Kopfzeile fehlen koennte -- und die eine,
+      // die sie vergisst, waere ausgerechnet die, die veroeffentlicht.
+      //
+      //   POST /hochladen        (der Knopf aus EP)
+      //   POST /haltepunkt bzw. /veroeffentlichen  (EINE Stelle, zwei Ziele)
+      //   GET  /lauf?ab=N
+      assert.equal((html.match(/X-Freigabe-Token/g) || []).length, 3,
+        'die Seite setzt die Tokenkopfzeile an mehr oder weniger als den drei Aufrufen');
+      assert.equal((html.match(/fetch\(/g) || []).length, 3,
+        'die Seite macht mehr oder weniger als die drei zugesagten Aufrufe');
+      const ziele = [...html.matchAll(/fetch\('([^']*)'/g)].map((m) => m[1]);
+      for (const z of ziele) {
+        assert.ok(z.startsWith('/'),
+          'ein fetch geht an eine Adresse, die nicht dieser Dienst ist: ' + z);
+      }
+      // Die Adressen stehen woertlich in der Seite -- als fetch-Ziel oder als
+      // Argument, das eines wird. Keine wird aus Teilen zusammengesetzt.
+      assert.ok(html.includes("'/hochladen'"));
+      assert.ok(html.includes("klick(halt, '/haltepunkt'"),
+        'der anhaltende Knopf ruft nicht /haltepunkt');
+      assert.ok(html.includes("klick(echt, '/veroeffentlichen'"),
+        'der veroeffentlichende Knopf ruft nicht /veroeffentlichen');
+      // UND SIE SIND NICHT VERTAUSCHT. Das ist der eine Fehler, den man an
+      // dieser Stelle machen kann und der niemandem auffiele, bevor ein Video
+      // oeffentlich ist.
+      assert.ok(!html.includes("klick(halt, '/veroeffentlichen'"),
+        'der anhaltende Knopf veroeffentlicht');
+    } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
+  });
+
+test('EU: der Longform-Modus hat GENAU DREI POST-Routen, und jede nimmt nichts entgegen', () => {
   // Bis EP hiess die Zusage: "keine einzige POST-Route -- die leere Liste ist
-  // die Zusage selbst". Sie ist nicht mehr wahr und wird ERSETZT, nicht
-  // gestrichen. Was an ihre Stelle tritt, laesst sich genauso in einem Blick
-  // pruefen: die Listen werden weiterhin ABGEZAEHLT und nicht auf "enthaelt
-  // mindestens" geprueft. Eine Route, die sich eines Tages dazustellt, faellt
-  // hier auf.
+  // die Zusage selbst". Bis EU: "GENAU EINE, und sie heisst /hochladen". Beide
+  // sind ersetzt worden und nicht gestrichen. Was bleibt, laesst sich genauso
+  // in einem Blick pruefen: die Listen werden ABGEZAEHLT und nicht auf
+  // "enthaelt mindestens" geprueft.
   const von = SERVER_NURCODE.indexOf('const ROUTEN_GET = {');
   const bis = SERVER_NURCODE.indexOf('};', SERVER_NURCODE.indexOf('const ROUTEN_POST = {'));
   const tabellen = SERVER_NURCODE.slice(von, bis);
   assert.ok(tabellen.includes("[MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf']),"),
     'der Longform-Modus hat mehr oder weniger als die drei lesenden GET-Routen');
-  assert.ok(tabellen.includes("[MODUS_LONGFORM]: new Set(['/hochladen']),"),
-    'der Longform-Modus hat mehr oder weniger als die eine POST-Route');
+  assert.ok(tabellen.includes(
+    "[MODUS_LONGFORM]: new Set(['/hochladen', '/haltepunkt', '/veroeffentlichen']),"),
+  'der Longform-Modus hat mehr oder weniger als die drei POST-Routen');
 
   const postTeil = SERVER_NURCODE.slice(SERVER_NURCODE.indexOf('const ROUTEN_POST = {'), bis);
   // Die beiden lesenden Routen stehen in KEINER POST-Tabelle.
@@ -857,11 +908,21 @@ test('EP: der Longform-Modus hat GENAU EINE POST-Route, und sie heisst /hochlade
     assert.ok(!postTeil.includes(r),
       'die Route ' + r + ' steht in einer POST-Tabelle -- sie ist lesend und nur lesend');
   }
-  // Und es gibt keine Route, die etwas oeffentlich stellte.
-  for (const r of ['/veroeffentlichen', '/oeffentlich', '/update']) {
-    assert.ok(!tabellen.includes(r),
-      'es gibt eine Route ' + r + ' -- das Oeffentlichstellen ist nicht gebaut');
-  }
+  // Und der Shorts-Modus hat KEINE der beiden neuen Routen: sie gehoeren zum
+  // Longform-Weg, und der Shorts-Uploader macht den dritten Aufruf nicht.
+  const shortsZeile = tabellen.slice(tabellen.indexOf('const ROUTEN_POST'));
+  assert.ok(!/MODUS_SHORTS\]: new Set\(\[[^\]]*veroeffentlichen/.test(shortsZeile),
+    'der Shorts-Modus hat eine Route zum Veroeffentlichen');
+  assert.ok(!/MODUS_SHORTS\]: new Set\(\[[^\]]*haltepunkt/.test(shortsZeile),
+    'der Shorts-Modus hat eine Haltepunkt-Route');
+
+  // DER ZWECK KOMMT AUS DER ROUTENTABELLE. Das ist die Sicherung dahinter:
+  // welchen Zweck eine zweite Ermaechtigung traegt, entscheidet die Adresse
+  // und nicht ein Wert in der Anfrage.
+  assert.match(SERVER_NURCODE,
+    /if \(pfad === '\/haltepunkt'\) \{\s*\n\s*nimmLongformDrittenAufruf\(res, GEDAECHTNIS_MODUL\.ZWECK_HALTEPUNKT\);/);
+  assert.match(SERVER_NURCODE,
+    /if \(pfad === '\/veroeffentlichen'\) \{\s*\n\s*nimmLongformDrittenAufruf\(res, GEDAECHTNIS_MODUL\.ZWECK_VEROEFFENTLICHEN\);/);
 });
 
 test('EP: POST /hochladen im Longform-Modus nimmt NICHTS entgegen', () => {
@@ -983,32 +1044,50 @@ for (const modus of ['shorts', 'longform']) {
 // WAS DIE ANSICHT ZEIGT UND WO SIE AUFHOERT
 // ===========================================================================
 
-test('EP: die Seite sagt, wo dieser WEG aufhoert -- und dass das Oeffentlichstellen ' +
-  'nicht existiert', () => {
+test('EU: die Seite sagt, wo dieser WEG aufhoert -- und dass der letzte Klick nicht ' +
+  'zurueckzunehmen ist', () => {
   // Bis EP hiess die Ueberschrift "Hier hoert diese SEITE auf" und der Text
-  // darunter zaehlte auf, was nicht gebaut sei -- Knopf, Ermaechtigung,
-  // schreibende Haelfte. Drei davon sind jetzt gebaut, und der Satz wandert
-  // mit. Was bleibt und woran dieser Test haengt, ist das Vierte: der dritte
-  // Aufruf. Nach einem Lauf, der eben etwas auf einen Kanal geschrieben hat,
-  // ist "es ist fertig" die naheliegendste Lesart, und sie ist falsch.
+  // zaehlte auf, was nicht gebaut sei. Bis EU hiess der Kern: "Das
+  // oeffentliche Stellen gibt es in diesem Bau nicht." Beides ist gebaut, und
+  // beide Saetze wandern mit.
+  //
+  // WAS AN IHRE STELLE TRITT, IST DER SATZ, DER JETZT ZAEHLT: der letzte Klick
+  // laesst sich nicht zuruecknehmen, und dieser Bau kann ihn nicht rueckgaengig
+  // machen. Nach einem Lauf, der eben etwas auf einen Kanal geschrieben hat,
+  // ist "es ist fertig" die naheliegendste Lesart -- und dass sie hier
+  // gefaehrlich waere, ist der Grund fuer diesen Abschnitt.
   const sitzung = longformSitzung();
   try {
     const html = SEITE.baueLongformSeite(sitzung);
     assert.match(html, /Hier hoert dieser Weg auf/);
-    assert.match(html, /Das Video ist danach privat und bleibt es/);
-    assert.match(html, /Das oeffentliche Stellen gibt es in diesem Bau nicht/);
-    assert.match(html, /Vertrag 2\.5, Schritte 14 bis 17/);
-    assert.match(html, /nicht als Aufruf, den man von Hand ausloesen koennte/);
-    // Die ZWEITE Ermaechtigung wird benannt und nicht gebaut -- mit Grund.
-    assert.match(html, /zweite<\/b>\s*\n?\s*'? ?\+? ?'?\s*Ermaechtigung|<b>zweite<\/b>/);
-    assert.match(html, /Die erste ersetzt /);
-    // Und was diese Sitzung schreibt, steht weiterhin da -- jetzt zwei Dateien
-    // statt einer, und der Satz sagt beide.
+    assert.match(html, /Nach dem Hochladen ist das Video privat und bleibt es/);
+    assert.match(html, /Der zweite Klick ist der, den niemand zuruecknimmt/);
+    assert.match(html, /loescht kein Video/);
+    assert.match(html, /wiederholt keinen Aufruf/);
+    // Der Neustart zwischen den beiden Klicks steht da -- ohne ihn stuende die
+    // Frage auf der Lage von vor dem Upload.
+    assert.match(html, /NEU: dann liest der Trockenlauf|neu: dann liest der Trockenlauf|Longform-Modus neu/);
+    // Was der letzte Aufruf aendert, und was nicht.
+    assert.match(html, /ein einziges Feld, die Sichtbarkeit/);
+    assert.match(html, /vollstaendigen Statusblock/);
+    // Und was diese Sitzung schreibt, steht weiterhin da.
     assert.match(html, /ihre Sperre unter <code>data\/freigaben\/<\/code>/);
-    assert.match(html, /erst beim Klick &mdash; die eine ' \+\s*'Ermaechtigung|erst beim Klick/);
+    assert.match(html, /erst beim Klick/);
     assert.match(html, /Das Gedaechtnis schreibt der Arbeiter, nicht dieser Dienst/);
     // Die wichtigste Einschraenkung des Vertrags steht auf der Seite.
     assert.match(html, /nicht gemessen \(Vertrag 10\)/);
+    // UND DIE ALTEN, JETZT UNWAHREN SAETZE STEHEN NICHT MEHR DA. Ein Satz, der
+    // stehen bleibt, nachdem er nicht mehr stimmt, ist genau die Sorte, die
+    // der naechste Leser fuer wahr nimmt.
+    assert.ok(!html.includes('Das oeffentliche Stellen gibt es in diesem Bau nicht'),
+      'die Seite behauptet noch, das Oeffentlichstellen sei nicht gebaut');
+    // Im SCHLUSSABSCHNITT steht nichts mehr, was "nicht gebaut" sagt. (Weiter
+    // oben schon: das Standbild des Videos aus Vertrag 4 Schritt 7 ist
+    // wirklich nicht gebaut, und dass es fehlt, gehoert auf die Seite.)
+    const schluss = html.slice(html.indexOf('Hier hoert dieser Weg auf'));
+    assert.ok(!schluss.includes('ist nicht gebaut'),
+      'der Schlussabschnitt behauptet noch, etwas sei nicht gebaut');
+    assert.ok(schluss.length > 800, 'der Schlussabschnitt wurde nicht gefunden');
   } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
 });
 

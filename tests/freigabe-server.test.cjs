@@ -1014,6 +1014,12 @@ test('die Sperre wird mit wx angelegt -- das Anlegen ist die Pruefung', () => {
     // gemeinsam haben, ist ein Blick auf eine Datei, die dieser Dienst nicht
     // anlegt -- die Zusage bleibt darum unberuehrt.
     'ermaechtigung_noch_da: fs.existsSync(pfad),',
+    // EU: dieselbe Frage nach dem Lauf des DRITTEN Aufrufs. Dritte Stelle,
+    // dritter Zustand, dieselbe Sache -- und hier ist sie am wichtigsten:
+    // liegt die Ermaechtigung nach einem Veroeffentlichungslauf noch da, ist
+    // der Arbeiter nicht bis zum Verbrauchen gekommen, und dann hat er auch
+    // nichts gesendet.
+    'ermaechtigung_noch_da: fs.existsSync(pfad),',
   ], 'neue existsSync-Stelle: gehoert sie zu einem Anlegen, ist sie ein Loch');
 });
 
@@ -1793,15 +1799,26 @@ test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
   // zweiten scharfen Weg wiederholt, weil er der teurere ist: der Uploader
   // laedt Ausschnitte hoch, die schon einmal beurteilt waren, dieser hier ein
   // ganzes Video, das noch nie oben war.
+  //
+  // EU: AUS EINEM AUFRUFER SIND ZWEI GEWORDEN, und beide sind Knoepfe. Der
+  // eine laedt hoch (nimmLongformHochladen), der andere geht den Weg des
+  // dritten Aufrufs (nimmLongformDrittenAufruf) -- entweder bis zum
+  // Haltepunkt oder bis zum Ende. Was gleich bleibt: JEDER Aufrufer haengt an
+  // einem Klick, und keiner an einem Urteil, einem Zeitgeber oder dem Ende
+  // eines anderen Laufs.
   const rufer = [...QUELLTEXT.split(String.fromCharCode(10)).entries()]
     .filter(([, z]) => !z.trim().startsWith('//') && z.includes('starteLongformLauf('))
     .map(([i, z]) => ({ zeile: i + 1, text: z.trim() }));
-  assert.equal(rufer.length, 2,
-    'starteLongformLauf kommt ' + rufer.length + '-mal im Code vor -- erwartet sind zwei: ' +
-    'die Erklaerung und der eine Aufruf aus nimmLongformHochladen. ' +
+  assert.equal(rufer.length, 3,
+    'starteLongformLauf kommt ' + rufer.length + '-mal im Code vor -- erwartet sind drei: ' +
+    'die Erklaerung und die zwei Aufrufe aus den beiden Knopfrouten. ' +
     rufer.map((x) => x.zeile + ': ' + x.text).join(' | '));
   const knopfRumpf = QUELLTEXT.slice(QUELLTEXT.indexOf('function nimmLongformHochladen('),
+    QUELLTEXT.indexOf('function nimmLongformDrittenAufruf('));
+  const drittRumpf = QUELLTEXT.slice(QUELLTEXT.indexOf('function nimmLongformDrittenAufruf('),
     QUELLTEXT.indexOf('function liefereLongformLauf('));
+  assert.ok(drittRumpf.includes('starteLongformLauf('),
+    'die Route des dritten Aufrufs startet den Arbeiter nicht');
   assert.ok(knopfRumpf.includes('starteLongformLauf('),
     'der eine Aufrufer ist nicht die Knopfroute');
 });

@@ -1265,13 +1265,57 @@ pre.lf-strom { margin: 0; padding: 12px 14px;
   white-space: pre-wrap; word-break: break-word;
   border-left: 2px solid #3a4150; padding: 2px 0 2px 12px; }
 .lf-kein-bild { color: #ff9a86; font-size: 13.5px; margin: 6px 0 0; max-width: 100ch; }
+
+/* EP: DER KNOPF UND DER LAUF.
+   Der Knopf steht in einem eigenen, abgesetzten Kasten und nicht neben dem
+   Text: er ist die einzige Stelle dieser Seite, an der etwas geschieht, und
+   ein Knopf, den man beim Ueberfliegen mit einer Ueberschrift verwechselt,
+   ist ein Knopf, den jemand aus Versehen trifft. */
+.lf-knopf { border: 2px solid #6b4a1f; background: #1c1710; border-radius: 8px;
+  padding: 18px 20px; max-width: 100ch; margin-top: 8px; }
+.lf-knopf h2 { margin: 0 0 10px; font-size: 16px; color: #f0d3a6; }
+.lf-knopf p { margin: 8px 0 0; color: #cbd2de; font-size: 13.5px; max-width: 92ch; }
+.lf-knopf b { color: #e6e8ec; }
+.lf-knopf code { background: #12141a; border: 1px solid #262b33; border-radius: 4px;
+  padding: 1px 5px; word-break: break-all; }
+.lf-knopf button { margin-top: 16px; font: 600 15px/1.2 inherit; padding: 12px 20px;
+  border-radius: 6px; border: 1px solid #8a5d24; background: #3a2a12; color: #f7e6cd;
+  cursor: pointer; text-align: left; }
+.lf-knopf button:hover:enabled { background: #4a361a; }
+.lf-knopf button:disabled { opacity: 0.45; cursor: not-allowed; }
+.lf-gesperrt { border: 1px solid #4a505c; background: #171a20; border-radius: 8px;
+  padding: 16px 20px; max-width: 100ch; margin-top: 8px; }
+.lf-gesperrt h2 { margin: 0 0 8px; font-size: 15px; color: #cbd2de; }
+.lf-gesperrt p { margin: 6px 0 0; color: #9aa3b2; font-size: 13.5px; }
+.lf-fehler { border: 1px solid #7a2f22; background: #241413; border-radius: 6px;
+  padding: 10px 14px; margin-top: 14px; color: #ff9a86; font-size: 13.5px;
+  white-space: pre-wrap; word-break: break-word; }
+.lf-lauf { border-top: 1px solid #2e333c; padding-top: 16px; margin-top: 20px; }
+.lf-lauf h3 { margin: 0 0 8px; font-size: 13px; color: #9aa3b2;
+  text-transform: uppercase; letter-spacing: 0.04em; }
+.lf-ende-kasten { border-radius: 6px; padding: 12px 16px; margin-top: 14px;
+  max-width: 100ch; font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+.lf-ende-kasten.ausgang { border: 1px solid #6b4a1f; background: #241d13; color: #f0d3a6; }
+.lf-ende-kasten.weg { border: 1px solid #7a2f22; background: #241413; color: #ff9a86; }
+.lf-gedaechtnis { border: 1px solid #2e333c; background: #14171d; border-radius: 6px;
+  padding: 12px 16px; margin-top: 12px; max-width: 100ch; color: #cbd2de;
+  font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
 `;
 
-// Das Skript der Longform-Ansicht. Es setzt Werte in den Baum und tut sonst
-// NICHTS: kein fetch, kein XMLHttpRequest, kein Ereignis, kein Zeitgeber,
-// keine Tastenbelegung. Es gibt in diesem Modus keine Route, an die es sich
-// wenden koennte, und es soll auch keine geben (freigabe-server.js,
-// ROUTEN_POST).
+// Das Skript der Longform-Ansicht.
+//
+// EP: DER SATZ UEBER "KEIN FETCH" IST WEG, UND ZWAR ERSATZLOS. Bis EP stand
+// hier: "Es setzt Werte in den Baum und tut sonst NICHTS: kein fetch, kein
+// XMLHttpRequest, kein Ereignis, kein Zeitgeber." Seit dieser Modus einen Knopf
+// hat, stimmt kein Halbsatz davon mehr. Was an seine Stelle tritt, steht unten
+// im Skript selbst und ist enger als "es macht jetzt Aufrufe": GENAU ZWEI
+// Sorten, beide an diesen Dienst, der POST ohne Leib.
+//
+// WAS BLEIBT: setze() ist weiterhin die EINE Stelle, an der Text in den Baum
+// geht, und setzeQuelle() die eine, an der eine Adresse hineingeht. Der Strom
+// des Arbeiters geht als EIN Stueck durch setze() -- ein aufgebauter Baum aus
+// Zeilen waere die zweite Stelle, und beim Mutationslauf zu EL ist genau an so
+// einer zweiten Stelle eine Kuerzung durchgerutscht.
 const LONGFORM_SKRIPT = String.raw`
 const D = DATEN;
 
@@ -1357,6 +1401,143 @@ for (const [id, text] of [['stromAus', D.aus], ['stromErr', D.err]]) {
   setze(document.querySelector('#' + id + ' pre'), text);
 }
 if (!etwasDa) kel('keinStrom').hidden = false;
+
+// -------------------------------------------------------------------------
+// EP: DER KNOPF
+// -------------------------------------------------------------------------
+//
+// DIESE SEITE MACHT JETZT AUFRUFE. Bis EP stand hier "kein fetch, kein
+// Ereignis, kein Zeitgeber"; das ist nicht mehr wahr und wandert mit. Was
+// stimmt, ist enger: sie macht GENAU ZWEI Sorten Aufruf, und beide gehen an
+// diesen Dienst unter dieser Adresse (die Richtlinie oben laesst nichts
+// anderes zu):
+//
+//   POST /hochladen   einmal, beim Klick, OHNE Leib -- sie schickt nichts
+//                     ausser dem Sitzungstoken. Was geschieht, stand vor dem
+//                     Klick fest.
+//   GET  /lauf?ab=N   waehrend der Lauf laeuft, um zu zeigen, wo er steht.
+//                     Er hoert von selbst auf: das Ende kommt aus der Antwort
+//                     des Dienstes und nicht aus einer Zeitrechnung hier.
+//
+// Der Knopf ist NACH dem Klick gesperrt, und er wird nicht wieder frei. Ein
+// zweiter Lauf braucht einen neuen Start des Dienstes -- dann laeuft der
+// Trockenlauf noch einmal, und ein Mensch sieht die Lage VON JETZT statt die
+// von vor dem Upload.
+const ZEITGRENZE_START_MS = 20000;
+const ZEITGRENZE_LAUF_MS = 15000;
+let laufAb = 0;
+let laufLaeuft = false;
+
+setze(kel('knopfKopf'), D.knopf.da
+  ? 'Hochladen — privat, mit dem Bild ' + D.knopf.bild
+  : 'Es gibt hier keinen Knopf');
+
+if (D.knopf.da) {
+  kel('knopfKasten').hidden = false;
+  const knopf = kel('knopf');
+  setze(knopf, D.knopf.beschriftung);
+  knopf.addEventListener('click', async () => {
+    knopf.disabled = true;
+    setze(knopf, 'laeuft …');
+    kel('laufKasten').hidden = false;
+    try {
+      const antwort = await fetch('/hochladen', {
+        method: 'POST',
+        headers: { 'X-Freigabe-Token': D.token },
+        signal: AbortSignal.timeout(ZEITGRENZE_START_MS),
+      });
+      let leib = null;
+      try { leib = await antwort.json(); } catch (e) { leib = null; }
+      if (!antwort.ok) {
+        const grund = (leib && leib.meldung) ? leib.meldung : ('HTTP ' + antwort.status);
+        setze(kel('knopfFehler'), 'Der Dienst hat den Start abgelehnt: ' + grund).hidden = false;
+        setze(knopf, 'nicht gestartet');
+        return;
+      }
+    } catch (e) {
+      setze(kel('knopfFehler'), 'Der Dienst hat nicht geantwortet: ' + (e && e.message ? e.message : e) +
+        '\n\nOB ETWAS GESTARTET WURDE, IST VON HIER AUS NICHT ZU SEHEN. Im Terminal ' +
+        'nachsehen, in dem der Dienst laeuft.').hidden = false;
+      setze(knopf, 'ungewiss');
+      // Trotzdem verfolgen: laeuft doch einer, soll er sichtbar sein.
+      verfolgeLauf();
+      return;
+    }
+    setze(knopf, 'gestartet');
+    verfolgeLauf();
+  });
+} else {
+  kel('knopfGesperrt').hidden = false;
+  setze(kel('knopfGrund'), D.knopf.grund);
+}
+
+if (D.gedaechtnisSatz) {
+  kel('gedaechtnisKasten').hidden = false;
+  setze(kel('gedaechtnisKasten'), D.gedaechtnisSatz);
+}
+
+function schlaf(ms) { return new Promise((f) => setTimeout(f, ms)); }
+
+// Der Strom des Arbeiters, als EIN Stueck Text -- durch dieselbe setze(), die
+// auch die Vorschau setzt. Ein aufgebauter Baum aus Zeilen waere die zweite
+// Stelle, an der Text in den Baum geht, und beim Mutationslauf zu EL ist genau
+// an so einer zweiten Stelle eine Kuerzung durchgerutscht.
+let laufText = '';
+
+async function verfolgeLauf() {
+  if (laufLaeuft) return;
+  laufLaeuft = true;
+  kel('laufKasten').hidden = false;
+  for (;;) {
+    let daten;
+    try {
+      daten = await fetch('/lauf?ab=' + laufAb, {
+        headers: { 'X-Freigabe-Token': D.token },
+        signal: AbortSignal.timeout(ZEITGRENZE_LAUF_MS),
+      }).then((r) => r.json());
+    } catch (e) {
+      setze(kel('laufEnde'), 'Der Fortschritt laesst sich nicht mehr abfragen: ' +
+        (e && e.message ? e.message : e) + '\n\nDAS HEISST NICHT, DASS DER LAUF STEHT. Er ' +
+        'ist ein eigener Prozess; was er tut, steht im Terminal und im Gedaechtnis unter ' +
+        'data/. Diese Seite weiss es ab hier nicht mehr.');
+      kel('laufEnde').className = 'lf-ende-kasten weg';
+      kel('laufEnde').hidden = false;
+      return;
+    }
+    for (const z of (daten.zeilen || [])) {
+      laufText += (z.art === 'dienst' ? '[Dienst] ' : (z.art === 'err' ? '[stderr] ' : '')) +
+        z.zeile + '\n';
+    }
+    if (daten.gesamt !== undefined) laufAb = daten.gesamt;
+    setze(kel('laufZeilen'), laufText);
+    if (daten.ende) {
+      // KEINE ZUSTIMMUNGSFARBE FUER DEN 0er. Er heisst, dass der Arbeiter zu
+      // Ende gelaufen ist, und nicht, dass das Ergebnis gut ist -- das
+      // entscheidet ein Mensch an dem, was oben steht.
+      const durch = daten.ende.code === 0;
+      kel('laufEnde').className = 'lf-ende-kasten ' + (durch ? 'ausgang' : 'weg');
+      setze(kel('laufEnde'), (durch
+        ? 'Der Arbeiter ist mit Rueckgabewert 0 beendet. Was hochgeladen wurde, mit welchem ' +
+          'Titel, welcher Beschreibung und welchem Bild, und was YouTube dazu gemeldet hat, ' +
+          'steht oben in seinen eigenen Worten -- diese Seite gibt nichts davon mit eigenen ' +
+          'wieder.'
+        : 'Der Arbeiter ist mit Rueckgabewert ' + daten.ende.code + ' beendet. Der Grund ' +
+          'steht oben im Wortlaut. SEIN ERSTER SATZ SAGT, OB EIN VIDEO AUF DEM KANAL LIEGT ' +
+          '-- ein Abbruch auf diesem Weg kann NACH dem Upload fallen.') +
+        '\n\n' + (daten.ende.ermaechtigung_noch_da
+        ? 'Die Ermaechtigungsdatei liegt noch da -- der Arbeiter hat sie nicht verbraucht. ' +
+          'Sie laeuft von selbst ab.'
+        : 'Die Ermaechtigung ist verbraucht und geloescht.') +
+        '\n\nHIER IST SCHLUSS. Das Video ist PRIVAT. Das oeffentliche Stellen gibt es in ' +
+        'diesem Bau nicht -- weder auf dieser Seite noch im Arbeiter noch als Aufruf, den ' +
+        'man von Hand ausloesen koennte. Es braeuchte eine ZWEITE Ermaechtigung mit einem ' +
+        'anderen Zweck, und einen Bau, den es noch nicht gibt.');
+      kel('laufEnde').hidden = false;
+      return;
+    }
+    await schlaf(2000);
+  }
+}
 `;
 
 // sitzung: { modus, aufnahme, token, trocken: {befehl, code, aus, err, fehler},
@@ -1381,6 +1562,16 @@ if (!etwasDa) kel('keinStrom').hidden = false;
 function baueLongformSeite(sitzung) {
   const t = sitzung.trocken;
   const bild = sitzung.bild || { da: false, grund: 'Diese Sitzung traegt kein Bild.' };
+  // OB ES EINEN KNOPF GIBT, ENTSCHEIDET DER DIENST UND NICHT DIESE SEITE.
+  // longformKnopfBereit() ist dieselbe Funktion, an der die POST-Route den
+  // Klick prueft -- eine zweite Bedingung hier waere eine Seite, die einen
+  // Knopf zeigt, den der Dienst ablehnt, oder umgekehrt einen verschweigt, den
+  // er annaehme. Der Aufrufer reicht sie herein, damit dieses Modul weiterhin
+  // weder fs noch http noch den Dienst kennt.
+  const knopf = typeof sitzung.knopfBereit === 'function'
+    ? sitzung.knopfBereit(sitzung)
+    : { da: false, grund: 'Diese Sitzung sagt nicht, ob ein Knopf zulaessig ist. Ohne ' +
+      'diese Auskunft wird keiner gezeigt.' };
   const nutzlast = {
     aufnahme: sitzung.aufnahme,
     befehl: t.befehl,
@@ -1404,6 +1595,32 @@ function baueLongformSeite(sitzung) {
       hinweise: bild.hinweise,
     } : { da: false, grund: bild.grund },
     bildAdresse: bild.da ? '/bild?t=' + sitzung.token : null,
+
+    // EP: DAS TOKEN GEHT JETZT AUCH ALS FELD MIT, und zwar fuer die beiden
+    // Aufrufe des Knopfes. Bis EN stand es nur in der Bildadresse; seit EP
+    // schickt die Seite es als Kopfzeile mit -- das ist der Weg, den auch die
+    // Shorts-Seite geht, und es gibt weiterhin genau eine Stelle, die es in
+    // eine Adresse haengt (setzeQuelle) und eine, die es in eine Kopfzeile
+    // schreibt (die beiden fetch unten).
+    token: sitzung.token,
+
+    // `da` und nicht das andere Wort: diese Ansicht sagt nicht, dass etwas in
+    // Ordnung ist. Es gibt einen Knopf oder es gibt keinen -- und wenn keinen,
+    // den Grund.
+    knopf: knopf.da ? {
+      da: true,
+      grund: null,
+      bild: bild.dateiname,
+      kanal: sitzung.kanal.name,
+      quelle: sitzung.bindung.quelle,
+      weiter_ab: sitzung.bindung.weiter_ab,
+      beschriftung: 'Jetzt PRIVAT hochladen: ' + bild.dateiname + ' an "' +
+        sitzung.kanal.name + '"',
+    } : { da: false, grund: knopf.grund },
+
+    // Der Stand des Gedaechtnisses als EIN Satz, den der Arbeiter formuliert
+    // hat. Diese Seite gibt ihn nicht mit eigenen Worten wieder.
+    gedaechtnisSatz: (sitzung.gedaechtnis && sitzung.gedaechtnis.satz) || null,
   };
   return [
     '<!doctype html>',
@@ -1421,9 +1638,17 @@ function baueLongformSeite(sitzung) {
     // woanders soll auf dieser Seite nicht darstellbar sein, auch nicht
     // versehentlich. connect-src bleibt weg: dass die Seite ein Bild ANZEIGT,
     // heisst nicht, dass sie etwas AUFRUFEN darf.
+    // EP: connect-src 'self' KOMMT DAZU, und nur das. 'self' ist dieser Dienst
+    // unter dieser Adresse -- also die drei Routen, die er hat, und sonst
+    // nichts. Der Satz darueber hiess bis EP "connect-src bleibt weg: dass die
+    // Seite ein Bild ANZEIGT, heisst nicht, dass sie etwas AUFRUFEN darf";
+    // seit sie einen Knopf hat, ruft sie auf, und die Erlaubnis wandert mit,
+    // statt dass die Zusage weiter behauptet wuerde. form-action bleibt
+    // 'none': es gibt kein Formular, und der Knopf ist keines -- er schickt
+    // nichts ausser dem Sitzungstoken.
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
-      'img-src \'self\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; ' +
-      'form-action \'none\'; base-uri \'none\'">',
+      'img-src \'self\'; connect-src \'self\'; style-src \'unsafe-inline\'; ' +
+      'script-src \'unsafe-inline\'; form-action \'none\'; base-uri \'none\'">',
     '<title>Longform-Trockenlauf</title>',
     '<style>' + STIL + LONGFORM_STIL + '</style></head><body>',
     '<header>',
@@ -1431,9 +1656,10 @@ function baueLongformSeite(sitzung) {
     '<div class="kopfzeile" id="kopf1"></div>',
     '<div class="kopfzeile" id="kopf2"></div>',
     '<div class="kopfwerkzeug">',
-    '<span class="kopfzeile">Diese Seite schickt nichts an den Dienst zurueck &mdash; sie ' +
-      'hat weder Knopf noch Feld. Beenden: <kbd>Strg</kbd>+<kbd>C</kbd> in dem Terminal, ' +
-      'in dem der Dienst laeuft. Er gibt dabei seine Sperre frei.</span>',
+    '<span class="kopfzeile">Diese Seite hat <b>einen</b> Knopf, und er laedt das Video ' +
+      '<b>privat</b> hoch. Sie stellt nichts oeffentlich &mdash; das gibt es in diesem Bau ' +
+      'nicht. Beenden: <kbd>Strg</kbd>+<kbd>C</kbd> in dem Terminal, in dem der Dienst ' +
+      'laeuft. Er gibt dabei seine Sperre frei.</span>',
     '</div></header>',
     '<main class="lf">',
 
@@ -1506,30 +1732,78 @@ function baueLongformSeite(sitzung) {
       'zu sagen, ist im Terminal nachzusehen.</p>',
     '</section>',
 
-    // 4. WO DIESE SEITE AUFHOERT. Sie steht als eigener Abschnitt und nicht als
-    //    Fussnote: dass hier nichts weitergeht, ist die wichtigste Auskunft
-    //    dieser Seite nach dem Ausgang oben.
+    // 4. EP: DER KNOPF.
+    //
+    //    Er steht NACH dem Bild und NACH dem Text des Arbeiters, und das ist
+    //    keine Gestaltungsfrage: Vertrag 4 Schritt 7 verlangt, dass der Mensch
+    //    Vorschau und Bild sieht, BEVOR er urteilt. Ein Knopf ueber dem, was er
+    //    bestaetigt, ist ein Knopf, den man drueckt, bevor man gelesen hat.
+    '<section class="lf-abschnitt">',
+    '<h2>Hochladen</h2>',
+    '<p>Ein Klick hier laedt die Videodatei <b>privat</b> auf den Kanal, wartet bis zu ' +
+      '45 Minuten auf die Verarbeitung, heftet das Bild oben an das Video und liest ' +
+      'zurueck, was daran haengt. <b>Und hoert dort auf.</b></p>',
+    '<p>Beim Klick schreibt dieser Dienst eine <b>Einmal-Ermaechtigung</b>: eine Datei, die ' +
+      'an die Aufnahme, an die <b>sha256 der Videodatei</b>, an Namen und sha256 des Bildes ' +
+      'oben, an den Zettel und seinen Rang und an den Kanal gebunden ist. Sie gilt ' +
+      'zwei Minuten und genau einmal. Der Arbeiter prueft jedes dieser Felder gegen das, ' +
+      'was er selbst auf der Platte vorfindet &mdash; weicht eines ab, laedt er nichts hoch.</p>',
+    '<div class="lf-gedaechtnis" id="gedaechtnisKasten" hidden></div>',
+    '<div class="lf-knopf" id="knopfKasten" hidden>',
+    '<h2 id="knopfKopf"></h2>',
+    '<p><b>Was NICHT geschieht:</b> nichts wird oeffentlich. Kein Termin, keine ' +
+      'Vorausveroeffentlichung, keine Aenderung an einem bestehenden Video. Das Video ist ' +
+      'nach diesem Lauf privat und bleibt es, bis es jemand im Studio oder mit einem Bau, ' +
+      'den es noch nicht gibt, oeffentlich stellt.</p>',
+    '<p><b>Es gibt kein Zurueck.</b> Ein hochgeladenes Video laesst sich von hier aus nicht ' +
+      'wegraeumen; das ist Sache eines Menschen im Studio. Ein zweiter Klick ist nicht ' +
+      'moeglich &mdash; die Ermaechtigung gilt einmal, und das Gedaechtnis unter ' +
+      '<code>data/</code> laesst dieselbe Datei kein zweites Mal hochgehen.</p>',
+    '<button id="knopf" type="button"></button>',
+    '<div class="lf-fehler" id="knopfFehler" hidden></div>',
+    '</div>',
+    '<div class="lf-gesperrt" id="knopfGesperrt" hidden>',
+    '<h2 id="knopfKopfGesperrt">Es gibt hier keinen Knopf</h2>',
+    '<p id="knopfGrund"></p>',
+    '<p>Ein fehlender Knopf ist kein Fehler dieser Seite. Er heisst, dass etwas nicht ' +
+      'stimmt oder nichts zu tun ist &mdash; der Grund steht darueber, in den Worten des ' +
+      'Arbeiters.</p>',
+    '</div>',
+    '<div class="lf-lauf" id="laufKasten" hidden>',
+    '<h3>Was der Arbeiter dabei sagt</h3>',
+    '<p>Woertlich seine Ausgabe, ungekuerzt, in der Reihenfolge, in der sie kommt. Zeilen ' +
+      'mit <code>[Dienst]</code> stammen von diesem Dienst und nicht von ihm.</p>',
+    '<pre class="lf-strom" id="laufZeilen"></pre>',
+    '<div class="lf-ende-kasten" id="laufEnde" hidden></div>',
+    '</div>',
+    '</section>',
+
+    // 5. WO DIESER WEG AUFHOERT. Eigener Abschnitt und keine Fussnote: nach
+    //    einem Lauf, der eben etwas auf einen Kanal geschrieben hat, ist "es
+    //    ist fertig" die naheliegendste Lesart, und sie ist falsch.
     '<section class="lf-ende">',
-    '<h2>Hier hoert diese Seite auf</h2>',
-    '<p><b>Was als Naechstes kaeme</b> (Vertrag 4, Schritte 8 bis 17): ein Knopf ' +
-      '&bdquo;Hochladen&ldquo; mit dem Dateinamen des Bildes darauf. Beim Klick schriebe ' +
-      'die Seite eine <b>Einmal-Ermaechtigung</b> und startete den Arbeiter mit ' +
-      '<code>--execute</code>. Der lieferte das Video privat ab, wartete bis zu 45 Minuten ' +
-      'auf die Verarbeitung, heftete das Thumbnail an und meldete sich zurueck. Danach ' +
-      'zeigte die Seite die <b>zweite</b> Frage, mit Titel und Kennung des Videos darauf, ' +
-      'und erst ein zweites Ja stellte es oeffentlich.</p>',
-    '<p><b>Nichts davon ist gebaut.</b> Nicht der Knopf, nicht die Ermaechtigung, nicht ' +
-      'die schreibende Haelfte des Arbeiters. Es gibt in diesem Betriebsmodus keine Route, ' +
-      'die etwas entgegennimmt, und diese Seite traegt kein Element, das eine ansprechen ' +
-      'koennte &mdash; kein Formular, keinen Knopf, kein Eingabefeld, keinen einzigen ' +
-      'Aufruf zurueck an den Dienst.</p>',
-    '<p><b>Warum hier kein Knopf steht, der schon einmal die Ermaechtigung schriebe.</b> ' +
-      'Eine Einmal-Ermaechtigung ohne Empfaenger liegt herum, bis jemand sie einloest. Sie ' +
-      'kommt mit dem Arbeiter, der sie einloest, und keinen Schritt frueher.</p>',
-    '<p>Was dieser Dienst in dieser Sitzung geschrieben hat: <b>eine</b> Datei, seine ' +
-      'eigene Sperre unter <code>data/freigaben/</code>. Sie wird beim Beenden wieder ' +
-      'geloescht. Sonst nichts &mdash; kein Plan, keine Freigabedatei, kein Gedaechtnis, ' +
-      'keine Ermaechtigung.</p>',
+    '<h2>Hier hoert dieser Weg auf</h2>',
+    '<p><b>Das Video ist danach privat und bleibt es.</b> Niemand ausser dem Kanalinhaber ' +
+      'sieht es. Es steht in keinem Feed, in keiner Benachrichtigung und auf keiner ' +
+      'Kanalseite.</p>',
+    '<p><b>Das oeffentliche Stellen gibt es in diesem Bau nicht.</b> Nicht auf dieser ' +
+      'Seite, nicht im Arbeiter, nicht als Argument und nicht als Aufruf, den man von Hand ' +
+      'ausloesen koennte. Der dritte Aufruf (Vertrag 2.5, Schritte 14 bis 17) ist nicht ' +
+      'gebaut &mdash; der Name der Methode kommt in diesem Projekt nirgends vor, und die ' +
+      'Tests rechnen das ueber die ganze geliehene Kette nach.</p>',
+    '<p><b>Was dazugehoeren wird</b>, wenn er gebaut ist: eine <b>zweite</b> ' +
+      'Ermaechtigung mit einem anderen Zweck, geschrieben von einem zweiten Klick, nachdem ' +
+      'ein Mensch gesehen hat, was YouTube nach der Verarbeitung meldet. Die erste ersetzt ' +
+      'sie nicht und ist ohnehin verbraucht.</p>',
+    '<p><b>Was diese Sitzung schreibt:</b> ihre Sperre unter <code>data/freigaben/</code> ' +
+      '(beim Beenden wieder weg) und &mdash; erst beim Klick &mdash; die eine ' +
+      'Ermaechtigung unter <code>data/ermaechtigungen/</code>, die der Arbeiter verbraucht ' +
+      'und loescht. Das Gedaechtnis schreibt der Arbeiter, nicht dieser Dienst.</p>',
+    '<p><b>Was hier nicht steht und trotzdem gilt:</b> was YouTube nach der Verarbeitung ' +
+      'ueber ein Langformvideo meldet &mdash; einen Urheberrechtstreffer etwa &mdash; ist ' +
+      'nicht gemessen (Vertrag 10). Die Anzeige nach dem Lauf zeigt, was die API ' +
+      'zurueckgibt; ob das alles ist, weiss dieses Projekt nicht. Der Blick ins Studio ' +
+      'ersetzt sie nicht, aber er ist der einzige, den es gibt.</p>',
     '</section>',
     '</main>',
     '<script>',

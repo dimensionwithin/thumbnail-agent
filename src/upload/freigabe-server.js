@@ -937,6 +937,12 @@ const UPLOADER = path.join(__dirname, 'uploader.js');
 // ausloest.
 const UPLOADER_MODUL = require('./uploader');
 
+// EP: Die Form der ERSTEN Longform-Ermaechtigung kommt von dem, der sie prueft
+// -- aus longform-gedaechtnis.js, genau wie die der Shorts aus uploader.js. Das
+// Modul laedt keine Netzbibliothek; es kennt Platte und Pruefsummen und sonst
+// nichts.
+const GEDAECHTNIS_MODUL = require('./longform-gedaechtnis');
+
 // Die Projektwurzel DIESES Moduls. Sie ist zugleich die des Planers und die
 // des Uploaders -- alle drei liegen in src/upload/ und rechnen sie gleich aus.
 // Genau deshalb darf die Kette nur auf einer Sitzung laufen, die dieselbe
@@ -1280,15 +1286,36 @@ function leseBereich(kopf, dateiGroesse) {
 // WAS DAS KOSTET, und es wird nicht wegdefiniert: der Longform-Modus hat
 // keinen Knopf "Sitzung beenden". Er wird mit Strg+C in dem Terminal
 // beendet, in dem er gestartet wurde -- und dort steht ohnehin der Mensch,
-// der ihn gestartet hat. Kommt spaeter der Knopf, der hochlaedt (Vertrag 4,
-// Schritte 8 bis 17), kommt die POST-Route mit ihm und nicht vorher.
+// der ihn gestartet hat.
+//
+// EP: DER KNOPF, DER HOCHLAEDT, IST DA -- UND DAMIT DIE ERSTE POST-ROUTE
+// DIESES MODUS.
+//
+// Der Satz darueber hiess bis EP "der Longform-Modus hat ZWEI lesende Routen
+// und keine einzige mit POST", und die leere Liste war die Zusage selbst. Sie
+// ist nicht mehr wahr und wandert darum mit, statt weiter behauptet zu werden.
+// Was an ihre Stelle tritt, ist enger als "es gibt jetzt POST":
+//
+//   GENAU EINE POST-Route, und sie NIMMT NICHTS ENTGEGEN -- kein Feld, keinen
+//   Wert, keinen Leib. Was beim Klick geschieht, steht schon vor dem Klick
+//   fest: es ist die Bindung aus der Befundzeile des Arbeiters, und dieser
+//   Dienst rechnet daran nichts nach. Ein Knopf, ueber dessen Wirkung die
+//   Seite mitentscheidet, waere ein anderer Knopf als der, auf dem etwas
+//   steht.
+//
+//   Dazu EINE lesende Route mehr: '/lauf', der Fortschritt. Sie nimmt genau
+//   einen Abfrageparameter, eine Zahl, und liefert die Zeilen ab dort.
+//
+// Was es weiterhin NICHT gibt: eine Route, die etwas oeffentlich stellt. Der
+// dritte Aufruf (Vertrag 2.5) ist nicht gebaut, und dieser Dienst hat keinen
+// Weg dorthin.
 const ROUTEN_GET = {
   [MODUS_SHORTS]: new Set(['/', '/video', '/stand', '/kette', '/lauf']),
-  [MODUS_LONGFORM]: new Set(['/', '/bild']),
+  [MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf']),
 };
 const ROUTEN_POST = {
   [MODUS_SHORTS]: new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']),
-  [MODUS_LONGFORM]: new Set([]),
+  [MODUS_LONGFORM]: new Set(['/hochladen']),
 };
 
 function gleichSicher(a, b) {
@@ -1405,7 +1432,16 @@ function baueDienst(sitzung) {
           JSON.stringify(kettenstand(sitzung), null, 2) + '\n');
         return;
       }
-      if (pfad === '/lauf') { liefereLauf(res, abfrage); return; }
+      if (pfad === '/lauf') {
+        // ZWEI MODI, ZWEI FUNKTIONEN, EINE ENTSCHEIDUNG -- dieselbe Bauart wie
+        // bei der Seite. Die Shorts-Fassung traegt `anzahl` und `kennungen`,
+        // Angaben ueber eine Lieferung von Ausschnitten, die es im Longform-Weg
+        // nicht gibt; sie dort mit null zu fuellen hiesse, eine Form zu behalten
+        // und ihre Bedeutung wegzuwerfen.
+        if (modus === MODUS_LONGFORM) liefereLongformLauf(res, abfrage);
+        else liefereLauf(res, abfrage);
+        return;
+      }
       // EL: /video steht jetzt AUSDRUECKLICH da und faengt nicht mehr alles auf,
       // was uebrig bleibt. Ein Auffangbecken am Ende einer Kette von Namen tut
       // still das Falsche, sobald die Namensliste wachsen kann -- und seit EL
@@ -1422,7 +1458,11 @@ function baueDienst(sitzung) {
       if (pfad === '/beenden') { beende(res); return; }
       if (pfad === '/planen') { nimmPlanen(res); return; }
       if (pfad === '/archivieren') { nimmArchivieren(res); return; }
-      if (pfad === '/hochladen') { nimmHochladen(res); return; }
+      if (pfad === '/hochladen') {
+        if (modus === MODUS_LONGFORM) nimmLongformHochladen(res);
+        else nimmHochladen(res);
+        return;
+      }
       nimmUrteil(req, res);
       return;
     }
@@ -2036,6 +2076,129 @@ function baueDienst(sitzung) {
         befehl: gestartet.befehl }, null, 2) + '\n');
   }
 
+  // -------------------------------------------------------------------------
+  // EP: POST /hochladen im LONGFORM-MODUS
+  // -------------------------------------------------------------------------
+  //
+  // SIE NIMMT NICHTS ENTGEGEN. Kein Feld, kein Wert, kein Leib -- was
+  // geschieht, stand schon vor dem Klick fest. Alles, was hier gebraucht wird,
+  // kommt aus der Bindung, die der Arbeiter in seiner Befundzeile ausgegeben
+  // hat, und der Kanal aus data/inventory.json. Dieser Dienst rechnet keinen
+  // dieser Werte nach: die Bindung ist die EINE Stelle, an der steht, woran
+  // der Mensch geurteilt hat, und eine zweite Rechnung waere die, die eines
+  // Tages abweicht (Vertrag 2.12).
+  function nimmLongformHochladen(res) {
+    if (fremdeWurzel(res)) return;
+
+    const knopf = longformKnopfDa(sitzung);
+    if (!knopf.da) {
+      fehler(res, 409, 'kein_knopf', knopf.grund +
+        ' Es wurde nichts geschrieben, nichts gestartet und keine Ermaechtigung ausgestellt.');
+      return;
+    }
+
+    const b = sitzung.bindung;
+    const zufall = GEDAECHTNIS_MODUL.neuerZufall();
+    const pfad = GEDAECHTNIS_MODUL.ermaechtigungPfad(sitzung.projektwurzel, zufall);
+    // Die FORM kommt von dem, der sie prueft -- aus longform-gedaechtnis.js.
+    // Sie hier ein zweites Mal hinzuschreiben hiesse, die Felder des scharfen
+    // Laufs an zwei Stellen zu pflegen; die zweite waere ausgerechnet die, die
+    // ihn ausloest.
+    const inhalt = GEDAECHTNIS_MODUL.neueErmaechtigung({
+      aufnahme: sitzung.aufnahme,
+      videoSha256: b.video_sha256,
+      bildDateiname: b.bild.dateiname,
+      bildSha256: b.bild.sha256,
+      zettelDateiname: b.zettel.dateiname,
+      rang: b.zettel.rang,
+      kanalId: sitzung.kanal.id,
+      kanalName: sitzung.kanal.name,
+      zufall,
+      jetzt: Date.now(),
+    });
+    try {
+      schreibeErmaechtigung(pfad, inhalt);
+    } catch (e) {
+      fehler(res, 500, 'ermaechtigung_nicht_geschrieben',
+        'Die Ermaechtigung liess sich nicht schreiben (' + (e.code || e.message) + '): ' +
+        pfad + '. Es wurde nichts gestartet.');
+      return;
+    }
+
+    sitzung.lauf = {
+      laeuft: true,
+      gestartet_am: new Date().toISOString(),
+      kanal_name: sitzung.kanal.name,
+      bild: b.bild.dateiname,
+      quelle: b.quelle,
+      ermaechtigung: pfad,
+      zeilen: [],
+      ende: null,
+      befehl: null,
+    };
+    const merke = (art, zeile) => { sitzung.lauf.zeilen.push({ art, zeile }); };
+    merke('dienst', 'Ermaechtigung geschrieben: ' + pfad);
+    merke('dienst', 'Zweck ' + GEDAECHTNIS_MODUL.ZWECK_UPLOAD + '. Sie gilt ' +
+      (GEDAECHTNIS_MODUL.ERMAECHTIGUNG_GUELTIG_MS / 1000) + ' Sekunden, genau einmal, und ' +
+      'nur fuer diese Aufnahme, die Videodatei mit sha256 ' + b.video_sha256 + ', das Bild ' +
+      b.bild.dateiname + ' mit sha256 ' + b.bild.sha256 + ', den Zettel ' +
+      String(b.zettel.dateiname) + ' in Rang ' + JSON.stringify(b.zettel.rang) +
+      ' und den Kanal "' + sitzung.kanal.name + '".');
+    merke('dienst', 'Sie ermaechtigt NICHT zum Oeffentlichstellen. Dafuer braeuchte es eine ' +
+      'zweite mit einem anderen Zweck, und die gibt es in diesem Bau nicht (Vertrag 2.12, 7).');
+
+    const gestartet = starteLongformLauf(sitzung, pfad,
+      (art, zeile) => merke(art, zeile),
+      (code, signal) => {
+        sitzung.lauf.laeuft = false;
+        sitzung.lauf.ende = {
+          code, signal,
+          beendet_am: new Date().toISOString(),
+          // Ob die Ermaechtigung wirklich weg ist, wird NACHGESEHEN und nicht
+          // angenommen. Steht sie noch da, hat der Arbeiter sie nicht
+          // verbraucht -- dann ist er gar nicht bis dahin gekommen.
+          ermaechtigung_noch_da: fs.existsSync(pfad),
+        };
+        merke('dienst', 'Der Arbeiter ist beendet (Rueckgabewert ' + code +
+          (signal ? ', Signal ' + signal : '') + ').');
+        merke('dienst', sitzung.lauf.ende.ermaechtigung_noch_da
+          ? 'ACHTUNG: die Ermaechtigungsdatei liegt noch da: ' + pfad + '. Der Arbeiter hat ' +
+            'sie nicht verbraucht -- er ist nicht bis dahin gekommen. Sie laeuft in ' +
+            'hoechstens zwei Minuten ab; wer sicher gehen will, loescht sie von Hand.'
+          : 'Die Ermaechtigung ist verbraucht und geloescht. Ein zweiter Lauf braucht einen ' +
+            'zweiten Klick -- und damit wieder eine Vorschau, die ein Mensch gesehen hat.');
+      });
+    sitzung.lauf.befehl = gestartet.befehl;
+
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({ gestartet: true, kanal: sitzung.kanal.name, bild: b.bild.dateiname,
+        befehl: gestartet.befehl }, null, 2) + '\n');
+  }
+
+  // GET /lauf im Longform-Modus. Eine eigene Funktion und nicht liefereLauf():
+  // die Shorts-Fassung traegt `anzahl` und `kennungen` -- Angaben ueber eine
+  // Lieferung von Ausschnitten, die es hier nicht gibt. Sie mit null zu fuellen
+  // hiesse, eine Form zu behalten und ihre Bedeutung wegzuwerfen.
+  function liefereLongformLauf(res, abfrage) {
+    const roh = abfrage.get('ab');
+    const ab = (typeof roh === 'string' && /^[0-9]{1,7}$/.test(roh)) ? Number(roh) : 0;
+    const l = sitzung.lauf;
+    if (!l) {
+      antwort(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify({ lauf: null, ab, gesamt: 0, zeilen: [], laeuft: false, ende: null },
+          null, 2) + '\n');
+      return;
+    }
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({
+        lauf: { gestartet_am: l.gestartet_am, kanal: l.kanal_name, bild: l.bild,
+          quelle: l.quelle, befehl: l.befehl },
+        ab, gesamt: l.zeilen.length,
+        zeilen: l.zeilen.slice(ab),
+        laeuft: l.laeuft, ende: l.ende,
+      }, null, 2) + '\n');
+  }
+
   // Der Fortschritt. Die Seite fragt ab Zeile <ab> nach und bekommt, was seit
   // dem letzten Mal dazugekommen ist.
   function liefereLauf(res, abfrage) {
@@ -2512,6 +2675,48 @@ function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
     ausgang: longformAusgang(trocken),
     sperre,
     bild: nimmBildAuf(trocken.befund, sperre),
+
+    // EP: WAS DER KNOPF BRAUCHT, und nichts darueber hinaus.
+    //
+    // `bindung` kommt WOERTLICH aus der Befundzeile des Arbeiters. Dieser
+    // Dienst leitet daraus nichts ab und rechnet nichts nach: der Arbeiter hat
+    // Videodatei, Bild und Zettel bestimmt, er hat ihre Pruefsummen gerechnet,
+    // und er ist es auch, der die Ermaechtigung gleich dagegen prueft. Eine
+    // zweite Rechnung hier waere die, die eines Tages abweicht -- und die
+    // abweichende waere die, die den Upload ausloest.
+    //
+    // Fehlt sie, gibt es keinen Knopf, und der GRUND steht daneben: ein
+    // fehlender Knopf ohne Grund sieht aus wie ein vergessener.
+    bindung: (trocken.befund && trocken.befund.bindung)
+      ? trocken.befund.bindung
+      : { moeglich: false, grund: 'Der Arbeiter hat keine Befundzeile mit einer Bindung ' +
+        'ausgegeben. Ohne sie haengt eine Ermaechtigung an nichts (Vertrag 2.12).' },
+
+    // Der Stand des Gedaechtnisses, ebenfalls aus der Befundzeile. Die Seite
+    // zeigt ihn, damit ein Wiedereinstieg nicht wie ein erster Upload aussieht
+    // (Vertrag 5.3).
+    gedaechtnis: (trocken.befund && trocken.befund.gedaechtnis) || null,
+
+    // Der Kanal steht auf dem Knopf. Dieser Dienst fragt dafuer NICHT das Netz
+    // -- er hat noch nie einen Netzaufruf gemacht --, sondern nimmt, was der
+    // letzte `npm run inventory` auf die Platte geschrieben hat. Verbindlich
+    // wird die Angabe erst dadurch, dass die Kennung in die Ermaechtigung geht
+    // und der ARBEITER sie gegen den angemeldeten Kanal haelt.
+    kanal: leseKanal(projektwurzel),
+
+    // OB ES EINEN KNOPF GIBT, ENTSCHEIDET EINE FUNKTION -- und zwar DIESELBE,
+    // an der die POST-Route den Klick prueft. Die Seite bekommt sie herein,
+    // statt die Bedingung selbst zu bilden: eine zweite Bedingung waere eine
+    // Seite, die einen Knopf zeigt, den der Dienst ablehnt, oder einen
+    // verschweigt, den er annaehme. Sie steht als Funktion und nicht als
+    // fertiges Ergebnis in der Sitzung, weil sich der Zustand aendert -- nach
+    // dem Klick laeuft ein Lauf, und dann ist der Knopf zu.
+    knopfBereit: longformKnopfDa,
+
+    // Der scharfe Lauf, solange keiner laeuft: null. Nicht ein leeres Objekt
+    // -- "es laeuft keiner" und "es lief einer und er hat nichts gesagt" sind
+    // zwei Zustaende.
+    lauf: null,
   };
 }
 
@@ -2601,6 +2806,120 @@ function nimmBildAuf(befund, sperre) {
 // in eine Kopfzeile geht, wird gegen eine feste Liste gehalten und nicht
 // durchgereicht, gleich wie vertrauenswuerdig die Quelle heute ist.
 const ERLAUBTE_BILDTYPEN = Object.freeze(['image/jpeg', 'image/png']);
+
+// ---------------------------------------------------------------------------
+// EP: DER KNOPF DES LONGFORM-MODUS (Vertrag 4, Schritte 7 bis 13)
+// ---------------------------------------------------------------------------
+//
+// WAS SICH HIER AENDERT, UND WAS AUSDRUECKLICH NICHT.
+//
+// Bis EN hatte dieser Modus KEINE POST-Route, und der Satz darueber lautete:
+// "Die leere POST-Liste ist die Zusage selbst." Diese Zusage ist ab EP nicht
+// mehr wahr, und sie wird darum NEU FORMULIERT statt weiter behauptet. Was an
+// ihre Stelle tritt, ist enger als "es gibt jetzt POST":
+//
+//   Der Modus hat GENAU EINE POST-Route, und sie nimmt NICHTS entgegen -- kein
+//   Feld, keinen Wert, keinen Leib. Was beim Klick geschieht, steht schon vor
+//   dem Klick fest: es ist die Bindung, die der Arbeiter in seiner Befundzeile
+//   ausgegeben hat, und der Dienst rechnet daran nichts nach. Ein Knopf, der
+//   etwas entgegennimmt, waere ein Knopf, ueber dessen Wirkung die Seite
+//   mitentscheidet; dieser hier hat nur eine Wirkung, und sie stand oben auf
+//   dem Schirm.
+//
+// WAS DIESER DIENST DAMIT SCHREIBT: eine Datei mehr als bisher -- die
+// Ermaechtigung. Die Sperre der Sitzung ist die erste; beide gehen durch je
+// eine benannte Funktion, und die Ermaechtigung durch dieselbe, die sie fuer
+// die Shorts schreibt (schreibeErmaechtigung). Das Gedaechtnis schreibt dieser
+// Dienst NICHT -- das tut der Arbeiter, und nur er.
+//
+// WAS ER WEITERHIN NICHT TUT: einen Netzaufruf. Er hat noch nie einen gemacht.
+// Den Kanal nennt er aus data/inventory.json (leseKanal), verbindlich wird die
+// Angabe erst dadurch, dass die Kennung in die Ermaechtigung geht und der
+// ARBEITER sie gegen den angemeldeten Kanal haelt -- er ist der Einzige hier,
+// der den Kanal wirklich fragen kann.
+
+// Ob es auf dieser Sitzung ueberhaupt einen Knopf geben darf. SERVERSEITIG
+// geprueft, wie schritt3Bereit() im Shorts-Modus: der Browser sperrt den Knopf
+// zusaetzlich, aber das ist Bequemlichkeit. Diese Funktion ist die Zusage.
+//
+// SIE HEISST NICHT "bereit", UND DAS FELD AUCH NICHT. Die Longform-Ansicht
+// darf das Wort nicht sagen (EL-N2, "KEIN GRUEN, KEIN BEREIT") -- sie
+// beurteilt nichts, sie zeigt. Es gibt einen Knopf oder es gibt keinen, und
+// wenn keinen, den Grund. Der Name wandert hier mit, statt drueben uebersetzt
+// zu werden: ein Feld, das an zwei Stellen anders heisst, ist eine
+// Uebersetzung, und Uebersetzungen laufen auseinander.
+function longformKnopfDa(sitzung) {
+  const l = sitzung.lauf;
+  if (l && l.laeuft) {
+    return { da: false, grund: 'Es laeuft gerade ein Upload. Zwei gleichzeitig gibt es ' +
+      'nicht.' };
+  }
+  if (l && l.ende) {
+    return { da: false, grund: 'Dieser Lauf ist abgeschlossen. Ein weiterer braucht einen ' +
+      'neuen Start des Dienstes -- dann laeuft der Trockenlauf noch einmal, und ein Mensch ' +
+      'sieht die LAGE VON JETZT statt die von vor dem Upload. Die Ermaechtigung haengt an ' +
+      'dem, was in der Vorschau stand; eine zweite auf einer veralteten Vorschau bezeugte ' +
+      'nichts.' };
+  }
+  if (!sitzung.bindung || sitzung.bindung.moeglich !== true) {
+    return { da: false, grund: (sitzung.bindung && sitzung.bindung.grund) ||
+      'Der Arbeiter hat keine Bindung ausgegeben. Ohne sie haengt eine Ermaechtigung an ' +
+      'nichts (Vertrag 2.12).' };
+  }
+  if (!sitzung.kanal || !sitzung.kanal.ok) {
+    return { da: false, grund: 'Der Kanal laesst sich nicht benennen. ' +
+      ((sitzung.kanal && sitzung.kanal.grund) || '') + ' Ein Knopf, der nicht sagt, WOHIN ' +
+      'er sendet, ist keine Bestaetigung.' };
+  }
+  return { da: true, grund: null };
+}
+
+// Der scharfe Lauf des Arbeiters. spawn (nicht spawnSync): er dauert im
+// Ernstfall bis zu 45 Minuten, und die Seite soll waehrenddessen sehen, wo er
+// steht.
+//
+// stdin ist 'ignore'. Der Arbeiter hat damit kein Terminal -- und er braucht
+// auch keines: dieser Weg hat kein getipptes Wort (Vertrag 2.12). Dass er hier
+// ueberhaupt laeuft, liegt allein an --bestaetigt-durch=.
+//
+// DIE ARGUMENTE WERDEN NICHT AUS EINER ANFRAGE GEBILDET. Der Aufnahmename
+// stammt aus der Sitzung und hat die feste Form (baueLongformSitzung prueft
+// sie beim Anlegen), der Pfad der Ermaechtigung entsteht aus ihrem
+// Zufallswert. Es gibt keinen Weg von etwas, das jemand schickt, zu einem
+// dieser Argumente.
+function starteLongformLauf(sitzung, ermaechtigungPfad, beiZeile, beiEnde) {
+  const argumente = [LONGFORM_ARBEITER, '--aufnahme=' + sitzung.aufnahme, '--execute',
+    '--bestaetigt-durch=' + ermaechtigungPfad];
+  const kind = spawn(process.execPath, argumente, {
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  });
+  const rest = { aus: '', err: '' };
+  const strom = (name, kanal) => {
+    kanal.setEncoding('utf8');
+    kanal.on('data', (s) => {
+      rest[name] += s;
+      const teile = rest[name].split('\n');
+      rest[name] = teile.pop();
+      for (const z of teile) beiZeile(name, z);
+    });
+  };
+  strom('aus', kind.stdout);
+  strom('err', kind.stderr);
+  kind.on('error', (e) => {
+    beiZeile('err', 'Der Arbeiter liess sich nicht starten: ' + (e.code || e.message));
+    beiEnde(null, null);
+  });
+  kind.on('close', (code, signal) => {
+    if (rest.aus) beiZeile('aus', rest.aus);
+    if (rest.err) beiZeile('err', rest.err);
+    beiEnde(code, signal);
+  });
+  return {
+    kind,
+    befehl: 'node ' + path.relative(PROJEKTWURZEL, LONGFORM_ARBEITER) + ' --aufnahme="' +
+      sitzung.aufnahme + '" --execute --bestaetigt-durch=<ermaechtigung>',
+  };
+}
 
 // Der eine Ausgang des Longform-Modus, der KEINE Seite hat: der Arbeiter kam
 // nicht bis zum Lesen. Sein Text wird unveraendert durchgereicht -- er hat
@@ -3019,6 +3338,7 @@ module.exports = {
   pruefeModusVerbindung, meldeLongformOhneVorschau,
   LONGFORM_ARBEITER, LONGFORM_CODES_MIT_SEITE, LONGFORM_ZUSATZ,
   ruftLongformTrocken, longformAusgang, baueLongformSitzung,
+  longformKnopfDa, starteLongformLauf, GEDAECHTNIS_MODUL,
   LONGFORM_BEFUND_TYPE, ERLAUBTE_BILDTYPEN, trenneBefundzeile, nimmBildAuf,
   ROUTEN_GET, ROUTEN_POST,
   FREIGABE_SCHEMA_VERSION, FREIGABE_ARTIFACT_TYPE,

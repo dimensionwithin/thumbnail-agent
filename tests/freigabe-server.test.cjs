@@ -1007,6 +1007,13 @@ test('die Sperre wird mit wx angelegt -- das Anlegen ist die Pruefung', () => {
     // Kette, nach dem Lauf: ist die Ermaechtigung wirklich weg? Nachgesehen
     // und nicht angenommen.
     'ermaechtigung_noch_da: fs.existsSync(pfad),',
+    // EP: dieselbe Frage nach dem Longform-Lauf, und aus demselben Grund. Sie
+    // steht ein zweites Mal da statt in einer gemeinsamen Funktion: die beiden
+    // Laeufe fuehren verschiedene Zustaende (die Kette drueben, sitzung.lauf
+    // hier), und eine geteilte Funktion muesste beide kennen. Was sie
+    // gemeinsam haben, ist ein Blick auf eine Datei, die dieser Dienst nicht
+    // anlegt -- die Zusage bleibt darum unberuehrt.
+    'ermaechtigung_noch_da: fs.existsSync(pfad),',
   ], 'neue existsSync-Stelle: gehoert sie zu einem Anlegen, ist sie ein Loch');
 });
 
@@ -1761,6 +1768,7 @@ test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
     'ruftUploaderTrocken',  // DR, Schritt 1: der Trockenlauf
     'starteUploaderLauf',   // DR, Schritt 3: der scharfe Uploader
     'ruftLongformTrocken',  // EL: die EINGABE des Longform-Modus, beim Start
+    'starteLongformLauf',   // EP: der scharfe Arbeiter, NUR aus dem Knopf
   ];
   assert.equal(stellen.length, heimat.length,
     stellen.map((x) => x.zeile + ': ' + x.text).join(' | '));
@@ -1778,6 +1786,24 @@ test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
     assert.ok(!urteilRumpf.includes(name + '('), name + ' wird aus nimmUrteil gerufen');
   }
   assert.ok(!/spawn/.test(urteilRumpf));
+
+  // EP: DER SCHARFE ARBEITER HAT GENAU EINEN AUFRUFER, und der ist der Knopf.
+  //
+  // starteUploaderLauf hat seit DR dieselbe Zusage; sie wird hier fuer den
+  // zweiten scharfen Weg wiederholt, weil er der teurere ist: der Uploader
+  // laedt Ausschnitte hoch, die schon einmal beurteilt waren, dieser hier ein
+  // ganzes Video, das noch nie oben war.
+  const rufer = [...QUELLTEXT.split(String.fromCharCode(10)).entries()]
+    .filter(([, z]) => !z.trim().startsWith('//') && z.includes('starteLongformLauf('))
+    .map(([i, z]) => ({ zeile: i + 1, text: z.trim() }));
+  assert.equal(rufer.length, 2,
+    'starteLongformLauf kommt ' + rufer.length + '-mal im Code vor -- erwartet sind zwei: ' +
+    'die Erklaerung und der eine Aufruf aus nimmLongformHochladen. ' +
+    rufer.map((x) => x.zeile + ': ' + x.text).join(' | '));
+  const knopfRumpf = QUELLTEXT.slice(QUELLTEXT.indexOf('function nimmLongformHochladen('),
+    QUELLTEXT.indexOf('function liefereLongformLauf('));
+  assert.ok(knopfRumpf.includes('starteLongformLauf('),
+    'der eine Aufrufer ist nicht die Knopfroute');
 });
 
 // ---------------------------------------------------------------------------

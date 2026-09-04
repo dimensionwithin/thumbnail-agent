@@ -44,6 +44,9 @@ const P = require('../src/upload/planer.js');
 // dorthin, wo sie gebraucht wird; nachgebaut waere sie hier eine zweite
 // Vorstellung davon, welche Zeile gemeint ist.
 const S = require('../src/upload/freigabe-server.js');
+// EP: fuer HERKUNFT_WERTE in EK-T2 -- die drei Werte stehen im Leser und werden
+// hier geholt statt abgeschrieben.
+const Z = require('../src/upload/zettel-leser.js');
 
 const WURZEL = path.join(__dirname, '..');
 const QUELLE = fs.readFileSync(
@@ -239,19 +242,69 @@ test('EK-N1d: der Longform-Weg nimmt die Shorts-Liste NIE', () => {
 // NACHWEIS 2 -- KEIN SCHREIBENDER AUFRUF IST ERREICHBAR
 // ===========================================================================
 
-const VERBOTENE_WOERTER = [
-  'googleapis', 'videos.insert', 'thumbnails.set', 'videos.update',
-  // Die beiden Protokolle stehen hier ohne die Doppelpunkt-Schraegstriche,
-  // damit diese Zeile nicht selbst der Fund ist, den sie sucht.
+// EP HAT DIESE LISTE GETEILT, UND ZWAR NACH IHRER SCHAERFE.
+//
+// Bis EK galt EINE Liste: keines dieser Woerter durfte im Arbeiter stehen. Das
+// war richtig, solange er nichts konnte -- seit EP laedt er hoch, und drei der
+// Woerter beschreiben, WAS er dabei tut. Die Liste wandert darum mit, statt
+// weiter behauptet zu werden. Sie wird dabei an einer Stelle SCHAERFER und an
+// einer weicher, und beides steht hier:
+//
+//   NIRGENDS, auch nicht im Kommentar:  videos.update, publishAt
+//     Das sind die beiden, die dieser Schnitt fernhalten soll. Ein Kommentar,
+//     der sie nennt, ist die erste Zeile, die sie enthaelt -- und die zweite
+//     ist die, die sie benutzt. Der Arbeiter beschreibt das Oeffentlichstellen
+//     darum als "der dritte Aufruf (Vertrag 2.5)" und nennt keine Methode.
+//
+//   NUR IM KOMMENTAR:  googleapis, videos.insert, thumbnails.set
+//     Sie stehen in den Aufrufnamen, die longform-kanal.js fuehrt; der
+//     Arbeiter spricht ausschliesslich ueber dessen Methoden und baut keinen
+//     Aufruf selbst. Im Code darf keiner der drei vorkommen -- taete er es,
+//     gaebe es eine zweite Stelle mit einem Aufrufnamen, und die Frage "was
+//     kann dieses Programm auf dem Kanal tun" waere nicht mehr in einer Datei
+//     zu beantworten.
+//
+//   NICHT MEHR VERBOTEN:  videoId
+//     Der Arbeiter fuehrt das Gedaechtnis (Vertrag 5), und dessen Schluessel
+//     nach dem Upload IST die Kennung des Videos. Sie zu verbieten hiesse, das
+//     Gedaechtnis nicht bauen zu koennen. Was an ihrer Stelle steht, ist die
+//     Zielsperre (Vertrag 7): das Bild geht nur an die Kennung, die Aufruf 1
+//     dieses Gedaechtnisses zurueckgegeben hat, und das wird in
+//     tests/ep-privat.test.cjs vorgefuehrt.
+//
+// Die beiden Protokolle stehen ohne die Doppelpunkt-Schraegstriche, damit
+// diese Zeilen nicht selbst der Fund sind, den sie suchen.
+const NIRGENDS = ['videos.update', 'publishAt'];
+const NUR_IM_KOMMENTAR = [
+  'googleapis', 'videos.insert', 'thumbnails.set',
   'http' + '://', 'https' + '://',
-  'videoId', 'publishAt',
 ];
 
-test('EK-N2: die verbotenen Woerter kommen im Quelltext nicht vor', () => {
-  for (const wort of VERBOTENE_WOERTER) {
+// Der Quelltext OHNE reine Kommentarzeilen. Dieselbe Bauart wie SERVER_NURCODE
+// in tests/el-longform-ansicht.test.cjs.
+const QUELLE_NURCODE = QUELLE.split('\n')
+  .filter((z) => !z.trim().startsWith('//')).join('\n');
+
+test('EK-N2: videos.update und publishAt kommen im Arbeiter nirgends vor', () => {
+  for (const wort of NIRGENDS) {
     assert.ok(!QUELLE.includes(wort),
-      'Der Longform-Arbeiter darf ' + JSON.stringify(wort) + ' nicht enthalten.');
+      'Der Longform-Arbeiter darf ' + JSON.stringify(wort) + ' nirgends enthalten, auch ' +
+      'nicht im Kommentar. Das Oeffentlichstellen ist der naechste Auftrag.');
   }
+});
+
+test('EK-N2: die Aufrufnamen stehen im Arbeiter nur im Kommentar, nie im Code', () => {
+  for (const wort of NUR_IM_KOMMENTAR) {
+    assert.ok(!QUELLE_NURCODE.includes(wort),
+      'Der Longform-Arbeiter fuehrt ' + JSON.stringify(wort) + ' im CODE. Die Aufrufnamen ' +
+      'stehen in longform-kanal.js und nirgends sonst.');
+  }
+  // GEGENPROBE: der Filter muss wirklich etwas wegnehmen und nicht alles.
+  assert.ok(QUELLE.includes('videos.insert'),
+    'die Gegenprobe greift ins Leere -- der Arbeiter nennt den Aufruf nicht einmal im ' +
+    'Kommentar, dann prueft der Test darueber nichts');
+  assert.ok(QUELLE_NURCODE.length > QUELLE.length / 3,
+    'der Kommentarfilter hat zu viel weggenommen');
 });
 
 test('EK-N2b: keine geliehene Kette zieht die Netzbibliothek herein', () => {
@@ -704,20 +757,45 @@ function rufeArbeiter(argumente, umgebung) {
   return { code: lauf2.status, aus: (lauf2.stdout || '') + (lauf2.stderr || '') };
 }
 
-test('EK-A1: --execute und --bestaetigt-durch= bekommen ihre EIGENE Meldung, nicht ' +
-  'die fuer unbekannte Argumente', () => {
-  // Die Pruefung laeuft als erste Anweisung und nimmt darum die Zahl aus
+test('EK-A1: --execute und --bestaetigt-durch= gelten nur ZUSAMMEN, jedes Fehlen mit ' +
+  'eigener Meldung', () => {
+  // Die Pruefung laeuft als zweite Anweisung und nimmt darum die Zahl aus
   // cli-args. Beide Namen muessen dieselbe Zahl tragen.
   assert.equal(require('../src/publish/cli-args.js').EXIT_ARGUMENTFEHLER,
     L.EXIT_AUFRUFFEHLER, 'zwei Namen fuer eine Zahl sind auseinandergelaufen');
-  for (const arg of ['--execute', '--bestaetigt-durch=irgendwas']) {
-    const r = rufeArbeiter(['--aufnahme=' + AUFNAHME, arg]);
-    assert.equal(r.code, L.EXIT_AUFRUFFEHLER, arg + ': ' + r.aus);
-    assert.ok(r.aus.includes('gibt es hier heute nicht'), arg + ': ' + r.aus);
-    assert.ok(r.aus.includes('SCHREIBENDE'), arg + ': die Meldung sagt nicht, was fehlt');
+
+  // BEIDE SIND JETZT ERLAUBTE ARGUMENTE -- die Liste NOCH_NICHT_GEBAUTE_ARGUMENTE
+  // ist mit ihrem Satz verschwunden und nicht danebengeblieben.
+  for (const a of ['--execute', '--bestaetigt-durch=']) {
+    assert.ok(L.ERLAUBTE_ARGUMENTE.includes(a), a + ' fehlt in der Argumentliste');
+  }
+  assert.equal(L.NOCH_NICHT_GEBAUTE_ARGUMENTE, undefined,
+    'die Liste der nicht gebauten Argumente steht noch da, obwohl ihr Satz nicht mehr ' +
+    'stimmt -- genau die Sorte Meldung, die der naechste Leser fuer wahr nimmt');
+
+  // --execute ALLEIN: kein stiller Trockenlauf.
+  const nurExecute = rufeArbeiter(['--aufnahme=' + AUFNAHME, '--execute']);
+  assert.equal(nurExecute.code, L.EXIT_AUFRUFFEHLER, nurExecute.aus);
+  assert.ok(nurExecute.aus.includes('--execute ohne --bestaetigt-durch='), nurExecute.aus);
+  assert.ok(nurExecute.aus.includes('KEIN getipptes Bestaetigungswort'),
+    'die Meldung sagt nicht, warum es hier keinen Rueckfallweg gibt: ' + nurExecute.aus);
+  assert.ok(nurExecute.aus.includes('NICHT stillschweigend zum Trockenlauf'),
+    'die Meldung sagt nicht, dass ein wirkungsloses Argument nicht angenommen wird');
+  assert.ok(nurExecute.aus.includes('NICHTS gelesen'), nurExecute.aus);
+
+  // --bestaetigt-durch= ALLEIN: sie wuerde verbraucht, ohne dass etwas geschieht.
+  const nurErm = rufeArbeiter(['--aufnahme=' + AUFNAHME, '--bestaetigt-durch=irgendwas']);
+  assert.equal(nurErm.code, L.EXIT_AUFRUFFEHLER, nurErm.aus);
+  assert.ok(nurErm.aus.includes('--bestaetigt-durch= ohne --execute'), nurErm.aus);
+  assert.ok(nurErm.aus.includes('danach weg'), nurErm.aus);
+  assert.ok(nurErm.aus.includes('NICHTS gelesen'), nurErm.aus);
+
+  // KEINE ZWEI TEILEN SICH EINE MELDUNG, und keine ist die fuer ein
+  // unbekanntes Argument -- die beiden sind bekannt.
+  assert.notEqual(nurExecute.aus, nurErm.aus);
+  for (const r of [nurExecute, nurErm]) {
     assert.ok(!r.aus.includes('unbekannte(s) Argument'),
-      arg + ': das ist die Meldung fuer ein UNBEKANNTES Argument -- diese hier sind bekannt');
-    assert.ok(r.aus.includes('NICHTS gelesen'), arg);
+      'das ist die Meldung fuer ein UNBEKANNTES Argument: ' + r.aus);
   }
 });
 
@@ -773,17 +851,29 @@ test('EK-P1: die Vorschau sagt, dass die erste Zeile von der Kanalvorlage abweic
   lage.weg();
 });
 
-test('EK-P2: die Vorschau nennt alle vier offenen Punkte und die fehlende Haelfte', () => {
-  const lage = volleLage('vorschau-luecken');
-  const text = lauf(lage).saetze.join('\n');
-  for (const stelle of ['11.1', '11.2', '11.3', '11.4']) {
-    assert.ok(text.includes(stelle), 'der offene Punkt ' + stelle + ' fehlt in der Vorschau');
-  }
-  assert.ok(text.includes('WAS DIESER LAUF NICHT KANN'));
-  assert.ok(text.includes('Gedaechtnis'), 'das nicht gebaute Gedaechtnis wird verschwiegen');
-  assert.ok(text.includes('keine Ermaechtigung'));
-  lage.weg();
-});
+test('EK-P2: die Vorschau nennt alle vier offenen Punkte und sagt, wo der Weg aufhoert',
+  () => {
+    const lage = volleLage('vorschau-luecken');
+    const text = lauf(lage).saetze.join('\n');
+    for (const stelle of ['11.1', '11.2', '11.3', '11.4']) {
+      assert.ok(text.includes(stelle), 'der offene Punkt ' + stelle + ' fehlt in der Vorschau');
+    }
+    assert.ok(text.includes('WAS DIESER LAUF NICHT KANN'));
+    // EP: das Gedaechtnis ist GEBAUT und wird gelesen -- der Satz "es ist nicht
+    // gebaut" ist weg, und an seine Stelle tritt der Stand.
+    assert.ok(text.includes('DAS GEDAECHTNIS (Vertrag 5)'),
+      'die Vorschau zeigt das Gedaechtnis nicht');
+    assert.ok(text.includes('DOPPEL-UPLOAD-ABWEHR'),
+      'sie sagt nicht, wofuer das Gedaechtnis da ist');
+    assert.ok(!text.includes('Es gibt keinen Knopf und keine Ermaechtigung'),
+      'die Vorschau behauptet noch, es gebe keinen Knopf -- das stimmt seit EP nicht mehr');
+    // Und sie sagt, wo dieser Weg endet.
+    assert.ok(text.includes('DAS OEFFENTLICHE STELLEN GIBT ES NICHT'),
+      'die Vorschau sagt nicht, dass der dritte Aufruf fehlt');
+    assert.ok(text.includes('NICHT GEMESSEN (Vertrag 10'),
+      'die wichtigste Einschraenkung des Vertrags steht nicht in der Vorschau');
+    lage.weg();
+  });
 
 test('EK-P3: der erste Satz sagt immer, dass kein Video auf dem Kanal liegt', () => {
   const gut = volleLage('erster-satz-gut');
@@ -868,13 +958,40 @@ test('EK-T1: der Befund des Beipackzettel-Lesers steht unveraendert in der Vorsc
 test('EK-T2: der Arbeiter baut die Zustandsmatrix nicht nach', () => {
   // Sie steht in genau einem Modul. Eine zweite Stelle, die sie auslegt, waere
   // die zweite Wahrheit, gegen die dieser Vertrag durchgehend gebaut ist.
-  for (const wort of ['rang1_regel', 'rang2a_vorschlag', 'rang2b_vorschlag', 'aufnahme_herkunft',
+  //
+  // EP: DIE VOKABELN DER MATRIX BLEIBEN VERBOTEN. Der feine Rang (2a/2b), den
+  // Vertrag 5.2 im Gedaechtnis verlangt, waere ueber `zt.ausgang` in zwei
+  // Zeilen zu haben gewesen -- dann stuenden die Namen der Matrixausgaenge
+  // hier. Er kommt stattdessen aus IMMER_GENANNT/FENSTERABHAENGIG, den beiden
+  // Mengen, die der Leser selbst fuehrt.
+  for (const wort of ['rang1_regel', 'rang2a_vorschlag', 'rang2b_vorschlag',
     'unbestaetigt', 'MATRIX']) {
     assert.ok(!QUELLE.includes(wort),
       'Der Arbeiter legt die Matrix selbst aus (' + wort + ') -- statt sie zu leihen.');
   }
   assert.ok(QUELLE.includes("require('./zettel-leser')"),
     'Der Beipackzettel-Leser wird nicht importiert.');
+
+  // `aufnahme_herkunft` DARF vorkommen, aber nur als FELDZUGRIFF.
+  //
+  // Vertrag 5.2 verlangt das Feld ausdruecklich im Gedaechtnis ("der Wert von
+  // aufnahme_herkunft im Zettel"); es zu verbieten hiesse, das Gedaechtnis
+  // nicht bauen zu koennen. Was verboten bleibt, ist das, worum es der Regel
+  // geht: den Wert AUSZULEGEN. Der Arbeiter liest ihn durch und vergleicht ihn
+  // gegen keinen der drei Herkunftswerte.
+  let stellen = 0;
+  for (const treffer of QUELLE.matchAll(/aufnahme_herkunft/g)) {
+    stellen++;
+    assert.equal(QUELLE[treffer.index - 1], '.',
+      'aufnahme_herkunft steht an Stelle ' + treffer.index + ' nicht als Feldzugriff -- ' +
+      'dann wird der Wert nicht durchgereicht, sondern ausgelegt');
+  }
+  assert.ok(stellen >= 1, 'der Test prueft ins Leere: das Feld kommt gar nicht vor');
+  for (const wert of Z.HERKUNFT_WERTE) {
+    assert.ok(!QUELLE.includes("'" + wert + "'"),
+      'Der Arbeiter vergleicht gegen den Herkunftswert ' + JSON.stringify(wert) + ' -- das ' +
+      'ist die Auslegung, die dem Leser gehoert.');
+  }
 });
 
 test('EK-T3: ein Vorschlag wird als Vorschlag gezeigt und nie als Regel', () => {

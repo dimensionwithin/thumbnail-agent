@@ -1,5 +1,57 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 12 (EY, 05.09.2026).** **Der Weg ist gelaufen.** Am 05.09.2026 ist
+der Longform-Weg zum ersten Mal ueber ein echtes Video gegangen, und das Video
+liegt oeffentlich auf dem Kanal. Diese Fassung traegt ein, was dabei gemessen
+wurde. **Keine Zusage der Abschnitte 1 bis 8 aendert sich** -- der Weg bleibt
+Wort fuer Wort, wie er war. Was sich aendert, ist, wieviel dieser Vertrag
+behauptet und wieviel er weiss.
+
+**Die schwerste offene Frage ist beantwortet: die Glocke laeutet beim
+Oeffentlichstellen.** Beim privaten Upload kam keine Benachrichtigung; beim
+Wechsel auf `public` kam eine, innerhalb einer Minute nach dem Aufruf. Von den
+drei denkbaren Ausgaengen ist der eingetreten, der nichts kostet. **Folge:
+die Terminierung ueber `publishAt`, die als Ausweichweg vorgesehen war, wird
+nicht gebraucht -- der Weg bleibt, wie er ist.** Die Messung steht in 2.14,
+und was sie nicht deckt, steht daneben: ein Lauf, eine Aufnahme, ein Kanal,
+ein Konto, und gesehen wurde die Liste des Kanalinhabers, nicht das Geraet
+eines fremden Abonnenten.
+
+**Die Falle aus 2.5 ist eingetreten und war harmlos.** `madeForKids` stand mit
+`false` im gelesenen Statusblock und fehlt in der Antwort; der Bau hatte es als
+nur lesbar verworfen und sich selbst gemeldet, es koenne in Wahrheit setzbar
+sein. Im Studio nachgesehen: die Zielgruppe steht unveraendert. Das Feld ist
+abgeleitet aus `selfDeclaredMadeForKids`, und das geht mit. **Die Liste der
+uebertragbaren Felder wird nicht geaendert, und das steht ausdruecklich in
+2.5** -- ohne diesen Satz sucht in einem halben Jahr jemand einen Fehler, den
+es nicht gibt. `containsSyntheticMedia` meldet YouTube gar nicht; der Lauf hat
+es als `fehlend` gefuehrt statt es zu erfinden, und es hatte keine Folge.
+
+**Die Zeiten stehen jetzt doppelt da: als Grenze und als Messung.** 45 Minuten
+bleiben zugesagt; daneben steht in 2.3 der eine gemessene Wert -- `succeeded`
+nach sieben Abfragen, rund 90 Sekunden, und rund dreieinhalb Minuten vom
+Upload bis `public`. Ein Lauf ist keine Verteilung, und die Grenze ist nicht
+deshalb zu weit, weil sie einmal um das Dreissigfache unterschritten wurde.
+
+**Der Haltepunkt ist nicht gelaufen.** Der Mensch hat direkt den roten Knopf
+genommen. Der Zweig ist gebaut und getestet und im Betrieb nie ausgefuehrt
+worden; er steht deshalb in 2.12 und unter "Ungeprueft" als das, was er ist.
+**Ein Zweig, den man fuer erprobt haelt, weil er gebaut ist, ist genau die
+Sorte Annahme, die dieses Projekt sammelt.**
+
+**Die offenen Punkte werden sieben.** Dazu kommt die Bedienung (11.7): der Weg
+braucht heute drei Terminalstarts, was der gebaute Weg ist und kein Fehler,
+aber kein Weg, den ein Mensch am Dienstagabend nach dem Render nimmt. Was
+daraus wird, ist nicht entschieden; was dabei nicht verhandelbar ist, steht
+dort. **Abschnitt 10 geht von zwanzig Punkten auf achtzehn**, und das ist
+keine Kosmetik: sechs fallen heraus, weil dieser Lauf sie gemessen hat --
+darunter die Glocke, `videos.update` mit diesem Token, `image/jpeg`, und wie
+lange die Verarbeitung dauert. Vier kommen hinzu, zwei davon hat erst dieser
+Lauf sichtbar gemacht (der Haltepunkt, und die fremden Abonnenten), zwei sind
+der ungemessene Rest von Punkten, die er nur zur Haelfte beantwortet hat. Jede
+Messung steht dort, wo die Zusage steht, die sie prueft, nicht in einer Liste
+am Ende. Wie diese Fassung entstanden ist, steht im Bericht EY.
+
 **Fassung 11 (EX, 05.09.2026).** Zwoelf Stellen, an denen dieser Vertrag etwas
 anderes sagte als der gebaute Weg -- die sieben aus dem Bericht EW und fuenf
 weitere aus dem Durchgang dieser Fassung. **Acht Stellen der Zusage aendern
@@ -499,6 +551,22 @@ Verarbeitung von mehr als 45 Minuten kein Warten mehr, sondern ein Zustand, den
 ein Mensch ansehen soll. Die Zahl ist zugesagt; das Abfrageintervall nicht
 (Abschnitt 9).
 
+**Gemessen am 05.09.2026, am ersten echten Lauf: 90 Sekunden, sieben
+Abfragen.** Die Grenze und der gemessene Wert sind zwei verschiedene Dinge,
+und sie stehen hier ausdruecklich nebeneinander:
+
+| | Wert | Herkunft |
+|---|---|---|
+| **Grenze** | 45 Minuten | zugesagt, oben begruendet; sie bleibt, wie sie ist |
+| **einmal gemessen** | `succeeded` nach 7 Abfragen, rund 90 Sekunden nach dem Ende des Uploads | ein Lauf, eine Datei von 407 MB, 05.09.2026 |
+
+Der ganze Weg vom Ende des Uploads bis `public` dauerte an diesem Lauf **rund
+dreieinhalb Minuten**: Upload fertig, 90 Sekunden bis `succeeded`, 6 Sekunden
+bis das Thumbnail gesetzt war, dann die Frage an den Menschen und der zweite
+Klick. Ein Lauf ist keine Verteilung; die Grenze ist nicht deshalb zu weit,
+weil sie einmal um das Dreissigfache unterschritten wurde. `terminated` kam
+nicht vor, `processingStatus` war bei der ersten Abfrage schon vorhanden.
+
 ### 2.4 Erst nach der Verarbeitung und nach dem Thumbnail wird gefragt
 
 Der Mensch sieht auf der Freigabeseite, **bevor** irgendetwas oeffentlich
@@ -614,8 +682,36 @@ umgangen.
 
 **Scope.** Die Dokumentation nennt fuer `videos.update` die Scopes
 `youtubepartner`, `youtube` und `youtube.force-ssl`. Der Token dieses
-Projekts wird mit `youtube.force-ssl` geholt. Der Aufruf ist mit diesem Token
-**nicht** gemessen; siehe Ungeprueft (10).
+Projekts wird mit `youtube.force-ssl` geholt. **Am 05.09.2026 gemessen: der
+Aufruf laeuft mit diesem Token** und antwortet mit `privacyStatus: public`.
+
+**Gemessen am 05.09.2026: die Falle ist eingetreten und war harmlos.** Der
+erste echte Lauf hat genau das gezeigt, wovor dieser Abschnitt warnt -- und
+das Ergebnis wird hier festgehalten, damit niemand spaeter einen Fehler sucht,
+den es nicht gibt.
+
+- **`madeForKids` stand mit `false` im gelesenen Statusblock und fehlt in der
+  Antwort auf `videos.update`.** Der Bau hatte es als nur lesbar verworfen
+  (zusammen mit `uploadStatus`) und sich dazu selbst gemeldet: sei es in
+  Wahrheit setzbar, gehoere es in die Liste der uebertragbaren Felder
+  (`STATUS_FELDER_UEBERTRAGEN`). **Diese Selbstmeldung ist beantwortet, und
+  die Antwort lautet nein.** Im Studio nachgesehen: die Zielgruppe des Videos
+  steht unveraendert auf "nicht fuer Kinder gemacht". Das Feld ist
+  **abgeleitet** aus `selfDeclaredMadeForKids`, und dieses wird mitgeschickt;
+  es ist also nichts verlorengegangen, und es war nichts zu retten. **Die
+  Liste der uebertragbaren Felder wird nicht geaendert.** Ein Bau, der
+  `madeForKids` nachtraegt, macht den Weg falsch, nicht richtiger.
+- **`containsSyntheticMedia` meldet YouTube nicht.** Es stand nicht im
+  gelesenen Statusblock und wurde vom Lauf in der Liste `fehlend` gefuehrt --
+  der Bau hat also gesehen, dass die Dokumentation ein Feld nennt, das die
+  Antwort nicht traegt, und hat es benannt statt es zu erfinden. **Folge:
+  keine.** Ein Feld, das `videos.list` nicht liefert, kann `videos.update`
+  nicht verlieren; das Video stand nach dem Aufruf so da wie vorher. Der Bau
+  schickt es weiterhin nur mit, wenn es gelesen wurde.
+- **Nur lesbare Felder verwirft der Bau selbst**, bevor der Koerper entsteht;
+  ob die Bibliothek oder die API sie ihrerseits verworfen oder mit 400
+  beantwortet haetten, ist damit weiterhin nicht gemessen -- der Fall trat nie
+  ein, weil er nicht eintreten kann.
 
 ### 2.6 Ein geschlossenes Fenster laesst das Video privat; ein zweiter Lauf macht weiter
 
@@ -1116,6 +1212,16 @@ nennt die videoId und sagt, dass das Video privat auf dem Kanal liegt und das
 Bild fehlt. Es wird **nicht** oeffentlich gestellt. Ein zweiter Lauf
 wiederholt den Aufruf (5.3).
 
+**Gemessen am 05.09.2026.** YouTube nimmt das Bild unmittelbar nach
+`succeeded` an: zwischen dem Abfrageergebnis `succeeded` und dem gesetzten
+Bild lagen **sechs Sekunden**, und der Aufruf ging durch. Das Bild war eine
+**`.jpg`-Datei** von 400 KB -- damit ist `image/jpeg` in `thumbnails.set` an
+diesem Kanal gemessen und nicht mehr nur `image/png`. Der Zettel trug Rang 1
+und die Herkunft `bestaetigt`, das Kalendertag-Fenster wurde nicht geweitet.
+Was das **nicht** misst: ob das zurueckgelesene Bild schon das gesetzte ist --
+`videos.list` meldete unmittelbar danach `thumbnailsAvailability: inProgress`,
+und die URLs bleiben ungeprueft (10).
+
 ### 2.11 Die Sperrliste der Shorts gilt auch fuer das Langformvideo
 
 Der Longform-Arbeiter fuehrt eine Sperrliste nach der Bauart von Planer und
@@ -1208,6 +1314,15 @@ Verbrauchsliste, derselbe Ordner, dasselbe Zeitfenster. Der Haltepunkt
 er verbraucht hat, liegt danach nicht mehr herum. **Auch dieser Zweck
 verweigert zusaetzlich und erlaubt nichts:** er ist kein zweiter Weg zum
 Aufruf, sondern einer, der ausdruecklich vor ihm endet.
+
+**Im Betrieb ungeprueft, Stand 05.09.2026.** Der Haltepunkt ist gebaut und
+getestet; am ersten echten Lauf ist er **nicht gelaufen**. Joshua hat vor dem
+dritten Aufruf direkt den roten Knopf genommen, und der Zweig, der vor dem
+Absenden anhaelt, ist damit im Betrieb nie ausgefuehrt worden. Das steht hier
+und nicht nur unter "Ungeprueft" (10), weil dieser Abschnitt die Zusage
+traegt: **ein Zweig, den man fuer erprobt haelt, weil er gebaut ist, ist genau
+die Sorte Annahme, die dieses Projekt sammelt.** Was er tut, wenn ein Mensch
+ihn klickt, sagt bisher nur der Test.
 
 Fehlt die Ermaechtigung, ist sie abgelaufen, verbraucht, fuer eine andere
 Aufnahme, eine andere sha256, einen anderen Zweck oder einen anderen Kanal,
@@ -1397,6 +1512,39 @@ geschieht. Kein Argument und keine Konfiguration schaltet es ab.
 wollen; die Praxis von Hand tat es. Dass es ausdruecklich im Aufruf steht,
 hat denselben Grund wie das Literal `private`: ein Wert, der nur durch
 Weglassen gilt, gilt bis zur naechsten Bibliotheksversion.
+
+**Gemessen am 05.09.2026: die Glocke laeutet beim Oeffentlichstellen.** Bis zu
+diesem Tag war es die schwerste offene Frage dieses Vertrags, weil an ihr
+haengt, wofuer 2.14 ueberhaupt entschieden wurde: dass ein Video, das erst
+privat hochgeladen und spaeter oeffentlich gestellt wird, die
+Abo-Benachrichtigung nicht kostet. Der erste echte Lauf hat es gemessen, und
+zwar in dieser Reihenfolge und mit diesem Ergebnis:
+
+| Zeitpunkt | was geschah | Benachrichtigung |
+|---|---|---|
+| `videos.insert` auf `private`, mit `notifySubscribers: true` | das Video liegt auf dem Kanal, niemand sieht es | **keine** |
+| `videos.update` auf `public` (Aufruf 3) | das Video wird sichtbar | **eine**, in der Benachrichtigungsliste der YouTube-App **innerhalb einer Minute** nach `oeffentlich_am` |
+
+**Die Folge, und sie ist die eigentliche Nachricht dieser Messung: der Weg
+bleibt, wie er ist.** Von den drei denkbaren Ausgaengen ist der eingetreten,
+der nichts kostet. Die Terminierung ueber `publishAt`, die als Ausweichweg
+vorgesehen war fuer den Fall, dass die Benachrichtigung beim Wechsel der
+Sichtbarkeit ausfaellt, **wird fuer den Longform-Weg nicht gebraucht**. Das
+Verbot aus 2.2 und Abschnitt 7 ("kein `publishAt`, nie, in keinem Aufruf")
+bleibt damit nicht nur als Regel stehen, sondern hat jetzt eine Messung hinter
+sich statt einer Hoffnung.
+
+**Was diese Messung nicht deckt, und das gehoert genauso hierher:**
+
+- **Ein Lauf, eine Aufnahme, ein Kanal, ein Konto.** Es ist eine Stichprobe der
+  Groesse eins. Sie widerlegt "die Glocke laeutet gar nicht" und "sie laeutet
+  nur beim Upload"; sie belegt keine Regel darueber, wie oft das so bleibt.
+- **Ob die Benachrichtigung bei fremden Abonnenten ankam, ist nicht gemessen.**
+  Gesehen wurde die Benachrichtigungsliste **des Kanalinhabers** -- also die
+  Liste dessen, der das Video selbst hochgeladen hat, auf seinem eigenen
+  Geraet. Ob dieselbe Benachrichtigung auf dem Geraet eines fremden
+  Abonnenten erschien, hat niemand gesehen, und dieser Vertrag behauptet es
+  nicht.
 
 ---
 
@@ -2032,33 +2180,43 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   wurde. Wie die Seite das Bild von der URL laedt (sie darf nur 127.0.0.1
   ansprechen; ein Bild vom CDN ist ein Abruf nach draussen), ist Sache des Baus
   und hier nicht entschieden.
-- **`videos.update` mit diesem Token.** Der Scope ist laut Dokumentation
-  ausreichend; der Aufruf ist auf diesem Kanal nie gelaufen.
-- **Welche `status`-Felder beim Zurueckschicken angenommen werden.** Ob
-  `containsSyntheticMedia` in der Antwort auf `videos.list` ueberhaupt steht,
-  ob ein zurueckgeschicktes `selfDeclaredMadeForKids` angenommen wird, ob die
-  Bibliothek nur lesbare Felder verwirft. Der Probelauf mit einem privaten
-  Video misst das: `videos.list` vorher, `videos.update`, `videos.list`
-  nachher, Feld fuer Feld verglichen.
-- **`processingStatus` bei einer 340-MB-Datei:** wie lange bis `succeeded`, ob
-  das Feld sofort nach dem Upload vorhanden ist, ob `terminated` je vorkommt.
-  DY hat `uploadStatus: processed` an 21 Shorts gesehen, `processingDetails`
-  hat noch niemand in diesem Projekt gelesen.
-- **`thumbnails.set` unmittelbar nach `succeeded`.** Ob YouTube das Bild zu
-  diesem Zeitpunkt annimmt oder ob die eigenen Vorschaubilder erst entstehen
-  muessen. Und ob `short-guard.js` bei einem frischen Video fail-closed sperrt.
-- **`image/jpeg` in `thumbnails.set`.** Gemessen ist nur `image/png`.
+- **Ob `short-guard.js` bei einem frischen Video fail-closed sperrt.** Die
+  Sonde ist fail-closed, und bei einem eben erst hochgeladenen Video koennte
+  das Existenzbild noch fehlen. Dass `thumbnails.set` unmittelbar nach
+  `succeeded` durchgeht, ist gemessen (2.10, 05.09.2026); dass die Sonde dabei
+  gelaufen und nicht gesperrt haette, sagt dieser Lauf nicht.
+- **Ob der Haltepunkt im Betrieb tut, was 2.12 zusagt.** Er ist gebaut und
+  getestet, und am ersten echten Lauf ist er nicht gelaufen: der Mensch hat
+  direkt veroeffentlicht. Ein Zweig, den man fuer erprobt haelt, weil er
+  gebaut ist, ist genau die Sorte Annahme, die dieses Projekt sammelt. Was das
+  messen wuerde: ein Lauf, bei dem der Haltepunkt-Knopf geklickt wird.
+- **Ob die Benachrichtigung bei einem fremden Abonnenten ankommt.** Gemessen
+  ist (2.14, 05.09.2026), dass das Oeffentlichstellen eine Benachrichtigung
+  ausloest -- gesehen wurde die Liste **des Kanalinhabers** auf seinem eigenen
+  Geraet, an einem Lauf, einer Aufnahme, einem Kanal, einem Konto. Ob dieselbe
+  Benachrichtigung ein fremdes Geraet erreicht, hat niemand gesehen.
+- **Welche nur lesbaren `status`-Felder die Bibliothek oder die API ihrerseits
+  abweisen wuerden.** Gemessen ist (2.5, 05.09.2026), was der Bau selbst
+  verwirft (`uploadStatus`, `madeForKids`) und dass der Aufruf damit
+  durchgeht; was geschaehe, schickte man ein nur lesbares Feld doch mit, ist
+  nicht gemessen, weil dieser Weg es nicht tut.
 - **Ob der Arbeiter das Schliessen der Seite ueberlebt.** Der Freigabedienst
   startet den Shorts-Uploader heute als gebundenen Kindprozess mit
   Ausgabepipes, nicht abgeloest. Ob ein Arbeiter, der 45 Minuten wartet, das
   Ende der Sitzung uebersteht oder mit ihr endet, ist nicht gemessen. Beide
   Ausgaenge stehen im Gedaechtnis (2.6); der Unterschied ist, ob der zweite
   Anlauf bei `hochgeladen` oder bei `thumbnail_gesetzt` ansetzt.
-- **Der Pfad mit Leerzeichen in `fs.createReadStream`** und 900 MB ueber
-  `googleapis`: der Shorts-Uploader laedt 10-MB-Dateien; ob die Bibliothek bei
-  900 MB ohne Wiederaufnahme-Upload durchkommt, ist nicht gemessen.
-- **`notifySubscribers` als ausdruecklicher Parameter** im Aufruf der
-  Bibliothek: ob sie ihn an dieser Stelle annimmt, ist nicht gemessen.
+- **Ob `notifySubscribers: true` beim Upload je etwas bewirkt.** Am
+  05.09.2026 hat die Bibliothek den Parameter **angenommen** -- der Aufruf ist
+  mit ihm durchgelaufen und hat nicht abgewiesen. Was er ausloest, ist an
+  diesem Weg nicht messbar: hochgeladen wird auf `private` (2.3), und beim
+  privaten Upload kam keine Benachrichtigung (2.14). Er steht im Aufruf, weil
+  ein Wert, der nur durch Weglassen gilt, bis zur naechsten
+  Bibliotheksversion gilt -- nicht, weil seine Wirkung gemessen waere.
+- **900 MB ueber `googleapis`.** Der Pfad mit Leerzeichen in
+  `fs.createReadStream` ist am 05.09.2026 gelaufen, mit **407 MB** und ohne
+  Wiederaufnahme-Upload; das obere Ende der von DX gemessenen Spanne (bis 928
+  MB) ist damit nicht erreicht und bleibt ungemessen.
 - **Der Modus der OAuth-App, und zwei Belege, die einander widersprechen.**
   Keiner von beiden wird hier zur Wahrheit erklaert; gemessen ist der Modus in
   diesem Projekt nicht. **Der eine Beleg:** die Uebergabe des Orchestrators
@@ -2111,27 +2269,6 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   zweiten Rechner in einer anderen Zone koennte den Tag verschieben. Was das
   messen wuerde: ein Aufnahmename gegen die mtime der Rohaufnahme desselben
   Laufs, an einem Lauf nach 22:00 Ortszeit.
-- **Ob die Abonnenten benachrichtigt werden, wenn ein Video erst privat
-  hochgeladen und spaeter oeffentlich gestellt wird.** Was dokumentiert ist:
-  `notifySubscribers` ist ein Parameter von `videos.insert` und **nur** von
-  dort -- der Aufruf aus 2.5, der die Sichtbarkeit wechselt, kennt ihn nicht;
-  die Voreinstellung ist "benachrichtigen", und 2.14 setzt ihn ausdruecklich
-  darauf. Googles Beschreibung der Benachrichtigungen kennt als Ausloeser das
-  Hochladen sowie Aenderungen an Titel und Beschreibung. **Ob ein Wechsel der
-  Sichtbarkeit einen ausloest, steht nirgends.** Damit ist offen, was auf
-  genau diesem Weg geschieht: hochgeladen wird auf `private` (2.3), und zu dem
-  Zeitpunkt hat kein Abonnent etwas zu sehen; oeffentlich wird das Video erst
-  in Aufruf 3, fuer den es den Parameter nicht gibt. Es sind drei Ausgaenge
-  denkbar, und keiner ist gemessen: die Glocke laeutet beim Upload ins Leere,
-  sie laeutet beim Wechsel, oder sie laeutet gar nicht. **Warum das gemessen
-  werden muss und nicht nebenbei auffallen darf:** Joshua ist die Glocke
-  wichtig -- ein Langformvideo ist genau das, wofuer Abonnenten benachrichtigt
-  werden wollen (2.14). Faellt die Benachrichtigung auf diesem Weg aus, ist
-  das kein Schoenheitsfehler, sondern der Verlust dessen, wofuer 2.14
-  ueberhaupt entschieden wurde -- und er faellt an einem Video auf, das dann
-  schon oeffentlich ist. Was das messen wuerde: der erste Probelauf, mit einem
-  Video, und der Blick auf die Benachrichtigung **vor** dem zweiten Video,
-  nicht danach.
 
 ---
 
@@ -2181,6 +2318,20 @@ er nennt sie als offen oder fragt.
    Seite die Wahl anbietet -- was 7 heute ausschliesst ("keine
    Auswahloberflaeche") --, oder ob es beim Aufraeumen bleibt, ist nicht
    entschieden. Ein Bau darf diese Stelle nicht stillschweigend fuellen.
+7. **Wie der Weg bedient wird.** Der erste echte Lauf am 05.09.2026 brauchte
+   **drei Terminalstarts**: die zwei Neustarts des Dienstes, die 2.13 und die
+   Fassung 11 nennen, plus den ersten. Das ist der gebaute Weg und kein
+   Fehler -- er entstand aus der Entscheidung, dass die Seite **einmal** beim
+   Start aus dem Trockenlauf entsteht (2.13), und diese Entscheidung ist
+   richtig. Aber ein Weg, der drei Terminalstarts braucht, ist kein Weg, den
+   ein Mensch am Dienstagabend nach dem Render nimmt; die Bedienung ist der
+   naechste Bau. **Nicht entschieden ist, was daraus wird:** ein Knopf, der
+   die Neustarts selbst macht, ein Dienst, der sich anders aufteilt, oder eine
+   ganz andere Form. Was dabei **nicht** verhandelbar ist, steht schon fest
+   und wird von diesem Punkt nicht beruehrt: die zwei Ermaechtigungen (2.12),
+   die zwei Klicks, und dass die Seite nach dem Upload aus dem neuen Stand
+   entsteht und nicht aus dem alten (2.13). Eine Bedienung, die diese Naehte
+   glaettet, indem sie eine davon wegnimmt, loest die falsche Aufgabe.
 
 ---
 

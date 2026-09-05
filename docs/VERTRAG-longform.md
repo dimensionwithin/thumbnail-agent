@@ -1,5 +1,77 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 11 (EX, 05.09.2026).** Zwoelf Stellen, an denen dieser Vertrag etwas
+anderes sagte als der gebaute Weg -- die sieben aus dem Bericht EW und fuenf
+weitere aus dem Durchgang dieser Fassung. **Acht Stellen der Zusage aendern
+sich** (1, 2.7, 2.12, 2.13, 3.1, 4, 5.2, 6), und keine davon erlaubt auf dem
+Kanal etwas, was vorher verboten war. Die Richtung ist an jeder einzelnen
+dieselbe: **der Vertrag nimmt zurueck, was nicht gebaut ist, und traegt nach,
+was gebaut ist.** Eine Begruendung faellt dabei ganz weg -- die, die sich auf
+eine Sicherung stuetzte, die es nicht gibt.
+
+**Erstens, und das ist die schwerste: das Standbild gibt es nicht.** Fassung 9
+begruendete, warum die Vertipper-Luecke in 2.7 offen bleiben darf: weil
+Abschnitt 4 Schritt 7 das Bild von der Platte und ein Standbild des Videos
+nebeneinander zeige, bevor der Mensch die erste Ermaechtigung gibt, und
+ausdruecklich "ohne sie duerfte sie es nicht". Dieses Standbild ist nicht
+gebaut, und es war schon nicht gebaut, als der Satz geschrieben wurde. Damit
+stand in diesem Vertrag genau das, wogegen dieser Weg gebaut ist: eine Abwehr,
+die es nur auf dem Papier gibt. **Richtung: die Begruendung faellt weg, die
+Luecke bleibt.** An ihrer Stelle steht die, die traegt -- ein Mensch haelt Bild
+und Aufnahme selbst zusammen, weil er das Bild kurz zuvor gebaut hat und seine
+Aufnahme kennt. Das ist schwaecher als eine Sicherung im Programm, und der
+Vertrag sagt es jetzt so. Das Standbild wird ein offener Punkt (11.5).
+
+**Zweitens: `--zettel=` nimmt der Dienst nicht an.** 3.1 sagte, er reiche es an
+den Arbeiter durch; er kennt es nicht, und ein Aufruf damit endet mit 2, bevor
+etwas angefasst wird. **Richtung: der Vertrag sagt weniger zu.** Was heute
+geschieht, wenn zwei Kandidaten im Fenster liegen, steht jetzt da: der
+Trockenlauf bricht ab, und der einzige Weg zurueck fuehrt ueber den
+Export-Ordner. Auch das ist ein offener Punkt (11.6) und kein Nebensatz.
+
+**Drittens: der OAuth-Modus steht mit beiden Belegen unter "Ungeprueft".** Die
+Uebergabe EC fuehrt "In Produktion" unter dem, was gemessen sei; EP, EU und
+dieser Vertrag tragen den Testmodus weiter. Keine der beiden Fassungen wird
+hier zur Wahrheit erklaert. **Richtung: der Vertrag behauptet weniger**, und er
+nennt, was daran haengt.
+
+**Viertens bis siebtens.** Zwischen den drei Klicks stehen **zwei** Neustarts
+des Dienstes, nicht einer; der zweite steht hinter dem Haltepunkt (2.13). Der
+Haltepunkt endet mit **1**, und Abschnitt 6 kennt den Fall jetzt samt seiner
+Bedeutung. Nach einem beendeten Lauf ist jeder Knopf gesperrt und wird nicht
+wieder frei -- ein zweiter Klick genuegt auf keinem Weg (2.13). Und die Spalte
+"Kontingent laut Dokumentation" in Abschnitt 1 nennt jetzt ihre Herkunft: die
+100 Uploads am Tag sind in der Cloud Console **abgelesen**, und die
+Dokumentation fuehrt an derselben Stelle eine andere, in diesem Projekt
+widerlegte Zahl.
+
+**Dazu fuenf Stellen aus dem Durchgang, alle in dieselbe Richtung.** Abschnitt
+6 versprach, der Dienst reiche das stderr des Arbeiters durch, wenn dieser im
+Trockenlauf mit 1 endet -- er liefert dort eine Seite aus und endet nicht mit
+1. 3.1 nannte die Abweisung von `--zettel=` und die des Modusarguments im
+Shorts-Modus eine Verbindungspruefung -- `--zettel=` faellt an der
+Listenpruefung, in beiden Modi, und das Modusargument im Shorts-Modus ist kein
+Fehler, sondern der Modus. 3.1 fuehrte `--befund-json` nicht, das der Dienst
+dem Arbeiter beim Trockenlauf mitgibt. Abschnitt 4 Schritt 14 nannte einen
+Knopf, wo zwei stehen. Und 5.2 fuehrte das Feld `haltepunkt` nicht, das der
+Arbeiter schreibt und das 2.12 zusagt.
+
+**Die Regel, die daraus folgt, und sie gilt ab hier.** Diese zwoelf Stellen
+sind einzeln entstanden und einzeln nachgezogen worden, Fassung fuer Fassung,
+und haben sich dabei angesammelt statt sich zu erledigen. **Der Vertrag wird im
+selben Commit nachgezogen wie der Bau, nicht gesammelt.** Ein Nachziehen, das
+auf den naechsten Durchgang wartet, ist kein Nachziehen, sondern ein
+Rueckstand -- und was in der Zwischenzeit hier steht, wird geglaubt. Der Satz
+am Schluss dieser Datei ("Wer den Weg aendert, aendert den Vertrag im selben
+Commit") war bisher eine Angabe darueber, wo die Datei hingehoert; er ist ab
+hier eine Regel darueber, wann sie sich aendert.
+
+**Die offenen Punkte werden dabei mehr: aus vier werden sechs.** Das ist die
+richtige Richtung und keine Verschlechterung. Ein Vertrag mit weniger offenen
+Punkten, als er ehrlich haben muesste, ist schlechter als einer mit mehr. Wie
+diese Fassung entstanden ist, steht in den Berichten EW (die Funde) und EX (der
+Abgleich).
+
 **Fassung 10 (EV, 05.09.2026).** Drei Aenderungen, alle in Abschnitt 2, alle
 aus dem Bau -- und **drei Zusagen der Abschnitte 1 bis 8 aendern sich**. Keine
 davon erlaubt auf dem Kanal etwas, was vorher verboten war; zwei verweigern
@@ -30,8 +102,9 @@ zurueckliest -- lesende Aufrufe also --, ohne dass danach etwas geschieht. Er
 nimmt dem Haltepunkt die Form, in der man ihn vergessen kann, und das ist sein
 ganzer Zweck.
 
-**Drittens: zwischen den beiden Klicks steht ein Neustart des Dienstes.** 2.13
-las sich, als zeige dieselbe Sitzung die zweite Frage. Sie tut es nicht: die
+**Drittens: zwischen den beiden Klicks steht ein Neustart des Dienstes.**
+(Fassung 11: es sind **zwei** -- der zweite steht hinter dem Haltepunkt, 2.13.)
+2.13 las sich, als zeige dieselbe Sitzung die zweite Frage. Sie tut es nicht: die
 Seite entsteht **einmal**, beim Start, aus dem Trockenlauf; eine Frage, die auf
 der Lage von vor dem Upload steht, ist eine Wiederholung und keine Frage.
 **Richtung: der Vertrag sagt weniger zu als vorher.** Hier hat nicht der Bau
@@ -93,14 +166,15 @@ nicht.
 **Zweitens: die Grenze wird benannt, nicht verschwiegen.** Ein Vertipper, der
 eine andere **echte** Aufnahme trifft, ergibt weiterhin `bestaetigt` -- der
 Name steht ja in der Liste. 2.7 traegt jetzt ein, was ihn abfinge (ein
-Standbild aus der Aufnahme, mit dem Bild verglichen), was das kostete (die
+Standbild aus der Aufnahme, mit dem Bild verglichen) und was das kostete (die
 Zusage aus 3.3, dass zum Entscheiden keine Datei geoeffnet wird -- fuer die
-Aufnahmen gaelte sie dann nicht mehr), und wo er heute auffaellt: auf der
-Freigabeseite, wo Abschnitt 4 Schritt 7 das Bild von der Platte und ein
-Standbild des Videos nebeneinander zeigt, bevor der Mensch in Schritt 8 die
-erste Ermaechtigung gibt. Ein falsches Paar sieht man. Diese zweite Linie ist
-der Grund, warum die Luecke offen bleiben darf; **ohne sie duerfte sie es
-nicht**.
+Aufnahmen gaelte sie dann nicht mehr). **Die Begruendung, die Fassung 9 dazu
+schrieb, ist mit Fassung 11 gestrichen:** sie sagte, der Fall falle auf der
+Freigabeseite auf, weil Abschnitt 4 Schritt 7 dort das Bild von der Platte und
+ein Standbild des Videos nebeneinander zeige, und schloss "ohne sie duerfte sie
+es nicht". Dieses Standbild war nicht gebaut, als der Satz geschrieben wurde,
+und ist es heute nicht. Was an seiner Stelle traegt, steht in 2.7; das
+Standbild selbst ist ein offener Punkt (11.5).
 
 **Ein Bau, der gegen Fassung 8 geprueft wurde, wird davon nicht falsch -- und
 was das genau heisst, ist nachgesehen.** Die **lesende** Seite ist unberuehrt:
@@ -289,11 +363,24 @@ weitergeht, wo er stand.
 
 Drei schreibende Aufrufe an YouTube, nicht mehr:
 
-| Nr. | Aufruf | Zweck | Kontingent laut Dokumentation |
-|---|---|---|---|
-| 1 | `videos.insert` | das Video, privat | 1 von 100 Upload-Aufrufen pro Tag |
-| 2 | `thumbnails.set` | das Bild aus dem Beipackzettel | ca. 50 Einheiten |
-| 3 | `videos.update` | `status.privacyStatus` auf `public` | 50 Einheiten |
+| Nr. | Aufruf | Zweck | Kontingent | woher die Zahl stammt |
+|---|---|---|---|---|
+| 1 | `videos.insert` | das Video, privat | 1 von 100 Upload-Aufrufen pro Tag | **abgelesen** in der Cloud Console ("Video Uploads per day: 100"); die Dokumentation weicht ab (unten) |
+| 2 | `thumbnails.set` | das Bild aus dem Beipackzettel | ca. 50 Einheiten | Dokumentation |
+| 3 | `videos.update` | `status.privacyStatus` auf `public` | 50 Einheiten | Dokumentation |
+
+**Die Spalte hiess bis Fassung 10 "Kontingent laut Dokumentation", und fuer
+Zeile 1 stimmte das nicht.** Die Zahl ist abgelesen; die veroeffentlichte
+Dokumentation fuehrt an derselben Stelle eine andere. Ihre Zusammenfassung
+nennt `videos.insert` als teuerste Methode mit 1600 Punkten, die Tabelle
+darunter sagt fuer dieselbe Methode "100 quota per day. Each call costs 1
+quota", und die Seite zum Aufruf selbst nennt eine Einheit im eigenen
+Upload-Topf. Der Widerspruch steht seit DE F3 als ungeklaert im Projekt, und
+die Uebergabe EC fuehrt die 1600 als ueberholt; hier gilt die abgelesene Zahl,
+**weil** sie abgelesen ist. **Grund fuer die Spalte:** die erste Regel dieses
+Projekts ist, nichts herzuleiten, was man ablesen kann -- dann muss auch
+dastehen, was von beidem es war. Eine Zahl ohne Herkunft ist eine Behauptung,
+die nach der ersten Weitergabe wie eine Messung aussieht.
 
 Dazu lesende Aufrufe: `channels.list` (welcher Kanal), `videos.list` (das
 Warten auf die Verarbeitung; das Zuruecklesen nach dem Thumbnail; das Lesen
@@ -622,14 +709,24 @@ einem Werkzeug, das mit der Standardbibliothek auskommt. Diese Zusage ist mehr
 wert als der Schutz gegen einen Tippfehler, der ein Zeichen daneben eine andere
 echte Aufnahme trifft.
 
-**Wo er heute auffaellt, und warum die Luecke deshalb offen bleiben darf.** Auf
-der Freigabeseite. Abschnitt 4 Schritt 7 zeigt das Bild von der Platte und ein
-Standbild des Videos **nebeneinander**, und zwar bevor der Mensch in Schritt 8
-die erste Ermaechtigung gibt. Ein falsches Paar sieht man. Dort kostet das
-Standbild nichts von dem, was es hier kosten wuerde: es ist das fertige Video,
-das der Weg ohnehin in der Hand hat, und es entscheidet niemand darauf -- ein
-Mensch sieht es an. Diese zweite Linie ist der Grund, warum die Luecke offen
-bleiben darf; **ohne sie duerfte sie es nicht**.
+**Wo er heute auffaellt, und warum die Luecke trotzdem offen bleibt.** Nicht im
+Programm -- dort faellt er an keiner Stelle auf. Er faellt einem **Menschen**
+auf oder niemandem: demselben, der das Bild kurz zuvor im Compositor gebaut und
+den Namen dort selbst gesetzt hat, und der seine eigene Aufnahme kennt. Die
+Freigabeseite zeigt ihm das Bild von der Platte, den Zettel und den
+Aufnahmenamen, gegen den es bestimmt wurde, bevor er in Schritt 8 die erste
+Ermaechtigung gibt; ob das Paar zusammengehoert, weiss er und sonst niemand.
+
+**Das ist schwaecher als eine Sicherung im Programm, und dieser Vertrag sagt es
+so.** Eine zweite Linie gibt es hier nicht. Das Standbild aus dem Video, das
+Fassung 9 an dieser Stelle als zweite Linie fuehrte und mit dem sie schloss,
+"ohne sie duerfte sie es nicht", **ist nicht gebaut** -- es war es auch nicht,
+als der Satz geschrieben wurde. Fassung 11 hat deshalb die Begruendung
+gestrichen und nicht die Luecke geschlossen; was sie schliessen wuerde, steht
+als offener Punkt in Abschnitt 11. **Grund, es so und nicht anders zu
+schreiben:** ein Vertrag, der eine Abwehr nennt, die es nur auf dem Papier
+gibt, ist gefaehrlicher als einer, der die Luecke offen zeigt. Die fehlende
+Abwehr sucht jemand; die genannte glaubt er.
 
 **Grund fuer das zweite Feld.** Der Compositor kann die Aufnahme nicht
 schliessen; EC hat es an 71 Aufnahmen und sieben Bildern gemessen: das Bild
@@ -1061,7 +1158,7 @@ erst moeglich macht (der Befund von YouTube, das Bild am Video). Eine
 Ermaechtigung, die vor dem Upload das Oeffentlichstellen mit erlaubte, waere
 ein `publishAt` mit anderem Namen. **Grund fuer kein getipptes Wort:** der
 Weg hat keine Terminalfrage, in der ein Wort etwas bezeugen koennte; die
-Freigabeseite ist der einzige Ort, an dem Bild, Standbild und Befund
+Freigabeseite ist der einzige Ort, an dem Bild und Befund
 nebeneinander stehen, und dort wird geklickt. Ein Wort im Terminal ohne diese
 Sicht bezeugte weniger als der Klick.
 
@@ -1166,7 +1263,7 @@ Tages anders gebaut ist als die erste. Die Sicherungen des Freigabedienstes
 sind gemessen (DJ, DJa, DR); ein Modus erbt sie, ein Dienst muesste sie neu
 beweisen.
 
-**Zwischen den beiden Klicks steht ein Neustart des Dienstes, und das ist eine
+**Zwischen den drei Klicks stehen zwei Neustarts des Dienstes, und das ist eine
 Rauheit und keine Eleganz.** Die Seite entsteht **einmal**, beim Start, aus dem
 Trockenlauf des Arbeiters; danach holt sie keinen Stand nach. Die Frage aus 2.4
 steht damit auf der Lage von **vor** dem Upload -- und eine Frage auf einer Lage
@@ -1177,6 +1274,25 @@ Frage darauf. **Das wird dreimal angesagt** -- in der Abschlussanzeige des
 Arbeiters nach dem Upload, in der Meldung der Seite am Ende des Laufs und im
 Erklaerungsblock der Seite --, damit niemand den Bau fuer kaputt haelt, wenn
 nach dem Upload kein zweiter Knopf erscheint.
+
+**Der zweite Neustart steht hinter dem Haltepunkt.** Bis Fassung 10 zaehlte
+dieser Vertrag einen Neustart; der Weg braucht **zwei**, sobald der Haltepunkt
+(2.12) benutzt wird -- drei Klicks, zwei Neustarts. Wer den Haltepunkt nicht
+klickt, kommt mit einem aus. **Grund, und es ist derselbe wie oben:** nach
+einem beendeten Lauf ist jeder Knopf dieser Sitzung gesperrt und wird nicht
+wieder frei. Der Haltepunkt ist ein beendeter Lauf; die Frage, die danach auf
+dem Schirm steht, ist die von vor ihm, und der Statusblock, den er gelesen hat,
+ist so verbraucht wie seine Ermaechtigung. Wer nach dem Haltepunkt wirklich
+veroeffentlichen will, beendet den Dienst ein zweites Mal, startet ihn neu und
+klickt dort den anderen Knopf; der Statusblock wird dann noch einmal gelesen.
+
+**Ein zweiter Klick genuegt nicht, und zwar auf keinem Weg.** Nicht nach einem
+Haltepunkt, nicht nach einer abgelaufenen Ermaechtigung, nicht nach einem
+Lauf, der mit einem Befund geendet hat. Die Sperre liegt **im Dienst** und
+nicht nur im Browser; der Browser sperrt zusaetzlich, aber das ist
+Bequemlichkeit. **Grund:** eine Ermaechtigung haengt an dem, was in der
+Vorschau oder in der Frage stand, und eine zweite auf einer veralteten Vorschau
+bezeugte nichts.
 
 **Was es kostete, sie wegzubauen.** Zweierlei, und beides ist teurer als die
 Rauheit. Erstens muesste der Arbeiter als Kindprozess am **Ende eines Laufs**
@@ -1260,9 +1376,10 @@ nicht beurteilt werden koennten.
 
 **Folge fuer die Zusage zur Freigabe-Naht:** sie schuldet eine neue Fassung.
 Ihr Abschnitt 8 sagt "pro Aufnahme genau eine Sitzung", und ihr
-Schlussabsatz zaehlt das Verhalten der Sperre zum Zugesagten. Dazu kommen die
-Argumente, die dort heute mit 2 enden (das Modusargument, `--zettel=`), und
-die Abweisung von `--wurzel=` im Longform-Modus (3.1). Fuer den bestehenden
+Schlussabsatz zaehlt das Verhalten der Sperre zum Zugesagten. Dazu kommt das
+Modusargument, das dort heute mit 2 endet und angenommen werden muss, und die
+Abweisung von `--wurzel=` im Longform-Modus (3.1). `--zettel=` gehoert **nicht**
+in diese Aufzaehlung: es endet dort mit 2 und bleibt es auch (3.1). Fuer den bestehenden
 Shorts-Aufruf aendert sich nichts: ohne Modusargument verhaelt sich der
 Dienst wie heute, Sperrdatei und Meldung eingeschlossen; nur der Satz "pro
 Aufnahme genau eine Sitzung" wird zu "pro Aufnahme und Modus". Faellig ist
@@ -1304,6 +1421,7 @@ stehen):
 | `--zettel=<dateiname>` | der Beipackzettel, wenn mehrere in Frage kamen (2.7); nur der Dateiname, kein Pfad; die Datei muss im Export-Ordner liegen und einer der Kandidaten sein |
 | `--bestaetigt-durch=<pfad>` | die Ermaechtigung (2.12). Nur zusammen mit `--execute`: jedes der beiden ohne das andere endet mit **2**, bevor etwas gelesen wird. Der Trockenlauf laeuft ohne beide. |
 | `--execute` | wie beim Shorts-Uploader: ohne `--execute` kein Netz, nicht einmal `googleapis` geladen |
+| `--befund-json` | eine Zeile mit dem Befund als JSON auf stderr, zusaetzlich zur Ausgabe. Kein Mensch tippt es; der **Dienst** gibt es beim Trockenlauf mit, weil er den Pfad des Bildes braucht und ihn nicht aus dem Text heraussuchen soll. Ohne das Argument ist die Ausgabe des Arbeiters Byte fuer Byte, was sie ohne es war |
 
 Der Arbeiter kennt **kein** Wurzelargument. Die Videodatei kommt aus
 `LONGFORM_RENDER_WURZEL` (3.2), der Zettel aus `THUMBNAIL_EXPORT_DIR` (3.3);
@@ -1311,8 +1429,23 @@ beides sind Einstellungen, keine Argumente.
 
 Argumente des **Freigabedienstes** im Longform-Modus: `--aufnahme=`,
 `--port=`, `--no-browser` aus der Zusage zur Freigabe-Naht, plus ein
-Modusargument und `--zettel=`, das der Dienst an den Arbeiter durchreicht.
-Der Name des Modusarguments ist nicht zugesagt (9).
+Modusargument. Der Name des Modusarguments ist nicht zugesagt (9).
+
+**`--zettel=` nimmt der Dienst nicht an.** Bis Fassung 10 stand hier, er reiche
+es an den Arbeiter durch. Er tut es nicht: das Argument steht in keiner Liste
+dieses Dienstes, ein Aufruf damit endet mit **2**, bevor etwas angefasst wird,
+und weder der Trockenlauf noch der scharfe Lauf geben es weiter. Der Arbeiter
+selbst kennt es und wird es behalten; **ueber den Dienst ist es nicht
+erreichbar**, und der Dienst ist der einzige Weg zu einem Upload, weil die
+Freigabeseite der einzige Ort ist, an dem eine Ermaechtigung entsteht (7).
+
+**Was daraus heute folgt, wenn zwei Kandidaten im Fenster liegen.** Der
+Trockenlauf bricht ab und nennt beide (2.7). Einen Weg, den einen zu waehlen,
+gibt es dann **nicht** -- weder ein Argument des Dienstes noch eine Auswahl auf
+der Seite, die 7 ohnehin ausschliesst. Es bleibt, im Export-Ordner
+aufzuraeumen: den ueberzaehligen Zettel wegnehmen oder neu exportieren, und
+danach den Dienst starten. Das ist ein **offener Punkt** (11.6) und kein
+Nebensatz; ein Bau darf ihn nicht stillschweigend fuellen.
 
 **`--wurzel=` wird im Longform-Modus abgewiesen, mit 2.** Die Meldung nennt
 `LONGFORM_RENDER_WURZEL` als den einzigen Ort, an dem die Longform-Wurzel
@@ -1328,12 +1461,16 @@ und das ist die Form, die dieses Projekt schon mehrfach gebissen hat).
 Abweisen ist das einzige, was beides vermeidet. Die Zusage zur Freigabe-Naht
 sagt, jedes andere Argument fuehre zu 2; der Shorts-Aufruf mit `--wurzel=`
 bleibt unveraendert gueltig, weil er kein Modusargument traegt. **Preis,
-benannt:** die Argumentpruefung des Dienstes prueft heute nur Zugehoerigkeit
-zu einer flachen Liste, keine Verbindung (ED F2). Die Abweisung von
-`--wurzel=` im Longform-Modus und von `--zettel=` und dem Modusargument im
-Shorts-Modus ist eine Verbindungspruefung; sie liegt nach der Listenpruefung
-und vor der Sperre, und sie endet mit 2 wie die Listenpruefung, denn nichts
-wurde angefasst.
+benannt:** die Argumentpruefung des Dienstes prueft zuerst nur Zugehoerigkeit
+zu einer flachen Liste, keine Verbindung (ED F2). **Genau eine
+Verbindungspruefung gibt es**, und sie gilt `--wurzel=` im Longform-Modus; sie
+liegt nach der Listenpruefung und vor der Sperre, und sie endet mit 2 wie die
+Listenpruefung, denn nichts wurde angefasst. Bis Fassung 10 stand hier, auch
+`--zettel=` und das Modusargument im Shorts-Modus seien Faelle dieser Pruefung.
+Das waren sie nie: `--zettel=` faellt schon an der **Listenpruefung**, in
+beiden Modi und ohne Ansehen des Modus, und ein Modusargument im Shorts-Modus
+ist kein Fehler, sondern der Modus selbst -- `--modus=` mit dem Shorts-Wert
+fuehrt zu demselben Lauf wie das Weglassen des Arguments.
 
 ### 3.2 Die Videodatei
 
@@ -1493,11 +1630,12 @@ das Longform-Modul.
 6. Arbeiter: **Vorschau** auf stdout, woertlich, mit jedem Zettel und seinem
    Ausgang, dem Fenster (und ob es geweitet wurde), der Kandidatenliste;
    Ende mit 0, ohne Netz.
-7. Seite: zeigt die Vorschau, das Bild von der Platte, ein Standbild des
-   Videos (DX C3), die Kandidatenliste bei Rang 2 oder 3, den Knopf
-   "Hochladen" mit dem Dateinamen des Bildes darauf; bei Rang 2 zusaetzlich
-   den Satz, dass es ein Vorschlag ist und warum (unbestaetigt / leer / vor
-   dem Nachtrag).
+7. Seite: zeigt die Vorschau, das Bild von der Platte, die Kandidatenliste
+   bei Rang 2 oder 3, den Knopf "Hochladen" mit dem Dateinamen des Bildes
+   darauf; bei Rang 2 zusaetzlich den Satz, dass es ein Vorschlag ist und
+   warum (unbestaetigt / leer / vor dem Nachtrag). **Kein Standbild des
+   Videos.** Bis Fassung 10 stand hier eines; gebaut war es nie, und die Seite
+   sagt heute selbst, dass es fehlt. Was daran haengt, steht in 2.7 und 11.5.
 8. Seite beim Klick: erste Ermaechtigung schreiben (2.12), Arbeiter mit
    `--execute --bestaetigt-durch=` starten.
 9. Arbeiter: Ermaechtigung pruefen, anmelden, `channels.list`, Kanal gegen
@@ -1513,14 +1651,28 @@ das Longform-Modul.
 13. `videos.list` mit `part=snippet,status,processingDetails`; Antwort ins
     Gedaechtnis (Thumbnail-URLs, Status, Gruende). Arbeiter endet mit 0; der
     Stand ist `thumbnail_gesetzt`.
-14. Seite: zeigt die **Frage** (2.4) aus Gedaechtnis und Rueckleseantwort,
-    Knopf "Veroeffentlichen" mit Titel und videoId darauf.
-15. Seite beim Klick: zweite Ermaechtigung schreiben, Arbeiter erneut starten.
+14. Seite: zeigt die **Frage** (2.4) aus Gedaechtnis und Rueckleseantwort und
+    **zwei** Knoepfe: den **Haltepunkt** (2.12) und "Veroeffentlichen" mit
+    Titel und videoId darauf. Beide stehen auf derselben Lage oder auf keiner;
+    solange ein Upload-Knopf da ist, gibt es diese beiden nicht, und umgekehrt.
+15. Seite beim Klick: zweite Ermaechtigung schreiben, mit dem **Zweck des
+    geklickten Knopfes**, Arbeiter erneut starten. Beim Haltepunkt endet der
+    Lauf unmittelbar vor Aufruf 3, mit **1** (6); danach steht Schritt 16 erst
+    nach einem weiteren Neustart des Dienstes offen (2.13).
 16. Arbeiter: Ermaechtigung pruefen (Zweck, sha256, videoId, Kanal),
     `videos.list` mit `part=status`, dann **Aufruf 3**, `videos.update`
     (2.5). Antwort pruefen. Gedaechtnis schreiben. Ende mit 0.
 17. Seite: Abschluss mit videoId, "oeffentlich seit", Bilddatei, Pfad des
     Gedaechtnisses. Sitzung endet, Sperre wird freigegeben.
+
+**Zwei Neustarts des Dienstes stehen in dieser Liste, und sie stehen nicht als
+eigene Schritte darin, weil sie kein Schritt des Programms sind.** Zwischen
+Schritt 13 und Schritt 14 wird der Dienst beendet und im Longform-Modus neu
+gestartet: die Seite entsteht einmal, beim Start, und holt keinen Stand nach
+(2.13). Der zweite steht zwischen Schritt 15 und Schritt 16 und nur dann, wenn
+der Haltepunkt geklickt wurde -- nach einem beendeten Lauf ist jeder Knopf
+gesperrt und wird nicht wieder frei. Drei Klicks, zwei Neustarts; ohne den
+Haltepunkt zwei Klicks und ein Neustart.
 
 Zwischen den Schritten liegt keine Wartepause aus Hoeflichkeit wie zwischen
 zwei Shorts; es gibt nur ein Video.
@@ -1594,6 +1746,7 @@ nicht das Schema bricht):
 | `verarbeitung` | `processingStatus`, `uploadStatus`, die drei Gruende (oder "nicht vorhanden"), `zuletzt_gelesen_am`, `abfragen` (Zaehler), `abgebrochen_am` bei 45 Minuten oder `terminated` | Schritt 11 |
 | `thumbnail_gesetzt_am` | ISO UTC, oder `null` | Aufruf 2 |
 | `rueckgelesen` | die Thumbnail-URLs und der Status aus Schritt 13, `gelesen_am` | Schritt 13 |
+| `haltepunkt` | nur, wenn ein Lauf mit dem Zweck Haltepunkt gelaufen ist (2.12): `angehalten_am`, die Ermaechtigung (Zufallswert und `erstellt_am`), der gelesene Statusblock, der Anfragekoerper, der gebaut und **nicht** gesendet wurde, und was dabei fehlte oder verworfen wurde. Der `stand` aendert sich dadurch **nicht** | Haltepunkt |
 | `ermaechtigung_veroeffentlichen` | Zufallswert und `erstellt_am` der zweiten Ermaechtigung | Aufruf 3 |
 | `oeffentlich_am` | ISO UTC, und `privacyStatus` laut Antwort auf Aufruf 3 | Aufruf 3 |
 | `stand` | einer von: `hochgeladen`, `verarbeitet`, `verarbeitung_abgebrochen`, `abgelehnt`, `thumbnail_gesetzt`, `oeffentlich` (Namen: 9) | jede Aenderung |
@@ -1661,20 +1814,29 @@ der erste Satz deshalb **nicht** "liegt ein Video auf dem Kanal"; der Dienst
 laedt nichts hoch und weiss es beim Start nicht. Fuer ihn gilt: **der Satz
 "Fuer die Aufnahme <name> laeuft bereits eine Freigabesitzung" bleibt im
 Wortlaut stehen** (der Knopf sucht ihn), und die Zeile mit dem Modus kommt
-dazu; und **endet der Dienst mit 1, weil der Arbeiter im Trockenlauf mit 1
-endete, reicht er dessen stderr unveraendert und vollstaendig durch**, so
-wie er heute den Leser durchreicht (ED F2). Damit steht der erste Satz des
-Arbeiters auch dann in der Ausgabe des Dienstes, wenn niemand die Seite sieht.
-Mehr sagt der Rueckgabewert nicht, und das ist Absicht: wer unterscheiden
-will, warum, liest den Text. Ein neuer Wert je Lage wuerde die eine Tabelle
-des Projekts aufblaehen und trotzdem nie alle Lagen treffen.
+dazu. Mehr sagt der Rueckgabewert nicht, und das ist Absicht: wer
+unterscheiden will, warum, liest den Text. Ein neuer Wert je Lage wuerde die
+eine Tabelle des Projekts aufblaehen und trotzdem nie alle Lagen treffen.
+
+**Ein 1 des Trockenlaufs beendet den Dienst nicht.** Bis Fassung 10 stand hier,
+der Dienst reiche in diesem Fall dessen stderr unveraendert und vollstaendig
+durch. Er tut etwas anderes, und das Andere ist das Richtigere: bei 0, 1 und 3
+hat der Arbeiter **gelesen**, und dann gibt es etwas zu zeigen -- der Dienst
+liefert die Seite aus, mit dem Text des Arbeiters woertlich darauf, und laeuft
+weiter. Ins Terminal durchgereicht wird nur, was **keine** Seite bekommt: ein 2
+und ein Lauf ohne Ende. Dort steht die Ausgabe des Arbeiters in einer Meldung,
+die sagt, dass er nicht bis zum Lesen kam, Zeile fuer Zeile eingerueckt --
+woertlich, aber gerahmt. **Folge, benannt:** der erste Satz des Arbeiters steht
+auf der Seite und nicht im Terminal. Wer nur den Rueckgabewert des Dienstes
+sieht, sieht ihn nicht; das ist der Preis dafuer, dass ein gelesener Befund
+dort landet, wo der Mensch hinsieht.
 
 **Der Arbeiter:**
 
 | Wert | Name | wann er hier faellt |
 |---|---:|---|
 | 0 | OK | Der Schritt ist fertig: der Trockenlauf; der Upload samt Warten, Thumbnail und Zuruecklesen (Stand `thumbnail_gesetzt`); das Oeffentlichstellen (Stand `oeffentlich`). Die Meldung sagt in jedem Fall, ob ein Video auf dem Kanal liegt und in welchem Zustand. |
-| 1 | BEFUND | Der Lauf hat die Lage angesehen und lehnt ab, oder er ist unterwegs stehengeblieben: Datei fehlt, Zettel ungueltig, mehrere Zettel, bestaetigter Zettel dieser Aufnahme mit Format ohne Aufnahme (Matrix 2, 3), kein Titel (auch: Rang 3 ohne Zettel), Vorlagen-Marker, Beschreibung zu lang, Tags zu lang, kein Kandidat; Ermaechtigung fehlt, abgelaufen, verbraucht, fremd; Verarbeitung `failed` oder `terminated` oder 45 Minuten um; `uploadStatus` `rejected`/`failed`; `thumbnails.set` fehlgeschlagen; `videos.update` verweigert oder Antwort ungleich `public`; sha256 der Platte weicht vom Gedaechtnis ab; Video ist schon oeffentlich. **Wichtig, anders als beim Shorts-Uploader:** ein 1 kann **nach** Aufruf 1 fallen. Jede Meldung mit 1 sagt deshalb als ersten Satz, ob ein Video auf dem Kanal liegt, mit videoId und Zustand, und vor Aufruf 1 sagt sie "kein Video dieses Laufs auf dem Kanal". Der erste Satz hat damit genau drei Formen (keines / privat mit videoId und Stand / oeffentlich mit videoId), und die drei sind nicht verwechselbar. |
+| 1 | BEFUND | Der Lauf hat die Lage angesehen und lehnt ab, oder er ist unterwegs stehengeblieben: Datei fehlt, Zettel ungueltig, mehrere Zettel, bestaetigter Zettel dieser Aufnahme mit Format ohne Aufnahme (Matrix 2, 3), kein Titel (auch: Rang 3 ohne Zettel), Vorlagen-Marker, Beschreibung zu lang, Tags zu lang, kein Kandidat; Ermaechtigung fehlt, abgelaufen, verbraucht, fremd; Verarbeitung `failed` oder `terminated` oder 45 Minuten um; `uploadStatus` `rejected`/`failed`; `thumbnails.set` fehlgeschlagen; `videos.update` verweigert oder Antwort ungleich `public`; sha256 der Platte weicht vom Gedaechtnis ab; Video ist schon oeffentlich. **Wichtig, anders als beim Shorts-Uploader:** ein 1 kann **nach** Aufruf 1 fallen. Jede Meldung mit 1 sagt deshalb als ersten Satz, ob ein Video auf dem Kanal liegt, mit videoId und Zustand, und vor Aufruf 1 sagt sie "kein Video dieses Laufs auf dem Kanal". Der erste Satz hat damit genau drei Formen (keines / privat mit videoId und Stand / oeffentlich mit videoId), und die drei sind nicht verwechselbar. **Und der Haltepunkt (2.12) endet mit 1, obwohl nichts schiefgegangen ist:** er ist unterwegs stehengeblieben, absichtlich, unmittelbar vor Aufruf 3. Ein 0 traegt dieser Vertrag als "der Schritt ist fertig", und der Haltepunkt ist nicht fertig -- ein abgebrochener und ein vollendeter Ablauf haetten dann denselben Wert. Die Meldung sagt es in ihrem ersten Satz: angehalten, es ist nichts oeffentlich, das Video ist privat und bleibt es. |
 | 2 | AUFRUF | Argument falsch, fehlend, Aufnahme nicht in Form, freies Argument, `--zettel=` mit Pfad statt Dateiname, Schluessel `LONGFORM_RENDER_WURZEL` oder `THUMBNAIL_EXPORT_DIR` fehlt. Nichts gelesen, nichts geschrieben, kein Netz. |
 | 3 | GESPERRT | Die Sperrliste greift (2.11). |
 | 4 | KEINE_ANTWORT | **Faellt in diesem Weg nicht.** Der Arbeiter stellt keine Frage im Terminal; ohne Ermaechtigung laeuft er trocken, mit einer ungueltigen endet er mit 1. Der Wert bleibt in der Tabelle, weil die Tabelle eine ist. |
@@ -1897,9 +2059,21 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   900 MB ohne Wiederaufnahme-Upload durchkommt, ist nicht gemessen.
 - **`notifySubscribers` als ausdruecklicher Parameter** im Aufruf der
   Bibliothek: ob sie ihn an dieser Stelle annimmt, ist nicht gemessen.
-- **Der Produktionsmodus der OAuth-App.** Im Testing-Modus laeuft der Token
-  alle 7 Tage ab; ein 45-Minuten-Warten kann ueber einen Ablauf hinweg gehen.
-  DY hat gesehen, dass ein Refresh stattfand, sagt aber nichts ueber den Modus.
+- **Der Modus der OAuth-App, und zwei Belege, die einander widersprechen.**
+  Keiner von beiden wird hier zur Wahrheit erklaert; gemessen ist der Modus in
+  diesem Projekt nicht. **Der eine Beleg:** die Uebergabe des Orchestrators
+  (EC) fuehrt unter "Was gemessen ist (nicht angenommen)" den Satz "OAuth: 'In
+  Produktion'. Keine Sieben-Tage-Falle beim Refresh-Token. Die unbeaufsichtigte
+  Erneuerung traegt." **Der andere:** EP und EU rechnen beide mit dem
+  Testing-Modus ("alle sieben Tage"), dieser Vertrag tat es bis Fassung 10
+  auch, und DY hat gesehen, dass ein Refresh stattfand, sagt aber nichts ueber
+  den Modus. **Woran es haengt:** gilt der Testmodus, laeuft ein Refresh-Token
+  nach sieben Tagen ab; ein 45-Minuten-Warten kann ueber diesen Ablauf hinweg
+  gehen, und der Weg bliebe dann **unangekuendigt stehen** -- vor jedem
+  schreibenden Aufruf, mit unverbrauchter Ermaechtigung, aber eben stehen. Gilt
+  die Produktion, faellt die Sorge weg. **Was das messen wuerde:** der
+  Veroeffentlichungsstatus der App in der Cloud Console, oder ein Lauf mit
+  einem Token, der aelter als sieben Tage ist.
 - **Ob die Standard-Thumbnails ep-16/17/18/19 tatsaechlich auf den Videos vom
   29.08., 31.08., 02.09. und 03.09. sitzen.** Das sagt erst ein Blick auf den
   Kanal, und es ist die einzige Stichprobe dafuer, wie gut Rang 2 und 3 aus
@@ -1983,11 +2157,30 @@ er nennt sie als offen oder fragt.
    stuende in keiner ihrer Zeilen. Entschieden ist nur, dass sie die
    Longform-Sperrdatei kennt (2.13), nicht, ob sie den Longform-Stand fuehrt.
 4. **Rang 3 mit mehreren Bildern am Tag** (2.7): ob ein Argument fuer die
-   Bilddatei kommt, nach dem Muster von `--zettel=`, oder ob der Weg zu einem
-   anderen als dem ersten Bild der Neuexport im Compositor bleibt. Heute ist
-   Rang 3 ohnehin kein Upload-Weg (2.8, kein Titel ohne Zettel); die Frage
-   wird erst wichtig, wenn das anders wird oder ein Zettel ohne Bild
-   nachgetragen werden kann.
+   Bilddatei kommt, nach dem Muster von `--zettel=` -- das der Dienst heute
+   nicht annimmt (3.1) --, oder ob der Weg zu einem anderen als dem ersten Bild
+   der Neuexport im Compositor bleibt. Heute ist Rang 3 ohnehin kein Upload-Weg
+   (2.8, kein Titel ohne Zettel); die Frage wird erst wichtig, wenn das anders
+   wird oder ein Zettel ohne Bild nachgetragen werden kann.
+5. **Das Standbild des Videos auf der Freigabeseite.** Es ist nicht gebaut, und
+   bis Fassung 10 fuehrte dieser Vertrag es an zwei Stellen: als Zusage (4
+   Schritt 7) und als die Begruendung dafuer, dass die Vertipper-Luecke in 2.7
+   offen bleiben darf. Beides ist gestrichen; ob es gebaut wird, ist nicht
+   entschieden. **Was es kostete:** eine Abhaengigkeit fuer das Dekodieren von
+   Video in einem Weg, der bisher ohne auskommt -- der Dienst liest heute keine
+   Videobytes und schreibt genau eine Datei; ein Standbild braeuchte ein
+   Werkzeug dafuer und eine zweite Datei auf der Platte. **Was es braechte:**
+   die zweite Linie gegen einen Vertipper, der eine andere echte Aufnahme
+   trifft (2.7), und den Blick auf den richtigen Take vor dem ersten Klick.
+   Solange es nicht gebaut ist, sagt dieser Vertrag nicht, es sei da.
+6. **Wie ein Mensch waehlt, wenn zwei Kandidaten im Fenster liegen** (2.7,
+   3.1). Der Arbeiter kennt `--zettel=`; der Dienst nimmt es nicht an, und die
+   Freigabeseite ist der einzige Ort, an dem eine Ermaechtigung entsteht (7).
+   Heute bleibt darum nur, vor dem Start im Export-Ordner aufzuraeumen oder neu
+   zu exportieren. Ob der Dienst das Argument lernt und durchreicht, ob die
+   Seite die Wahl anbietet -- was 7 heute ausschliesst ("keine
+   Auswahloberflaeche") --, oder ob es beim Aufraeumen bleibt, ist nicht
+   entschieden. Ein Bau darf diese Stelle nicht stillschweigend fuellen.
 
 ---
 

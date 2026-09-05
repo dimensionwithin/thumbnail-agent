@@ -71,6 +71,16 @@
 //        und nur mit einer Einmal-Ermaechtigung, die dieser Dienst beim Klick
 //        schreibt.
 //
+//    FA: EINER IST DIESER DIENST SELBST, und er haengt am Knopf "Weiter"
+//    (starteNachfolgerProzess, Vertrag 11.7). Er ist der einzige Kindprozess
+//    dieser Datei, der kein anderes Programm ist: nach dem Ende eines Laufs
+//    startet der Dienst seinen eigenen Nachfolger und beendet sich, sobald der
+//    bestaetigt an seiner Stelle steht. AN WELCHER HANDLUNG EINES MENSCHEN ER
+//    HAENGT: an einem Klick auf einen Knopf, den es nur nach dem Ende eines
+//    Laufs gibt. Das ENDE eines Laufs macht ihn sichtbar -- es drueckt ihn
+//    nicht. Ein Kindprozess, der am blossen Laufende haengt, waere genau der,
+//    den Vertrag 2.13 als zu teuer verworfen hat.
+//
 //    POST /urteil fuehrt weiterhin zu schreibeFreigaben() und zu keinem
 //    spawn; POST /beenden schaltet ab und ruft nichts auf. Der Weg vom Urteil
 //    zum Upload existiert nicht -- er geht ueber zwei weitere Klicks und eine
@@ -131,7 +141,14 @@ const { pruefeArgumenteStrikt } = require('../publish/cli-args');
 
 // pruefeArgumenteStrikt als ALLERERSTE Anweisung -- vor jedem Lesen, vor jedem
 // Kindprozess, vor dem Oeffnen eines Ports (CY Teil B).
-const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port=', '--no-browser', '--modus='];
+// FA: --abloesung-von= KOMMT DAZU, UND NUR FUER DEN LONGFORM-MODUS. Es traegt
+// die Prozessnummer des Vorgaengers und sagt diesem Start: nimm die Sperre
+// nicht sofort, sondern warte, bis der Vorgaenger sie losgelassen hat. Ein
+// Mensch tippt es nicht -- es entsteht ausschliesslich in
+// abloesungsArgumente(), und der Shorts-Modus weist es ab
+// (pruefeModusVerbindung).
+const ERLAUBTE_ARGUMENTE = ['--aufnahme=', '--wurzel=', '--port=', '--no-browser', '--modus=',
+  '--abloesung-von='];
 
 // DJb: pruefeKeineFreienArgumente kommt aus dem Leser und ist nicht nachgebaut
 // -- dieselbe Regel gehoert nicht zweimal ins Projekt, und die Abhaengigkeit in
@@ -1329,13 +1346,27 @@ function leseBereich(kopf, dateiGroesse) {
 // Die beiden letzten schreiben je eine Ermaechtigung mit ihrem EIGENEN Zweck.
 // Der Zweck steht in der Datei, und der Arbeiter entscheidet daran, was er
 // tut -- nicht an einem Argument, das man vergessen kann.
+//
+// FA: DIE VIERTE POST-ROUTE SCHREIBT KEINE ERMAECHTIGUNG UND STARTET KEINEN
+// ARBEITER.
+//
+//   POST /weiter           schaltet auf die naechste Seite weiter: startet den
+//                          NACHFOLGER dieses Dienstes und beendet sich dann.
+//                          Sie laedt nichts hoch, stellt nichts oeffentlich
+//                          und stellt keine Ermaechtigung aus.
+//   GET  /abloesung        der Stand dieser Umschaltung, waehrend sie laeuft
+//                          und danach.
+//
+// SIE NIMMT EBENFALLS NICHTS ENTGEGEN -- kein Feld, keinen Wert, keinen Leib.
+// Und sie ist die einzige der vier, die keinen Netzweg beruehrt: der Arbeiter
+// wird hier nicht gestartet, dieser Dienst startet sich selbst noch einmal.
 const ROUTEN_GET = {
   [MODUS_SHORTS]: new Set(['/', '/video', '/stand', '/kette', '/lauf']),
-  [MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf']),
+  [MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf', '/abloesung']),
 };
 const ROUTEN_POST = {
   [MODUS_SHORTS]: new Set(['/urteil', '/beenden', '/planen', '/archivieren', '/hochladen']),
-  [MODUS_LONGFORM]: new Set(['/hochladen', '/haltepunkt', '/veroeffentlichen']),
+  [MODUS_LONGFORM]: new Set(['/hochladen', '/haltepunkt', '/veroeffentlichen', '/weiter']),
 };
 
 function gleichSicher(a, b) {
@@ -1468,6 +1499,7 @@ function baueDienst(sitzung) {
       // haengt sie am Modus. Im Longform-Modus koennte hier ohnehin nichts
       // ankommen (routenGet kennt dort nur '/'), aber "kann nicht vorkommen" ist
       // keine Sicherung, sondern eine Erwartung.
+      if (pfad === '/abloesung') { liefereAbloesung(res, abfrage); return; }
       if (pfad === '/video') { liefereVideo(req, res, abfrage); return; }
       if (pfad === '/bild') { liefereBild(req, res, abfrage); return; }
       fehler(res, 404, 'unbekannte_route', 'Unbekannte Route.');
@@ -1497,6 +1529,11 @@ function baueDienst(sitzung) {
         nimmLongformDrittenAufruf(res, GEDAECHTNIS_MODUL.ZWECK_VEROEFFENTLICHEN);
         return;
       }
+      // FA: Weiterschalten. Sie steht bei den anderen dreien und nicht davor:
+      // sie ist die vierte POST-Route dieses Modus und hat keine
+      // Sonderstellung im Torwaechter -- dieselbe Host-Pruefung, dieselbe
+      // Herkunftspruefung, dasselbe Token.
+      if (pfad === '/weiter') { nimmWeiter(res); return; }
       nimmUrteil(req, res);
       return;
     }
@@ -2358,6 +2395,102 @@ function baueDienst(sitzung) {
         ab, gesamt: l.zeilen.length,
         zeilen: l.zeilen.slice(ab),
         laeuft: l.laeuft, ende: l.ende,
+        // FA: OB ES DEN WEITER-KNOPF GIBT, ENTSCHEIDET DER DIENST -- und zwar
+        // BEI JEDER ABFRAGE und mit DERSELBEN Funktion, an der POST /weiter
+        // den Klick prueft.
+        //
+        // Warum nicht in der Seite: die Bedingung haengt am LAUF, und der
+        // entsteht erst nach dem Bau der Seite. Eine Seite, die sie selbst
+        // bildete, waere eine zweite Bedingung -- und die zweite ist die, die
+        // eines Tages einen Knopf zeigt, den der Dienst ablehnt, oder einen
+        // waehrend eines laufenden Arbeiters.
+        //
+        // Solange `laeuft` wahr ist, steht hier `da: false` mit dem Grund. Es
+        // gibt damit keine Antwort dieser Route, in der ein Knopf UND ein
+        // laufender Arbeiter zugleich stehen.
+        weiter: weiterKnopfDa(sitzung),
+      }, null, 2) + '\n');
+  }
+
+  // -------------------------------------------------------------------------
+  // FA: POST /weiter -- WEITERSCHALTEN, NICHT VEROEFFENTLICHEN
+  // -------------------------------------------------------------------------
+  //
+  // SIE NIMMT NICHTS ENTGEGEN. Kein Feld, kein Wert, kein Leib -- wie die drei
+  // anderen POST-Routen dieses Modus. Was geschieht, stand vor dem Klick fest:
+  // derselbe Dienst, dieselbe Aufnahme, derselbe Port, ein neuer Prozess.
+  //
+  // WAS SIE NICHT TUT, UND ZWAR VOLLSTAENDIG: sie schreibt keine
+  // Ermaechtigung, sie startet keinen Arbeiter, sie macht keinen Netzaufruf
+  // und sie fasst weder Gedaechtnis noch Freigabedatei an. Der einzige
+  // Prozess, den sie startet, ist dieser Dienst selbst; der einzige, den sie
+  // beendet, ist dieser Dienst selbst.
+  //
+  // SIE LOEST DIE ABLOESUNG NICHT SELBST AUS, sondern meldet sie an -- genau
+  // wie /beenden. Was Port und Sperre anfasst, steht in starteLongform() und
+  // nirgends sonst: der Dienst, der sie haelt, ist der, der sie loslaesst.
+  // Eine Route, die den eigenen Port aus dem Anfrage-Rueckruf heraus
+  // schliesst, schloesse ihn unter der Antwort weg, die sie gerade schreibt.
+  function nimmWeiter(res) {
+    if (fremdeWurzel(res)) return;
+
+    const knopf = weiterKnopfDa(sitzung);
+    if (!knopf.da) {
+      fehler(res, 409, 'kein_knopf', knopf.grund +
+        ' Es wurde nichts gestartet, nichts abgegeben und keine Ermaechtigung ausgestellt.');
+      return;
+    }
+
+    sitzung.abloesung = {
+      angefordert_am: new Date().toISOString(),
+      laeuft: true,
+      phase: 'anlauf',
+      nachfolger_pid: null,
+      port: sitzung.port,
+      zeilen: [],
+      ende: null,
+    };
+    const merke = (art, zeile) => { sitzung.abloesung.zeilen.push({ art, zeile }); };
+    merke('dienst', 'Weiterschalten angefordert. Dieser Dienst startet seinen Nachfolger ' +
+      'auf derselben Aufnahme und demselben Port und beendet sich dann.');
+    merke('dienst', 'Es wird nichts hochgeladen und nichts oeffentlich gestellt. Es ' +
+      'entsteht keine Ermaechtigung. Der Nachfolger zeigt die naechste Seite und hoert ' +
+      'dort auf -- die zwei Klicks und die zwei Ermaechtigungen bleiben, wie sie sind ' +
+      '(Vertrag 11.7).');
+
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({ angefordert: true, aufnahme: sitzung.aufnahme, port: sitzung.port },
+        null, 2) + '\n');
+    // Erst hinaus, dann los -- dieselbe Bauart wie /beenden. Die Antwort ist
+    // draussen, bevor am Port etwas geschieht.
+    res.on('finish', () => {
+      setImmediate(() => dienst.emit('abloesung-erwuenscht'));
+    });
+  }
+
+  // GET /abloesung. Derselbe Schnitt wie /lauf: die Seite fragt ab Zeile <ab>
+  // nach und bekommt, was dazugekommen ist.
+  //
+  // WAEHREND PHASE B UND C ANTWORTET HIER NIEMAND -- der Port ist dann zu. Das
+  // ist kein Fehler dieser Route, sondern der Weg selbst, und die Seite weiss
+  // es (sie zeigt es als "dunkel" an). Kommt der Vorgaenger zurueck, antwortet
+  // sie wieder, und dann steht hier, was schiefgegangen ist.
+  function liefereAbloesung(res, abfrage) {
+    const roh = abfrage.get('ab');
+    const ab = (typeof roh === 'string' && /^[0-9]{1,7}$/.test(roh)) ? Number(roh) : 0;
+    const a = sitzung.abloesung;
+    if (!a) {
+      antwort(res, 200, 'application/json; charset=utf-8',
+        JSON.stringify({ abloesung: null, ab, gesamt: 0, zeilen: [], laeuft: false,
+          ende: null }, null, 2) + '\n');
+      return;
+    }
+    antwort(res, 200, 'application/json; charset=utf-8',
+      JSON.stringify({
+        abloesung: { angefordert_am: a.angefordert_am, phase: a.phase,
+          nachfolger_pid: a.nachfolger_pid, port: a.port },
+        ab, gesamt: a.zeilen.length, zeilen: a.zeilen.slice(ab),
+        laeuft: a.laeuft, ende: a.ende,
       }, null, 2) + '\n');
   }
 
@@ -2639,6 +2772,33 @@ function pruefeModusVerbindung(modus, argv) {
       '',
     ].join(String.fromCharCode(10));
   }
+  // FA: --abloesung-von= GIBT ES IM SHORTS-MODUS NICHT, und zwar aus demselben
+  // Grund, aus dem --wurzel= im Longform-Modus abgewiesen wird: das Argument
+  // laesst einen Start auf die Sperre eines anderen Prozesses warten, und
+  // dieses Warten ist im Shorts-Modus nicht gebaut. Angenommen und verschluckt
+  // waere es ein Argument, das der Aufrufer fuer wirksam haelt und das nichts
+  // tut -- und das an genau der Stelle, an der es um zwei Sitzungen auf
+  // dieselbe Freigabedatei geht.
+  if (modus === MODUS_SHORTS && gegeben('--abloesung-von=')) {
+    return [
+      '',
+      'Abbruch: --abloesung-von= gibt es im Shorts-Modus nicht.',
+      '',
+      '  Das Argument gehoert zur Abloesung des Longform-Modus (Vertrag 11.7): ein',
+      '  Dienst, dessen Lauf zu Ende ist, startet seinen Nachfolger, und der',
+      '  Nachfolger wartet damit auf die Sperre des Vorgaengers, statt sofort an',
+      '  ihr zu scheitern.',
+      '',
+      '  Die Shorts-Linie hat diesen Weg nicht. Sie beendet ihre Sitzung ueber den',
+      '  Knopf auf der Seite oder mit Strg+C, und ihr naechster Start ist ein',
+      '  gewoehnlicher Start.',
+      '',
+      'Angenommen und ignoriert wird es nicht: ein Start, der auf eine Sperre wartet,',
+      'und einer, der es nicht tut, sind zwei verschiedene Ablaeufe. Es wurde nichts',
+      'gelesen, nichts geschrieben und kein Port geoeffnet.',
+      '',
+    ].join(String.fromCharCode(10));
+  }
   return null;
 }
 
@@ -2828,7 +2988,8 @@ function longformAusgang(trocken) {
 // Ausgabe des Arbeiters bis vor die Augen eines Menschen. Ausgewertet wird
 // allein `trocken.befund` -- die Zeile, die der Arbeiter AUSDRUECKLICH fuer
 // diesen Dienst herausgibt, damit niemand den Bildpfad aus dem Text schneidet.
-function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
+function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken,
+  abloesungVon = null }) {
   if (!AUFNAHME_FORM.test(String(aufnahme))) {
     throw new Error('baueLongformSitzung: die Aufnahme hat nicht die feste Form.');
   }
@@ -2838,6 +2999,11 @@ function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
     aufnahme,
     port,
     projektwurzel,
+    // FA: die Nummer des Vorgaengers, wenn dieser Start eine Abloesung ist --
+    // sonst null. Die Seite braucht sie fuer EINEN Satz: wie dieser Dienst zu
+    // beenden ist. Ein Nachfolger haengt an keiner Konsole (detached), und
+    // "Strg+C im Terminal" waere fuer ihn unwahr.
+    abloesungVon,
     token: crypto.randomBytes(32).toString('hex'),
     trocken,
     ausgang: longformAusgang(trocken),
@@ -2904,11 +3070,25 @@ function baueLongformSitzung({ aufnahme, projektwurzel, port, trocken }) {
     // eine zweite Bedingung waere eine Seite, die einen Knopf zeigt, den der
     // Dienst ablehnt, oder einen verschweigt, den er annaehme.
     dritterKnopfBereit: longformDritterKnopfDa,
+    // FA: FUER DEN WEITER-KNOPF STEHT HIER KEINE FUNKTION, und das ist kein
+    // Vergessen. Die beiden darueber gibt es, weil die Seite BEIM BAU wissen
+    // muss, ob sie einen Knopf zeigt, und das Seitenmodul den Dienst nicht
+    // kennen darf. Der Weiter-Knopf haengt am ENDE EINES LAUFS -- den es beim
+    // Bau der Seite noch gar nicht gibt -- und kommt darum ueber die Antwort
+    // von GET /lauf herein, bei jeder Abfrage neu und aus derselben Funktion,
+    // an der POST /weiter den Klick prueft. Ein Feld hier waere eine zweite,
+    // beim Bau eingefrorene Auskunft ueber denselben Zustand.
 
     // Der scharfe Lauf, solange keiner laeuft: null. Nicht ein leeres Objekt
     // -- "es laeuft keiner" und "es lief einer und er hat nichts gesagt" sind
     // zwei Zustaende.
     lauf: null,
+
+    // FA: die Abloesung, solange keine angefordert ist: null. Aus demselben
+    // Grund wie oben -- "es wurde nie weitergeschaltet" und "es wurde
+    // weitergeschaltet und es ist nichts dabei herausgekommen" sind zwei
+    // Zustaende, und der zweite ist der, in dem ein Mensch etwas erfahren muss.
+    abloesung: null,
   };
 }
 
@@ -3196,6 +3376,687 @@ function meldeLongformOhneVorschau(aufnahme, sperrpfad, trocken) {
 }
 
 // ---------------------------------------------------------------------------
+// FA: DIE ABLOESUNG (Vertrag 11.7)
+// ---------------------------------------------------------------------------
+//
+// WAS SIE IST. Der erste echte Lauf am 05.09.2026 brauchte drei
+// Terminalstarts: einen fuer die Vorschau, einen fuer die Frage nach dem
+// Upload, einen fuer das Oeffentlichstellen nach dem Haltepunkt. Den ersten
+// nimmt der Knopf im Compositor ab (EZ). Diese Stelle nimmt die anderen beiden
+// ab: nach dem Ende eines Laufs startet der Dienst SEINEN EIGENEN NACHFOLGER
+// und beendet sich dann.
+//
+// WAS SIE AUSDRUECKLICH NICHT IST. Sie klickt nicht durch. Der Nachfolger
+// faehrt hoch, laesst den Trockenlauf laufen und zeigt seine Seite -- dort
+// hoert die Abloesung auf. Die zwei Ermaechtigungen (2.12), die zwei Klicks
+// und der Satz, dass die Seite nach dem Upload aus dem NEUEN Stand entsteht
+// (2.13), bleiben unangetastet. Vertrag 11.7 nennt genau diese drei als nicht
+// verhandelbar; eine Bedienung, die eine davon wegnimmt, loest die falsche
+// Aufgabe.
+//
+// ---------------------------------------------------------------------------
+// DER SCHADEN, GEGEN DEN DIESE REIHENFOLGE GEBAUT IST
+// ---------------------------------------------------------------------------
+//
+// Ein Prozess, der seinen Nachfolger startet und sich dann beendet, kann auf
+// drei Arten schiefgehen, und zwei davon sehen auf dem Bildschirm gleich aus:
+//
+//   FALSCHE REIHENFOLGE A -- der Alte haelt die Sperre noch, waehrend der Neue
+//   sie nimmt. Der Neue stirbt sofort mit "laeuft bereits eine
+//   Freigabesitzung". Beendet sich der Alte danach wie geplant, ist NICHTS
+//   mehr da.
+//
+//   FALSCHE REIHENFOLGE B -- der Alte gibt alles ab und geht, ohne
+//   nachzusehen. Faellt der Nachfolger irgendwo auf seinem Weg (der
+//   Trockenlauf kann mit einem Befund enden, der Port kann belegt sein), ist
+//   ebenfalls NICHTS mehr da -- und der Mensch sitzt vor einer toten Seite und
+//   weiss nicht, ob noch etwas laeuft.
+//
+//   BEIDE HALTEN SIE. Kommt nicht vor: die Sperre entsteht mit 'wx', und das
+//   Anlegen IST die Pruefung. Zwei koennen sie nicht gleichzeitig haben. Was
+//   vorkommen kann, ist das Gegenteil -- ein Fenster, in dem sie NIEMAND haelt,
+//   und genau das ist unten Phase B.
+//
+// DIE REGEL, DIE DARAUS FOLGT: LIEBER DER ALTE BLEIBT AM LEBEN. Ein Zustand,
+// in dem beide weg sind, ist der einzige, den es nicht geben darf. Ein
+// Zustand, in dem der Alte noch laeuft und sagt, dass es nicht geklappt hat,
+// ist ein guter Ausgang.
+//
+// ---------------------------------------------------------------------------
+// DIE VIER PHASEN, UND WARUM GENAU IN DIESER REIHENFOLGE
+// ---------------------------------------------------------------------------
+//
+//   A  ANLAUF. Der Nachfolger wird gestartet. Der Alte gibt NICHTS ab -- er
+//      haelt Sperre und Port, die Seite lebt. Stirbt der Nachfolger in diesem
+//      Fenster (kein node, kaputte Argumente, sofortiger Absturz), ist die
+//      Abloesung gescheitert, und nichts ist verloren. Das faengt den
+//      haeufigsten Fehlschlag zum billigsten Preis.
+//
+//      Der Nachfolger kann in diesem Fenster nicht an der Sperre scheitern:
+//      er startet mit --abloesung-von= und WARTET auf sie (siehe
+//      warteAufVorgaengersSperre unten). Genau das ist der Ausweg aus der
+//      falschen Reihenfolge A.
+//
+//   B  UEBERGABE. Erst der PORT, dann die SPERRE. Diese Reihenfolge ist der
+//      Kern:
+//
+//        Die Sperre ist das SIGNAL -- der Nachfolger wartet auf sie und auf
+//        nichts sonst. In dem Augenblick, in dem sie faellt, muss alles, was
+//        der Nachfolger danach braucht, schon frei sein. Der Port ist das
+//        Einzige, was er sonst noch braucht.
+//
+//        Andersherum -- Sperre zuerst, Port danach -- entstuende ein Rennen:
+//        der Nachfolger nimmt die Sperre, laeuft seinen Trockenlauf und
+//        greift nach einem Port, den der Alte vielleicht noch haelt. Er
+//        stuerbe an EADDRINUSE, nachdem er die Sperre bereits genommen hat --
+//        und der Alte haette sie dann nicht mehr.
+//
+//      HIER LIEGT DAS FENSTER, IN DEM ETWAS DAZWISCHENKOMMEN KANN. Zwischen
+//      dem Freigeben der Sperre und dem Zugriff des Nachfolgers haelt sie
+//      NIEMAND. Ein dritter Start in genau diesem Sekundenbruchteil bekaeme
+//      sie. Das ist nicht wegzubauen -- eine Sperre, die man weiterreicht,
+//      ohne sie loszulassen, ist keine --, und es ist derselbe Spalt, den
+//      jeder geordnete Neustart von Hand auch hat, nur kuerzer.
+//
+//   C  BESTAETIGUNG. Der Alte lebt weiter und SIEHT NACH. Er wartet, bis in
+//      der Sperrdatei die Prozessnummer des Nachfolgers UND der Port stehen.
+//
+//      WARUM BEIDES UND NICHT NUR DIE NUMMER: der Port kommt erst in die
+//      Sperrdatei, wenn der Dienst wirklich lauscht (traegeSperrePortNach im
+//      listen-Rueckruf). Die Nummer allein hiesse "er hat die Sperre" -- und
+//      danach kommt noch der Trockenlauf, der mit einem Befund enden kann. Der
+//      Port in der Datei ist der Beleg, dass eine Seite da ist.
+//
+//   D  RUECKHOLUNG, wenn C nicht bestaetigt. Der Alte nimmt seine Sperre
+//      zurueck und macht seinen Port wieder auf. Die Seite im Browser kommt
+//      dabei von selbst zurueck -- gleicher Port, gleiches Token -- und sagt,
+//      was war. ERST DIE SPERRE, DANN DER PORT: ein Dienst, der lauscht, ohne
+//      die Sperre zu halten, ist genau der Doppelbetrieb, gegen den sie gebaut
+//      ist.
+//
+// WAS DIESE STELLE NICHT TUT: sie beendet keinen fremden Prozess. Abgeloest
+// wird der EIGENE. Es gibt hier kein kill, kein taskkill und keine
+// Prozessliste, aus der jemand ausgewaehlt wuerde -- der einzige Prozess, den
+// diese Datei je beendet, ist sie selbst.
+
+// Das Skript, das der Nachfolger ist: DIESE Datei. Nicht ein Wert aus einer
+// Einstellung und kein zusammengesetzter Pfad -- der Nachfolger eines Dienstes
+// ist derselbe Dienst.
+const DIESES_SKRIPT = __filename;
+
+// Der Anlauf. Drei Sekunden reichen weit: ein node, der an der
+// Argumentpruefung stirbt, ist nach rund hundert Millisekunden weg.
+const ABLOESUNG_ANLAUF_MS = 3000;
+// Die Bestaetigung. Sie muss laenger sein als der Trockenlauf des Nachfolgers
+// dauern kann -- ruftLongformTrocken raeumt ihm 170 Sekunden ein --, sonst
+// gaebe der Alte auf, waehrend der Neue noch rechnet.
+const ABLOESUNG_UEBERNAHME_MS = 200000;
+// Wie lange der NACHFOLGER auf die Sperre des Vorgaengers wartet. Laenger als
+// Phase A plus dem Schliessen des Ports, und kurz genug, dass ein Nachfolger,
+// dessen Vorgaenger nie loslaesst, nicht ewig dasteht.
+const ABLOESUNG_WARTEN_MS = 60000;
+const ABLOESUNG_TAKT_MS = 250;
+
+// DIE ARGUMENTLISTE DES NACHFOLGERS, an genau einer Stelle gebildet.
+//
+// KEINE SHELL, UND shell:false ALLEIN GENUEGT AUF WINDOWS NICHT. Gestartet
+// wird process.execPath -- der absolute Pfad des node, der GERADE LAEUFT. Der
+// Compositor loest denselben Fall auf seiner Seite auf (EZ,
+// finde_node_programm: shutil.which('node') und dann die Endung pruefen, weil
+// CreateProcess kein .cmd ausfuehren kann und Windows dafuer cmd.exe
+// dazwischenschiebt). Hier ist er gar nicht erst zu loesen: process.execPath
+// IST die .exe, es wird nichts im PATH gesucht, und ein node.cmd kommt auf
+// diesem Weg nicht vor. Dieselbe Loesung wie bei den fuenf anderen
+// Kindprozessen dieser Datei; eine sechste Fassung entsteht hier nicht.
+//
+// KEIN --no-browser, AUCH DANN NICHT, WENN DIESER START ES BEKAM. Der Sinn
+// dieses Knopfes ist, dass die naechste Seite DASTEHT. Wer den Dienst mit
+// --no-browser startet, holt die Adresse aus der Ausgabe -- das kann der
+// Compositor beim ersten Start (EZ), aber nach einer Abloesung sieht dort
+// niemand mehr nach. Die Adresse steht trotzdem in der Ausgabe, wie immer;
+// wer den Browser nicht will, schliesst das Fenster.
+//
+// KEIN --wurzel=: es gaebe im Longform-Modus ohnehin einen Abbruch (3.1).
+// DIE PRUEFUNG DES ARGUMENTS, als eigene Funktion und nicht als zwei Zweige
+// mitten in main().
+//
+// SIE STEHT HIER, WEIL SIE SONST NICHT ZU PRUEFEN WAERE: der zweite Zweig
+// vergleicht mit der EIGENEN Prozessnummer, und einen Aufruf mit genau der
+// richtigen Nummer kann ein Test von aussen gar nicht bauen -- die kennt er
+// erst, wenn der Prozess schon laeuft. Der Mutationslauf zu FA hat beide
+// Zweige als TOTE SICHERUNGEN gefunden, solange sie in main() standen.
+//
+// Rueckgabe: { ok: true, pid } oder { ok: false, meldung }.
+function pruefeAbloesungVon(roh, eigenePid) {
+  if (roh === null || roh === undefined) return { ok: true, pid: null };
+  if (!/^[0-9]{1,10}$/.test(roh)) {
+    return { ok: false, meldung: String.fromCharCode(10) +
+      'Abbruch: --abloesung-von= ist ' + JSON.stringify(roh) + ' und keine Prozessnummer. ' +
+      'Es traegt die Nummer des Dienstes, der abgeloest wird, und es wird von diesem Dienst ' +
+      'selbst gesetzt -- von Hand tippt es niemand.' + String.fromCharCode(10) };
+  }
+  const pid = Number(roh);
+  // EIN PROZESS LOEST SICH NICHT SELBST AB. Ohne diesen Zweig wartete er auf
+  // eine Sperre, die er selbst haelt -- und weil prozessLebt() ihn findet, bis
+  // zum Ende der Frist. Danach ginge er, ohne je etwas genommen zu haben, und
+  // ein Mensch saehe eine Minute Warten und dann einen Abbruch, dessen Grund
+  // nirgends steht.
+  if (pid === eigenePid) {
+    return { ok: false, meldung: String.fromCharCode(10) +
+      'Abbruch: --abloesung-von= nennt die eigene Prozessnummer (' + eigenePid + '). Ein ' +
+      'Prozess loest sich nicht selbst ab; hier wartete einer auf eine Sperre, die er ' +
+      'selbst haelt, und zwar bis zum Ende der Frist.' + String.fromCharCode(10) };
+  }
+  return { ok: true, pid };
+}
+
+function abloesungsArgumente({ aufnahme, port, pid }) {
+  return [
+    DIESES_SKRIPT,
+    '--modus=' + MODUS_LONGFORM,
+    '--aufnahme=' + aufnahme,
+    '--port=' + port,
+    '--abloesung-von=' + pid,
+  ];
+}
+
+// Ob der Knopf ueberhaupt da ist. SERVERSEITIG geprueft, wie longformKnopfDa()
+// -- der Browser sperrt ihn zusaetzlich, aber das ist Bequemlichkeit. Diese
+// Funktion ist die Zusage.
+//
+// ER ERSCHEINT ERST NACH DEM ENDE EINES LAUFS, NIE WAEHREND. Ein Knopf, der
+// waehrend eines Uploads dasteht, ist ein Knopf, den jemand drueckt -- und ein
+// Dienst, der sich mitten in einem laufenden Arbeiter abloest, laesst einen
+// Kindprozess ohne Zuhoerer zurueck, dessen Ausgabe niemand mehr einsammelt.
+//
+// UND ES GIBT IHN GENAU EINMAL. Nach einem Klick kommt er nicht wieder, auch
+// nicht nach einer gescheiterten Abloesung: was dann noch laeuft, ist ein
+// halb angelaufener Nachfolger, dessen Zustand von hier aus niemand kennt. Wer
+// es danach noch einmal will, beendet den Dienst und startet ihn neu -- das
+// ist der Weg, den es ohne diesen Knopf ohnehin gab.
+function weiterKnopfDa(sitzung) {
+  if (sitzung.modus !== MODUS_LONGFORM) {
+    return { da: false, grund: 'Die Abloesung gibt es nur im Longform-Modus.' };
+  }
+  const l = sitzung.lauf;
+  if (!l) {
+    return { da: false, grund: 'Auf dieser Sitzung ist noch kein Lauf gelaufen. Weiter ' +
+      'geschaltet wird nach dem Ende eines Laufs und nicht davor -- vorher gibt es nichts, ' +
+      'worauf die naechste Seite stehen wuerde.' };
+  }
+  if (l.laeuft || !l.ende) {
+    return { da: false, grund: 'Es laeuft gerade ein Arbeiter. Waehrenddessen wird nicht ' +
+      'weitergeschaltet: dieser Dienst sammelt seine Ausgabe ein, und ein Dienst, der sich ' +
+      'dabei beendet, laesst ihn ohne Zuhoerer zurueck.' };
+  }
+  if (sitzung.abloesung) {
+    return { da: false, grund: 'Auf dieser Sitzung ist bereits weitergeschaltet worden. Ein ' +
+      'zweites Mal gibt es nicht -- was jetzt noch laeuft, ist ein Nachfolger, dessen ' +
+      'Zustand von hier aus niemand kennt. Wer es noch einmal will, beendet diesen Dienst ' +
+      'und startet ihn neu.' };
+  }
+  return { da: true, grund: null };
+}
+
+// OB DIE SPERRE DES VORGAENGERS FREI IST -- die Frage, die der Nachfolger sich
+// im Warten stellt.
+//
+// DREI ANTWORTEN, UND NUR EINE HEISST "FREI":
+//
+//   Die Datei ist WEG          -> frei. Der Vorgaenger hat losgelassen.
+//   Die Datei ist DA und unser Vorgaenger steht darin
+//                              -> frei, wenn er nicht mehr lebt (dann raeumt
+//                                 nimmSperre sie als verwaist weg, auf
+//                                 demselben Weg wie bei jedem anderen Start);
+//                                 sonst nicht.
+//   Die Datei ist DA und jemand anders steht darin
+//                              -> NICHT frei. Es ist nicht unser Vorgaenger,
+//                                 und eine Sperre, die einem Dritten gehoert,
+//                                 wartet man nicht weg.
+//
+// EINE UNLESBARE DATEI GILT NICHT ALS FREI. Sie koennte halb geschrieben sein
+// -- schreibeSperrinhalt kuerzt und fuellt in zwei Schritten --, und wer sie
+// in diesem Augenblick liest, saehe eine Sperre, die es gibt, fuer eine, die
+// es nicht gibt. Im Zweifel wird gewartet: ein Irrtum in diese Richtung kostet
+// eine Meldung, in die andere einen zweiten Dienst auf derselben Aufnahme.
+function sperreFreiFuerNachfolger(pfad, vorgaengerPid) {
+  if (!fs.existsSync(pfad)) {
+    return { frei: true, grund: 'die Sperrdatei ist weg -- der Vorgaenger hat losgelassen' };
+  }
+  const gelesen = leseSperre(pfad);
+  if (!gelesen.gelesen) {
+    return { frei: false, grund: 'die Sperrdatei ist ' + gelesen.grund + ' -- das kann eine ' +
+      'halb geschriebene sein, und im Zweifel wird gewartet' };
+  }
+  if (gelesen.daten.pid === vorgaengerPid) {
+    const leben = prozessLebt(vorgaengerPid);
+    if (leben.lebt) {
+      return { frei: false, grund: 'der Vorgaenger (PID ' + vorgaengerPid + ') haelt sie ' +
+        'noch: ' + leben.grund };
+    }
+    return { frei: true, grund: 'der Vorgaenger (PID ' + vorgaengerPid + ') lebt nicht mehr ' +
+      '(' + leben.grund + ') -- seine Sperre ist verwaist' };
+  }
+  return { frei: false, grund: 'in der Sperrdatei steht Prozessnummer ' +
+    JSON.stringify(gelesen.daten.pid) + ', abgeloest wird aber PID ' + vorgaengerPid +
+    '. Das ist nicht unser Vorgaenger.' };
+}
+
+// DER NACHFOLGER ALS KINDPROZESS -- die neunte und letzte Stelle dieser Datei,
+// an der ein Prozess entsteht, und die einzige, an der der Prozess DIESER
+// DIENST SELBST ist.
+//
+// SIE HAENGT AN EINEM KLICK und an nichts sonst: an POST /weiter, und der gibt
+// es nur, wenn ein Lauf zu Ende ist (weiterKnopfDa). Kein Urteil, kein
+// Zeitgeber und kein Laufende loest sie aus -- ein Ende macht den Knopf
+// sichtbar, drueckt ihn aber nicht.
+//
+// stdio: 'inherit'. Der Nachfolger schreibt dorthin, wo auch dieser Dienst
+// schreibt -- in dasselbe Terminal oder dieselbe Protokolldatei. Das ist der
+// einzige Ort, von dem bekannt ist, dass jemand dort nachsieht; eine eigene
+// Datei waere ein Schreibort mehr und einer, den niemand kennt.
+//
+// detached: true, UND ZWAR GEMESSEN UND NICHT ANGENOMMEN.
+//
+// Der erste Entwurf stand ohne, mit der Begruendung "unter Windows raeumt
+// niemand einen Kindprozess weg, weil sein Vater geht". Das ist FALSCH, und
+// FA-N1 hat es gefangen: libuv haengt jeden NICHT abgeloesten Kindprozess in
+// ein globales Job-Objekt mit KILL_ON_JOB_CLOSE. Wenn der Vater endet, faellt
+// das Handle, und Windows bringt das Kind um. Gemessen am 05.09.2026: ohne
+// detached ueberlebt der Nachfolger den Vorgaenger NICHT -- also genau der
+// Zustand, in dem beide weg sind.
+//
+// Mitgemessen: mit detached bleibt stdio: 'inherit' wirksam. Der Nachfolger
+// schreibt auch nach dem Ende des Vorgaengers weiter in dessen stdout.
+//
+// WAS ES KOSTET, und es wird nicht wegdefiniert: detached setzt unter Windows
+// DETACHED_PROCESS und CREATE_NEW_PROCESS_GROUP. Der Nachfolger haengt damit
+// an keiner Konsole mehr, und STRG+C IN DEM TERMINAL, IN DEM DER VORGAENGER
+// LIEF, ERREICHT IHN NICHT. Er sagt das beim Start selbst (starteLongform,
+// unten) statt den Satz des gewoehnlichen Starts weiterzutragen, der dann
+// nicht mehr stimmte.
+function starteNachfolgerProzess({ aufnahme, port, pid, beiStand }) {
+  const argumente = abloesungsArgumente({ aufnahme, port, pid });
+  const kind = spawn(process.execPath, argumente,
+    { stdio: 'inherit', windowsHide: true, detached: true });
+  kind.on('error', (e) => beiStand({
+    lebt: false, code: null, signal: null, fehler: e.code || e.message }));
+  kind.on('exit', (code, signal) => beiStand({
+    lebt: false, code, signal, fehler: null }));
+  // Er soll diesen Prozess nicht am Leben halten, waehrend er selbst laeuft.
+  kind.unref();
+  return {
+    kind,
+    pid: kind.pid === undefined ? null : kind.pid,
+    befehl: 'node ' + argumente.map((x) => (/\s/.test(x) ? JSON.stringify(x) : x)).join(' '),
+  };
+}
+
+// DAS WARTEN SELBST, im Nachfolger und BEVOR er die Sperre nimmt.
+//
+// Es blockiert, und das ist richtig: dieser Prozess hat bis zur Sperre nichts
+// anderes zu tun, kein Port ist offen, kein Kindprozess laeuft. Atomics.wait
+// auf einem gemeinsamen Puffer ist der eine Weg, in node wirklich zu schlafen,
+// ohne eine Schleife heisslaufen zu lassen.
+function schlafeHart(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function warteAufVorgaengersSperre({ projektwurzel, aufnahme, modus, vorgaengerPid,
+  grenzeMs = ABLOESUNG_WARTEN_MS, taktMs = ABLOESUNG_TAKT_MS,
+  schlaf = schlafeHart, jetzt = Date.now }) {
+  const pfad = sperrPfad(projektwurzel, aufnahme, modus);
+  const bis = jetzt() + grenzeMs;
+  let letzte = sperreFreiFuerNachfolger(pfad, vorgaengerPid);
+  if (letzte.frei) return { frei: true, pfad, grund: letzte.grund, gewartet_ms: 0 };
+  const begonnen = jetzt();
+  while (jetzt() < bis) {
+    schlaf(taktMs);
+    letzte = sperreFreiFuerNachfolger(pfad, vorgaengerPid);
+    if (letzte.frei) {
+      return { frei: true, pfad, grund: letzte.grund, gewartet_ms: jetzt() - begonnen };
+    }
+  }
+  return { frei: false, pfad, grund: letzte.grund, gewartet_ms: jetzt() - begonnen };
+}
+
+// Der eine Ausgang des Nachfolgers, an dem die Abloesung schon vor der Sperre
+// endet. Er sagt, WER die Sperre haelt, und er sagt ausdruecklich, dass der
+// Vorgaenger vermutlich noch laeuft -- sonst sucht ein Mensch ein Fenster, das
+// er schon hat.
+function meldeAbloesungWartenAbgelaufen(warten, aufnahme, vorgaengerPid) {
+  const z = [];
+  z.push('');
+  z.push('ABBRUCH: der Vorgaenger hat seine Sperre nicht losgelassen.');
+  z.push('');
+  z.push('  Aufnahme:       ' + aufnahme);
+  z.push('  Vorgaenger:     PID ' + vorgaengerPid);
+  z.push('  Sperrdatei:     ' + warten.pfad);
+  z.push('  Gewartet:       ' + Math.round(warten.gewartet_ms / 1000) + ' Sekunden');
+  z.push('');
+  z.push('Befund: ' + warten.grund + '.');
+  z.push('');
+  z.push('Dieser Start hat NICHTS genommen: keine Sperre, keinen Port, keine Seite. Er hat ' +
+    'nur gewartet und geht jetzt.');
+  z.push('Der Vorgaenger laeuft mit grosser Wahrscheinlichkeit weiter und sagt auf seiner ' +
+    'Seite, dass die Abloesung nicht geklappt hat. Sieh dort nach, bevor du von Hand ' +
+    'neu startest.');
+  z.push('');
+  return z.join(String.fromCharCode(10));
+}
+
+// ---------------------------------------------------------------------------
+// DER ABLAUF IM VORGAENGER -- die vier Phasen von oben
+// ---------------------------------------------------------------------------
+//
+// ALLES, WAS DIESE FUNKTION TUT, GEHT DURCH `lage`. Sie startet selbst keinen
+// Prozess, schliesst selbst keinen Port und fasst selbst keine Datei an -- der
+// Aufrufer reicht die fuenf Handgriffe herein. Der Grund ist nicht Eleganz:
+// die Reihenfolge dieser Handgriffe IST die Sicherung, und eine Reihenfolge
+// laesst sich nur pruefen, wenn man die Handgriffe einzeln beobachten und
+// einzeln scheitern lassen kann. Ein Ablauf, der Port und Sperre selbst
+// anfasst, waere nur an einem echten Doppelstart zu pruefen -- also an genau
+// dem Schaden, den er verhindern soll.
+async function fuehreAbloesung(lage) {
+  const { melde, schlaf, jetzt, grenzen } = lage;
+  const abgegeben = { port: false, sperre: false };
+
+  // ---- A: ANLAUF -- es wird nichts abgegeben ------------------------------
+  let nachfolger;
+  try {
+    nachfolger = lage.starteNachfolger();
+  } catch (e) {
+    melde('dienst', 'Der Nachfolger liess sich nicht starten: ' + (e.code || e.message) + '.');
+    return { gelungen: false, phase: 'anlauf', nachfolger_pid: null, abgegeben,
+      grund: 'Der Nachfolger liess sich gar nicht erst starten (' + (e.code || e.message) +
+        '). Es wurde nichts abgegeben: dieser Dienst haelt seine Sperre und seinen Port ' +
+        'weiter, und diese Seite lebt.' };
+  }
+  melde('dienst', 'Nachfolger gestartet: PID ' + nachfolger.pid + '.');
+  melde('dienst', 'Aufruf: ' + nachfolger.befehl);
+  melde('dienst', 'Bis er angelaufen ist, wird NICHTS abgegeben -- dieser Dienst haelt ' +
+    'Sperre und Port, und diese Seite lebt.');
+
+  const anlaufBis = jetzt() + grenzen.anlaufMs;
+  while (jetzt() < anlaufBis) {
+    await schlaf(grenzen.taktMs);
+    const stand = lage.nachfolgerStand();
+    if (!stand.lebt) {
+      melde('dienst', 'Der Nachfolger ist im Anlauf gestorben.');
+      return { gelungen: false, phase: 'anlauf', nachfolger_pid: nachfolger.pid, abgegeben,
+        grund: 'Der Nachfolger ist im Anlauf gestorben (' + beschreibeEnde(stand) + '). Es ' +
+          'wurde nichts abgegeben: dieser Dienst haelt seine Sperre und seinen Port weiter, ' +
+          'und diese Seite lebt. Was der Nachfolger dazu gesagt hat, steht im Terminal ' +
+          'dieses Dienstes -- er schreibt dorthin, wo auch dieser Dienst schreibt.' };
+    }
+  }
+
+  // ---- B: UEBERGABE -- erst der Port, dann die Sperre ----------------------
+  melde('dienst', 'Der Anlauf steht. Jetzt der Port ' + lage.erwarteterPort + ' -- ZUERST, ' +
+    'denn die Sperre ist das Signal, und wenn sie faellt, muss der Port schon frei sein.');
+  await lage.portFreigeben();
+  abgegeben.port = true;
+  melde('dienst', 'Der Port ist frei. Diese Seite ist ab hier dunkel, bis der Nachfolger ' +
+    'sein eigenes Fenster oeffnet.');
+
+  const frei = lage.sperreFreigeben();
+  if (!frei.geloescht) {
+    melde('dienst', 'Die Sperre liess sich NICHT freigeben: ' + frei.grund);
+    const zurueck = await holeZurueck(lage, { sperre: false, port: true }, melde);
+    return { gelungen: false, phase: 'uebergabe', nachfolger_pid: nachfolger.pid, abgegeben,
+      rueckholung: zurueck,
+      grund: 'Die eigene Sperre liess sich nicht freigeben (' + frei.grund + '). Ohne sie ' +
+        'kommt der Nachfolger nicht hoch, und er wartet vergeblich, bis seine Frist ' +
+        'ablaeuft.' };
+  }
+  abgegeben.sperre = true;
+  melde('dienst', 'Sperre freigegeben. Ab hier haelt sie NIEMAND -- das ist das eine ' +
+    'Fenster dieses Weges, und es dauert, bis der Nachfolger zugreift.');
+
+  // ---- C: BESTAETIGUNG -- die Nummer UND der Port in der Sperrdatei --------
+  melde('dienst', 'Warte auf den Nachfolger. Bestaetigt ist er erst, wenn in der ' +
+    'Sperrdatei SEINE Prozessnummer UND der Port stehen -- der Port kommt erst hinein, ' +
+    'wenn er wirklich lauscht.');
+  const uebernahmeBis = jetzt() + grenzen.uebernahmeMs;
+  let grund = 'Der Nachfolger hat die Sperre in ' +
+    Math.round(grenzen.uebernahmeMs / 1000) + ' Sekunden nicht uebernommen und keinen Port ' +
+    'eingetragen.';
+  while (jetzt() < uebernahmeBis) {
+    await schlaf(grenzen.taktMs);
+    const stand = lage.nachfolgerStand();
+    const gelesen = lage.sperreLesen();
+    if (gelesen.gelesen && gelesen.daten.pid === nachfolger.pid &&
+        gelesen.daten.port === lage.erwarteterPort) {
+      melde('dienst', 'Bestaetigt: PID ' + nachfolger.pid + ' haelt die Sperre und lauscht ' +
+        'auf Port ' + lage.erwarteterPort + '.');
+      return { gelungen: true, phase: 'bestaetigung', nachfolger_pid: nachfolger.pid,
+        abgegeben, grund: null };
+    }
+    if (!stand.lebt) {
+      grund = 'Der Nachfolger ist beendet (' + beschreibeEnde(stand) + '), bevor er die ' +
+        'Sperre uebernommen und einen Port geoeffnet hat. Was er dazu gesagt hat, steht im ' +
+        'Terminal dieses Dienstes.';
+      break;
+    }
+  }
+
+  melde('dienst', 'Die Abloesung ist nicht bestaetigt: ' + grund);
+  const zurueck = await holeZurueck(lage, abgegeben, melde);
+  return { gelungen: false, phase: 'bestaetigung', nachfolger_pid: nachfolger.pid, abgegeben,
+    rueckholung: zurueck, grund };
+}
+
+function beschreibeEnde(stand) {
+  if (stand.fehler) return 'er liess sich nicht starten: ' + stand.fehler;
+  return 'Rueckgabewert ' + stand.code + (stand.signal ? ', Signal ' + stand.signal : '');
+}
+
+// DIE RUECKHOLUNG: ERST DIE SPERRE, DANN DER PORT.
+//
+// Umgekehrt entstuende fuer die Dauer eines Augenblicks ein Dienst, der
+// lauscht, ohne die Sperre zu halten -- also genau der Doppelbetrieb, gegen
+// den die Sperre gebaut ist, und ausgerechnet in dem Augenblick, in dem alle
+// Beteiligten glauben, es sei wieder in Ordnung.
+//
+// OHNE SPERRE KEIN PORT. Bekommt der Alte seine Sperre nicht zurueck, dann
+// haelt sie jemand anders -- und dann laeuft auch jemand anders. Er macht
+// seinen Port dann NICHT wieder auf und sagt, wem sie gehoert.
+async function holeZurueck(lage, abgegeben, melde) {
+  const ergebnis = { sperre: null, port: null };
+  if (abgegeben.sperre) {
+    ergebnis.sperre = lage.sperreZurueckholen();
+    melde('dienst', ergebnis.sperre.ok
+      ? 'Die eigene Sperre ist zurueckgeholt.'
+      : 'Die Sperre liess sich NICHT zurueckholen: ' + ergebnis.sperre.grund);
+  } else {
+    ergebnis.sperre = { ok: true, grund: 'sie war nie abgegeben' };
+  }
+  if (!abgegeben.port) {
+    ergebnis.port = { ok: true, grund: 'er war nie abgegeben' };
+    return ergebnis;
+  }
+  if (!ergebnis.sperre.ok) {
+    ergebnis.port = { ok: false, grund: 'ohne die Sperre wird kein Port geoeffnet -- ein ' +
+      'Dienst, der lauscht, ohne sie zu halten, ist der Doppelbetrieb, gegen den sie ' +
+      'gebaut ist' };
+    return ergebnis;
+  }
+  ergebnis.port = await lage.portZurueckholen();
+  melde('dienst', ergebnis.port.ok
+    ? 'Der Port ' + lage.erwarteterPort + ' ist wieder offen. Diese Seite lebt wieder.'
+    : 'Der Port liess sich NICHT wieder oeffnen: ' + ergebnis.port.grund);
+  return ergebnis;
+}
+
+// DIE FUENF HANDGRIFFE, GEBUENDELT -- was fuehreAbloesung() oben von aussen
+// bekommt, entsteht HIER und an keiner zweiten Stelle.
+//
+// WARUM SIE NICHT IN starteLongform() STEHT, wo sie gebraucht wird: die
+// Reihenfolge dieser Handgriffe IST die Sicherung dieses Weges, und eine
+// Sicherung, die nur beim echten Doppelstart eines echten Dienstes zu sehen
+// ist, ist keine, die man pruefen kann. So ruft der Test DIESELBE Funktion wie
+// der Dienst und nicht eine, die ihr aehnlich sieht -- an genau so einer
+// zweiten, aehnlichen Fassung ist in EL eine Kuerzung durchgerutscht.
+//
+// `melde` und `beiPid` kommen von aussen: das eine schreibt in den Zustand der
+// Sitzung, das andere merkt sich die Nummer des Nachfolgers fuer die Anzeige.
+// Beides gehoert der Sitzung und nicht diesem Buendel.
+function baueAbloesungsLage({ dienst, verbindungen, sperre, aufnahme, projektwurzel, port,
+  melde, beiPid }) {
+  // Der Stand des Kindes wird an seinen Ereignissen gefuehrt und nicht
+  // erfragt: eine Prozessliste zu lesen, um das eigene Kind zu finden, waere
+  // ein zweiter Weg zu einer Auskunft, die node selbst gibt -- und auf diesem
+  // Rechner ist er ohnehin nicht gangbar (Win32_Process fehlt).
+  let kindStand = { lebt: true, code: null, signal: null, fehler: null };
+
+  function portFreigeben() {
+    return new Promise((fertig) => {
+      dienst.close(() => fertig());
+      // Die offenen Verbindungen sind die der Seite, die eben geklickt hat.
+      // Ohne dieses Wegwerfen wartet close() auf einen Browser, der noch am
+      // Fragen ist -- und der Nachfolger wartet solange auf den Port.
+      for (const s of verbindungen) s.destroy();
+    });
+  }
+
+  function portZurueckholen() {
+    return new Promise((fertig) => {
+      const beiFehler = (e) => {
+        dienst.removeListener('listening', beiAuf);
+        fertig({ ok: false, grund: 'der Port liess sich nicht wieder oeffnen (' +
+          (e.code || e.message) + ') -- es haelt ihn jemand anders' });
+      };
+      const beiAuf = () => {
+        dienst.removeListener('error', beiFehler);
+        fertig({ ok: true, grund: 'der Port ist wieder offen' });
+      };
+      dienst.once('error', beiFehler);
+      dienst.once('listening', beiAuf);
+      dienst.listen(port, HOST);
+    });
+  }
+
+  // DIE SPERRE WIRD IN DAS BESTEHENDE OBJEKT ZURUECKGEHOLT und nicht durch ein
+  // neues ersetzt. Auf `sperre` sitzen bereits zwei Schliessungen -- abbruch()
+  // aus main() und herunterfahren() in starteLongform --, und beide sollen
+  // danach die Sperre freigeben, die dieser Dienst WIRKLICH haelt. Ein zweites
+  // Objekt waere eine zweite Vorstellung davon, welche das ist.
+  function sperreZurueckholen() {
+    let neu;
+    try {
+      neu = nimmSperre({ projektwurzel, aufnahme, modus: MODUS_LONGFORM });
+    } catch (e) {
+      return { ok: false, grund: 'die Sperrdatei liess sich nicht wieder anlegen (' +
+        (e.code || e.message) + ')' };
+    }
+    if (!neu.ok) {
+      const v = neu.vorhanden;
+      return { ok: false, grund: 'sie gehoert jetzt ' + (v ? 'PID ' + v.pid +
+        (v.port ? ' auf Port ' + v.port : '') : '(unlesbar)') + ' -- ' + neu.leben.grund };
+    }
+    sperre.fd = neu.fd;
+    sperre.inhalt = neu.inhalt;
+    sperre.verwaist = neu.verwaist;
+    return { ok: true, grund: 'die eigene Sperre ist wieder angelegt' };
+  }
+
+  return {
+    erwarteterPort: port,
+    grenzen: { anlaufMs: ABLOESUNG_ANLAUF_MS, uebernahmeMs: ABLOESUNG_UEBERNAHME_MS,
+      taktMs: ABLOESUNG_TAKT_MS },
+    jetzt: Date.now,
+    schlaf: (ms) => new Promise((f) => setTimeout(f, ms)),
+    melde,
+    starteNachfolger: () => {
+      const gestartet = starteNachfolgerProzess({
+        aufnahme, port, pid: process.pid, beiStand: (s) => { kindStand = s; } });
+      beiPid(gestartet.pid);
+      return { pid: gestartet.pid, befehl: gestartet.befehl };
+    },
+    nachfolgerStand: () => kindStand,
+    portFreigeben,
+    portZurueckholen,
+    sperreFreigeben: () => gibSperreFrei(sperre),
+    sperreZurueckholen,
+    sperreLesen: () => leseSperre(sperre.pfad),
+  };
+}
+
+// DIE ZWEI MELDUNGEN DER ABLOESUNG. Sie stehen als eigene Funktionen und nicht
+// als Textstuecke im Ablauf: sie gehen ins Terminal UND auf die Seite, und ein
+// Satz, der an zwei Stellen gebildet wird, ist eines Tages an einer davon
+// anders.
+function meldeAbloesungGelungen(ergebnis, aufnahme, port, sperrpfad) {
+  const z = [];
+  z.push('');
+  z.push('WEITERGESCHALTET. Dieser Dienst hat seinen Nachfolger gestartet und geht jetzt.');
+  z.push('');
+  z.push('  Aufnahme:       ' + aufnahme);
+  z.push('  Nachfolger:     PID ' + ergebnis.nachfolger_pid);
+  z.push('  Port:           ' + port + '   (jetzt seiner)');
+  z.push('  Sperre:         ' + sperrpfad + '   (jetzt seine)');
+  z.push('');
+  z.push('Bestaetigt wurde er daran, dass in der Sperrdatei SEINE Prozessnummer UND der ' +
+    'Port stehen -- der Port kommt erst hinein, wenn ein Dienst wirklich lauscht.');
+  z.push('Er oeffnet seine Seite selbst; die Adresse mit SEINEM Sitzungstoken steht in ' +
+    'seiner eigenen Ausgabe, gleich hier darunter.');
+  z.push('');
+  z.push('Es wurde nichts hochgeladen und nichts oeffentlich gestellt. Die zwei Klicks und ' +
+    'die zwei Ermaechtigungen stehen unveraendert dort, wo sie standen (Vertrag 11.7).');
+  z.push('');
+  return z.join(String.fromCharCode(10));
+}
+
+// DIE MELDUNG DES ALTEN, DER AM LEBEN GEBLIEBEN IST.
+//
+// Sie sagt DREI Dinge, und jedes davon ist eines, das ein Mensch vor einer
+// halb umgeschalteten Seite als Erstes wissen will: was der Nachfolger getan
+// hat, was dieser Dienst jetzt noch haelt, und was als Naechstes zu tun ist.
+// Der zweite Punkt ist der wichtigste -- "es laeuft noch etwas" und "es laeuft
+// nichts mehr" sehen auf einem dunklen Schirm gleich aus.
+function meldeAbloesungGescheitert(ergebnis, aufnahme, port, sperrpfad) {
+  const r = ergebnis.rueckholung || { sperre: { ok: !ergebnis.abgegeben.sperre },
+    port: { ok: !ergebnis.abgegeben.port } };
+  const haeltAlles = r.sperre.ok && r.port.ok;
+  const z = [];
+  z.push('');
+  z.push('DIE ABLOESUNG HAT NICHT GEKLAPPT. Dieser Dienst ist NICHT weitergeschaltet.');
+  z.push('');
+  z.push('  Aufnahme:       ' + aufnahme);
+  z.push('  Gescheitert in: Phase ' + ergebnis.phase);
+  z.push('  Nachfolger:     ' + (ergebnis.nachfolger_pid === null
+    ? '(gar nicht erst gestartet)' : 'PID ' + ergebnis.nachfolger_pid));
+  z.push('  Port:           ' + port);
+  z.push('  Sperrdatei:     ' + sperrpfad);
+  z.push('');
+  z.push('Befund: ' + ergebnis.grund);
+  z.push('');
+  if (haeltAlles) {
+    z.push('DIESER DIENST LAEUFT WEITER. Er haelt seine Sperre und seinen Port; die Seite ' +
+      'im Browser antwortet wieder und sagt dasselbe, was hier steht. Es ist NICHT beides ' +
+      'weg.');
+    z.push('Was jetzt gilt: dieselbe Lage wie vor dem Klick. Weiterschalten geht auf diesem ' +
+      'Weg nicht noch einmal -- beende den Dienst mit Strg+C und starte ihn im ' +
+      'Longform-Modus neu, so wie vor diesem Knopf.');
+  } else {
+    z.push('DIESER DIENST HAELT NICHT MEHR ALLES, was er zum Weiterarbeiten braucht:');
+    z.push('  Sperre:  ' + (r.sperre.ok ? 'wieder in der Hand' : 'NICHT zurueck -- ' +
+      r.sperre.grund));
+    z.push('  Port:    ' + (r.port.ok ? 'wieder offen' : 'NICHT offen -- ' + r.port.grund));
+    z.push('');
+    z.push('Er beendet sich darum geordnet, statt als halber Dienst dazustehen. Wer die ' +
+      'Sperre haelt, steht oben; ist es der Nachfolger, kommt seine Seite von selbst.');
+    z.push('Sieh im Zweifel im Task-Manager nach, welcher node noch laeuft, bevor du von ' +
+      'Hand neu startest.');
+  }
+  z.push('');
+  z.push('Hochgeladen oder oeffentlich gestellt wurde bei alledem NICHTS. Dieser Weg ' +
+    'schaltet weiter und sonst nichts.');
+  z.push('');
+  return z.join(String.fromCharCode(10));
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -3220,7 +4081,8 @@ function wertVon(argv, praefix) {
 // aufmacht und dann eine halbe Minute rechnet, zeigt in dieser halben Minute
 // eine leere Seite -- und eine leere Seite ist der Zustand, den ein Mensch am
 // leichtesten fuer "nichts gefunden" haelt.
-function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, abbruch }) {
+function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, abbruch,
+  abloesungVon = null }) {
   console.log('Rufe den Longform-Arbeiter im Trockenlauf: ' +
     path.relative(projektwurzel, LONGFORM_ARBEITER) +
     ' --aufnahme=' + JSON.stringify(aufnahme));
@@ -3235,7 +4097,8 @@ function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, ab
     return;
   }
 
-  const sitzung = baueLongformSitzung({ aufnahme, projektwurzel, port, trocken });
+  const sitzung = baueLongformSitzung({ aufnahme, projektwurzel, port, trocken,
+    abloesungVon });
   const dienst = baueDienst(sitzung);
   const verbindungen = new Set();
   dienst.on('connection', (s) => {
@@ -3243,7 +4106,15 @@ function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, ab
     s.on('close', () => verbindungen.delete(s));
   });
 
+  let abloesungAktiv = false;
   dienst.on('error', (e) => {
+    // FA: WAEHREND DER ABLOESUNG GEHOERT DIESER FEHLER NICHT HIERHER. Dort
+    // wird der Port absichtlich geschlossen und -- wenn es schiefging --
+    // wieder geoeffnet, und ein EADDRINUSE beim Wiederoeffnen ist eine
+    // Auskunft fuer die Rueckholung und kein Grund, den Dienst abzubrechen.
+    // Die Abloesung haengt sich fuer diesen einen Aufruf ihren eigenen
+    // Zuhoerer daneben.
+    if (abloesungAktiv) return;
     if (e.code === 'EADDRINUSE') {
       abbruch(meldeBelegtenPort(port));
       return;
@@ -3274,7 +4145,85 @@ function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, ab
   // NUR SIGINT. Es gibt in diesem Modus keine POST-Route und keinen Knopf, der
   // 'beenden-erwuenscht' ausloesen koennte; ein Zuhoerer darauf waere ein
   // Anschluss ins Leere und saehe aus wie ein Weg, den es gibt.
+  //
+  // FA: das gilt weiter. 'abloesung-erwuenscht' ist NICHT 'beenden-erwuenscht'
+  // -- der Weg darunter beendet diesen Dienst erst, nachdem ein anderer
+  // bestaetigt an seiner Stelle steht. Ein Knopf, der nur beendet, gibt es in
+  // diesem Modus weiterhin nicht.
   process.on('SIGINT', () => herunterfahren('Strg+C -- beende den Dienst.'));
+
+  // -------------------------------------------------------------------------
+  // FA: DIE ABLOESUNG, HIER UND NUR HIER
+  // -------------------------------------------------------------------------
+  //
+  // Die Route meldet sie an; ANGEFASST werden Port und Sperre in den fuenf
+  // Handgriffen, die baueAbloesungsLage() buendelt, und der Ablauf steht in
+  // fuehreAbloesung(). Beide stehen weiter oben und nicht hier: an ihnen
+  // haengt die Reihenfolge, und eine Reihenfolge, die nur im Rumpf einer
+  // Startfunktion steht, laesst sich nur an einem echten Doppelstart pruefen.
+  // Was HIER steht, ist allein die Verdrahtung mit dieser einen Sitzung.
+
+  dienst.on('abloesung-erwuenscht', () => {
+    if (abloesungAktiv || beendet) return;
+    abloesungAktiv = true;
+    const a = sitzung.abloesung;
+    const merke = (art, zeile) => {
+      a.zeilen.push({ art, zeile });
+      console.log('[Abloesung] ' + zeile);
+    };
+
+    fuehreAbloesung(baueAbloesungsLage({
+      dienst, verbindungen, sperre, aufnahme, projektwurzel, port,
+      melde: merke,
+      beiPid: (p) => { a.nachfolger_pid = p; },
+    })).then((ergebnis) => {
+      a.laeuft = false;
+      a.phase = ergebnis.gelungen ? 'gelungen' : 'gescheitert';
+      a.ende = {
+        gelungen: ergebnis.gelungen,
+        phase: ergebnis.phase,
+        grund: ergebnis.grund,
+        nachfolger_pid: ergebnis.nachfolger_pid,
+        rueckholung: ergebnis.rueckholung || null,
+        beendet_am: new Date().toISOString(),
+      };
+      if (ergebnis.gelungen) {
+        beendet = true;   // herunterfahren() soll die fremde Sperre nicht anfassen
+        console.log(meldeAbloesungGelungen(ergebnis, aufnahme, port, sperre.pfad));
+        process.exit(EXIT_OK);
+        return;
+      }
+      const text = meldeAbloesungGescheitert(ergebnis, aufnahme, port, sperre.pfad);
+      const r = ergebnis.rueckholung;
+      const haeltAlles = !r || (r.sperre.ok && r.port.ok);
+      if (haeltAlles) {
+        // DER GUTE AUSGANG DES SCHLECHTEN FALLS: der Alte lebt, haelt alles
+        // und sagt es -- im Terminal und auf der Seite, die eben wieder
+        // antwortet.
+        console.error(text);
+        a.ende.meldung = text;
+        abloesungAktiv = false;
+        return;
+      }
+      // Er haelt nicht mehr alles. Dann steht er nicht als halber Dienst
+      // herum: abbruch() gibt her, was noch in seiner Hand ist, und geht.
+      a.ende.meldung = text;
+      abbruch(text);
+    }).catch((e) => {
+      // Ein Fehler im Ablauf selbst. Er wird GENANNT und nicht verschluckt --
+      // ein Dienst, der nach einem Klick still nichts tut, ist der Zustand,
+      // den dieser ganze Weg vermeiden soll.
+      a.laeuft = false;
+      a.phase = 'gescheitert';
+      a.ende = { gelungen: false, phase: a.phase,
+        grund: 'Der Ablauf der Abloesung ist selbst gescheitert: ' + (e && e.message ? e.message : e),
+        nachfolger_pid: a.nachfolger_pid, rueckholung: null,
+        beendet_am: new Date().toISOString() };
+      console.error(String.fromCharCode(10) + 'ABBRUCH in der Abloesung: ' +
+        (e && e.stack ? e.stack : e) + String.fromCharCode(10));
+      abloesungAktiv = false;
+    });
+  });
 
   dienst.listen(port, HOST, () => {
     const adresse = 'http://' + HOST + ':' + port + '/?t=' + sitzung.token;
@@ -3303,8 +4252,26 @@ function starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, ab
       'antwortet der Dienst auf nichts:');
     console.log('  ' + adresse);
     console.log('');
-    console.log('Beenden: Strg+C hier im Terminal. Die Seite hat dafuer keinen Knopf ' +
-      '-- sie schickt ueberhaupt nichts an diesen Dienst zurueck.');
+    // FA: WER ALS NACHFOLGER GESTARTET IST, SAGT ES -- und sagt vor allem, dass
+    // der Satz des gewoehnlichen Starts fuer ihn nicht mehr stimmt. Ein
+    // Nachfolger entsteht mit detached, und das heisst unter Windows
+    // DETACHED_PROCESS: er haengt an keiner Konsole, und Strg+C in dem
+    // Terminal, in dem der Vorgaenger lief, erreicht ihn nicht. Denselben Satz
+    // trotzdem auszugeben waere die Sorte Meldung, die der naechste Leser fuer
+    // wahr nimmt.
+    if (abloesungVon !== null) {
+      console.log('Beenden: DIESER DIENST IST EIN NACHFOLGER (abgeloest von PID ' +
+        abloesungVon + '). Er haengt an keiner Konsole mehr -- Strg+C in dem Terminal, in ' +
+        'dem der Vorgaenger lief, erreicht ihn NICHT.');
+      console.log('        Beende ihn im Task-Manager, Reiter Details, ueber die ' +
+        'Prozessnummer ' + process.pid + '. Dieselbe Nummer steht in der Sperrdatei oben.');
+      console.log('        Seine Sperre bleibt dabei liegen; der naechste Start nennt sie ' +
+        'als verwaist und uebernimmt sie. Die Seite hat weiterhin keinen Knopf zum ' +
+        'Beenden -- sie schickt nur, was oben steht.');
+    } else {
+      console.log('Beenden: Strg+C hier im Terminal. Die Seite hat dafuer keinen Knopf ' +
+        '-- sie schickt ueberhaupt nichts an diesen Dienst zurueck.');
+    }
 
     if (keinBrowser) {
       console.log('');
@@ -3370,6 +4337,34 @@ function main() {
   }
   const port = Number(portRoh);
 
+  // FA: --abloesung-von=. Es steht HIER, zwischen der letzten Argumentpruefung
+  // und der Sperre, und das ist der einzige Ort, an dem es stehen kann: es
+  // aendert nichts an dem, was dieser Start tut, sondern nur, WANN er die
+  // Sperre nimmt.
+  const geprueft = pruefeAbloesungVon(wertVon(argv, '--abloesung-von='), process.pid);
+  if (!geprueft.ok) {
+    console.error(geprueft.meldung);
+    process.exit(EXIT_AUFRUFFEHLER);
+  }
+  const abloesungVon = geprueft.pid;
+
+  // DAS WARTEN STEHT VOR DER SPERRE UND NACH ALLEM ANDEREN. Dieser Start hat
+  // bis hierher nichts angefasst: keinen Leser, keine Datei, keinen Port. Wer
+  // hier wartet, wartet ohne etwas in der Hand -- und laeuft seine Frist ab,
+  // geht er, ohne dass ihm jemand etwas wegzuraeumen haette.
+  if (abloesungVon !== null) {
+    console.log('Abloesung: warte darauf, dass PID ' + abloesungVon + ' die Sperre ' +
+      'loslaesst (hoechstens ' + Math.round(ABLOESUNG_WARTEN_MS / 1000) + ' Sekunden).');
+    const gewartet = warteAufVorgaengersSperre({
+      projektwurzel, aufnahme, modus, vorgaengerPid: abloesungVon });
+    if (!gewartet.frei) {
+      console.error(meldeAbloesungWartenAbgelaufen(gewartet, aufnahme, abloesungVon));
+      process.exit(EXIT_ABBRUCH);
+    }
+    console.log('Abloesung: die Sperre ist frei (' + gewartet.grund + '), nach ' +
+      gewartet.gewartet_ms + ' ms. Jetzt der gewoehnliche Start.');
+  }
+
   // DIE SPERRE WIRD ALS ERSTES GENOMMEN -- vor dem Leser, vor dem Lesen der
   // Freigabedatei, vor dem Port.
   //
@@ -3407,7 +4402,8 @@ function main() {
   // gilt fuer Longform oder wird ihm untergeschoben. Der Longform-Zweig
   // kehrt nie in die Shorts-Linie zurueck; er hat seinen eigenen Ausgang.
   if (modus === MODUS_LONGFORM) {
-    starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, abbruch });
+    starteLongform({ aufnahme, projektwurzel, port, sperre, keinBrowser, abbruch,
+      abloesungVon });
     return;
   }
 
@@ -3575,6 +4571,13 @@ module.exports = {
   LONGFORM_ARBEITER, LONGFORM_CODES_MIT_SEITE, LONGFORM_ZUSATZ,
   ruftLongformTrocken, longformAusgang, baueLongformSitzung,
   longformKnopfDa, longformDritterKnopfDa, starteLongformLauf, GEDAECHTNIS_MODUL,
+  // FA: die Abloesung (Vertrag 11.7)
+  DIESES_SKRIPT, ABLOESUNG_ANLAUF_MS, ABLOESUNG_UEBERNAHME_MS, ABLOESUNG_WARTEN_MS,
+  ABLOESUNG_TAKT_MS, abloesungsArgumente, pruefeAbloesungVon, weiterKnopfDa,
+  sperreFreiFuerNachfolger,
+  warteAufVorgaengersSperre, meldeAbloesungWartenAbgelaufen, fuehreAbloesung,
+  starteNachfolgerProzess, baueAbloesungsLage,
+  meldeAbloesungGelungen, meldeAbloesungGescheitert,
   LONGFORM_BEFUND_TYPE, ERLAUBTE_BILDTYPEN, trenneBefundzeile, nimmBildAuf,
   ROUTEN_GET, ROUTEN_POST,
   FREIGABE_SCHEMA_VERSION, FREIGABE_ARTIFACT_TYPE,

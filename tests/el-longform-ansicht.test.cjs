@@ -816,9 +816,19 @@ test('EP/EU: die Longform-Seite hat GENAU DREI Knoepfe, alle <button>, und kein 
           'dem Sitzungstoken, und dabei soll es bleiben');
       }
 
-      // GENAU DREI Knoepfe. Abgezaehlt und nicht "mindestens drei".
-      assert.equal((html.match(/<button/g) || []).length, 3,
-        'die Longform-Seite hat mehr oder weniger als die drei Knoepfe');
+      // FA: ES SIND VIER GEWORDEN, und der vierte ist der einzige, der nichts
+      // an einen Kanal schickt: er schaltet auf die naechste Seite weiter
+      // (Vertrag 11.7). Die Zahl wird berichtigt statt weiter behauptet -- und
+      // die Zusage darunter ist enger als "es gibt jetzt vier": der vierte
+      // steht im HTML von Anfang an, aber SICHTBAR wird er an genau einer
+      // Stelle im Skript, naemlich in dem Zweig, der auch den Ende-Kasten
+      // fuellt. Das prueft der Test 'FA-N4' am ausgefuehrten Skript.
+      assert.equal((html.match(/<button/g) || []).length, 4,
+        'die Longform-Seite hat mehr oder weniger als die vier Knoepfe');
+      // Und der vierte ist im HTML von Anfang an ZU. Ein Knopf, dessen Kasten
+      // nicht hidden ist, stuende beim Laden der Seite da -- also vor jedem
+      // Lauf.
+      assert.match(html, /<div class="lf-knopf" id="weiterKasten" hidden>/);
 
       // UND DER GEFAEHRLICHE IST ALS SOLCHER BESCHRIFTET. Er sagt im WORT und
       // nicht nur in der Farbe, was er tut -- wer Farben nicht unterscheiden
@@ -863,10 +873,17 @@ test('EP/EU: die Longform-Seite hat GENAU DREI Knoepfe, alle <button>, und kein 
       //   POST /hochladen        (der Knopf aus EP)
       //   POST /haltepunkt bzw. /veroeffentlichen  (EINE Stelle, zwei Ziele)
       //   GET  /lauf?ab=N
-      assert.equal((html.match(/X-Freigabe-Token/g) || []).length, 3,
-        'die Seite setzt die Tokenkopfzeile an mehr oder weniger als den drei Aufrufen');
-      assert.equal((html.match(/fetch\(/g) || []).length, 3,
-        'die Seite macht mehr oder weniger als die drei zugesagten Aufrufe');
+      //
+      // FA: AUS DREI SIND FUENF GEWORDEN, und die beiden neuen sind die
+      // einzigen, die nichts an einen Kanal schicken:
+      //
+      //   POST /weiter           (der Knopf, der weiterschaltet)
+      //   GET  /abloesung?ab=N   (sein Fortschritt -- und er DARF scheitern,
+      //                          waehrend der Port uebergeht)
+      assert.equal((html.match(/X-Freigabe-Token/g) || []).length, 5,
+        'die Seite setzt die Tokenkopfzeile an mehr oder weniger als den fuenf Aufrufen');
+      assert.equal((html.match(/fetch\(/g) || []).length, 5,
+        'die Seite macht mehr oder weniger als die fuenf zugesagten Aufrufe');
       const ziele = [...html.matchAll(/fetch\('([^']*)'/g)].map((m) => m[1]);
       for (const z of ziele) {
         assert.ok(z.startsWith('/'),
@@ -884,6 +901,11 @@ test('EP/EU: die Longform-Seite hat GENAU DREI Knoepfe, alle <button>, und kein 
       // oeffentlich ist.
       assert.ok(!html.includes("klick(halt, '/veroeffentlichen'"),
         'der anhaltende Knopf veroeffentlicht');
+      // FA: und die beiden neuen Adressen stehen ebenfalls woertlich da.
+      assert.ok(html.includes("fetch('/weiter'"),
+        'der Weiter-Knopf ruft nicht /weiter');
+      assert.ok(html.includes("fetch('/abloesung?ab='"),
+        'der Fortschritt der Abloesung wird nicht bei /abloesung geholt');
     } finally { fs.rmSync(sitzung.wegwerfordner, { recursive: true, force: true }); }
   });
 
@@ -896,15 +918,20 @@ test('EU: der Longform-Modus hat GENAU DREI POST-Routen, und jede nimmt nichts e
   const von = SERVER_NURCODE.indexOf('const ROUTEN_GET = {');
   const bis = SERVER_NURCODE.indexOf('};', SERVER_NURCODE.indexOf('const ROUTEN_POST = {'));
   const tabellen = SERVER_NURCODE.slice(von, bis);
-  assert.ok(tabellen.includes("[MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf']),"),
-    'der Longform-Modus hat mehr oder weniger als die drei lesenden GET-Routen');
+  // FA: aus drei und drei sind vier und vier geworden. Die Zahlen werden
+  // berichtigt und nicht weiter behauptet; die FORM der Zusage bleibt: beide
+  // Listen stehen woertlich da und werden abgezaehlt.
   assert.ok(tabellen.includes(
-    "[MODUS_LONGFORM]: new Set(['/hochladen', '/haltepunkt', '/veroeffentlichen']),"),
-  'der Longform-Modus hat mehr oder weniger als die drei POST-Routen');
+    "[MODUS_LONGFORM]: new Set(['/', '/bild', '/lauf', '/abloesung']),"),
+  'der Longform-Modus hat mehr oder weniger als die vier lesenden GET-Routen');
+  assert.ok(tabellen.includes(
+    "[MODUS_LONGFORM]: new Set(['/hochladen', '/haltepunkt', '/veroeffentlichen', " +
+    "'/weiter']),"),
+  'der Longform-Modus hat mehr oder weniger als die vier POST-Routen');
 
   const postTeil = SERVER_NURCODE.slice(SERVER_NURCODE.indexOf('const ROUTEN_POST = {'), bis);
-  // Die beiden lesenden Routen stehen in KEINER POST-Tabelle.
-  for (const r of ['/bild', '/lauf']) {
+  // Die lesenden Routen stehen in KEINER POST-Tabelle.
+  for (const r of ['/bild', '/lauf', '/abloesung']) {
     assert.ok(!postTeil.includes(r),
       'die Route ' + r + ' steht in einer POST-Tabelle -- sie ist lesend und nur lesend');
   }
@@ -915,6 +942,13 @@ test('EU: der Longform-Modus hat GENAU DREI POST-Routen, und jede nimmt nichts e
     'der Shorts-Modus hat eine Route zum Veroeffentlichen');
   assert.ok(!/MODUS_SHORTS\]: new Set\(\[[^\]]*haltepunkt/.test(shortsZeile),
     'der Shorts-Modus hat eine Haltepunkt-Route');
+  // FA: und er hat auch die Abloesung nicht. Sie gehoert zum Longform-Weg;
+  // die Shorts-Sitzung wird ueber ihren eigenen Knopf beendet und danach von
+  // Hand oder von der Gegenseite neu gestartet.
+  assert.ok(!/MODUS_SHORTS\]: new Set\(\[[^\]]*'\/weiter'/.test(shortsZeile),
+    'der Shorts-Modus hat eine Route zum Weiterschalten');
+  assert.ok(!/MODUS_SHORTS\]: new Set\(\[[^\]]*abloesung/.test(tabellen),
+    'der Shorts-Modus hat eine Abloesungsroute');
 
   // DER ZWECK KOMMT AUS DER ROUTENTABELLE. Das ist die Sicherung dahinter:
   // welchen Zweck eine zweite Ermaechtigung traegt, entscheidet die Adresse
@@ -955,8 +989,16 @@ test('EL-N4: es gibt EINE Bindung, EIN Token und EINE Herkunftspruefung, nicht j
   () => {
     // 1. Die Bindung steht als eine Konstante da und wird nirgends umgangen.
     assert.equal((SERVER_NURCODE.match(/const HOST = '127\.0\.0\.1';/g) || []).length, 1);
-    assert.equal((SERVER_NURCODE.match(/\.listen\(/g) || []).length, 2,
-      'listen steht zweimal -- einmal je Startweg');
+    // FA: aus zwei sind drei geworden. Der dritte ist das WIEDERoeffnen des
+    // Ports, wenn eine Abloesung gescheitert ist (portZurueckholen) -- kein
+    // dritter Startweg, sondern die Rueckkehr auf denselben. Die Zusage
+    // darunter gilt fuer ihn unveraendert und ist der Grund, warum die Zahl
+    // hier berichtigt und nicht gestrichen wird: JEDES listen traegt HOST,
+    // auch das, das nach einem Fehlschlag laeuft. Ein Dienst, der beim
+    // Zurueckkommen an allen Adressen haengt, waere schlimmer als einer, der
+    // gar nicht zurueckkommt.
+    assert.equal((SERVER_NURCODE.match(/\.listen\(/g) || []).length, 3,
+      'listen steht dreimal -- je Startweg einmal und einmal fuer die Rueckholung');
     for (const m of SERVER_NURCODE.matchAll(/\.listen\(([^)]*)\)/g)) {
       assert.ok(/HOST/.test(m[1]),
         'ein listen ohne HOST: ' + m[0] + ' -- der Dienst haenge dann an allem');
@@ -1201,11 +1243,29 @@ test('EL: der Dienst ruft den Arbeiter auf, statt ihn nachzubauen', () => {
     'sind zwei: der Trockenlauf und der scharfe Lauf. Eine dritte soll hier auffallen.');
   const spawns = (SERVER_NURCODE.match(/spawn(Sync)?\(process\.execPath, argumente/g)
     || []).length;
-  assert.equal(spawns, 6,
-    'es gibt ' + spawns + ' Kindprozesse aus einer Argumentliste -- erwartet sind sechs: ' +
-    'der Leser, Planer, Uploader-Trockenlauf und scharfer Uploader der Shorts-Linie, und ' +
-    'die beiden Longform-Wege (Trockenlauf spawnSync, scharfer Lauf spawn). Ein siebter ' +
-    'soll hier auffallen.');
+  assert.equal(spawns, 7,
+    'es gibt ' + spawns + ' Kindprozesse aus einer Argumentliste -- erwartet sind sieben: ' +
+    'der Leser, Planer, Uploader-Trockenlauf und scharfer Uploader der Shorts-Linie, die ' +
+    'beiden Longform-Wege (Trockenlauf spawnSync, scharfer Lauf spawn) und FA der ' +
+    'Nachfolger dieses Dienstes selbst. Ein achter soll hier auffallen.');
+
+  // FA: DER SIEBTE IST NICHT DER ARBEITER, und das wird hier nachgerechnet
+  // statt vorausgesetzt. Seine Argumentliste kommt aus abloesungsArgumente()
+  // und traegt DIESE Datei, nicht LONGFORM_ARBEITER -- die Zaehlung der
+  // Argumentlisten oben (zwei) bleibt darum unberuehrt. Ein Nachfolger, der
+  // versehentlich den Arbeiter startete, faellt an dieser Stelle.
+  const nachfolgerRumpf = SERVER_NURCODE.slice(
+    SERVER_NURCODE.indexOf('function starteNachfolgerProzess('),
+    SERVER_NURCODE.indexOf('function schlafeHart('));
+  assert.match(nachfolgerRumpf, /const argumente = abloesungsArgumente\(\{ aufnahme, port, pid \}\);/);
+  assert.ok(!/LONGFORM_ARBEITER|--execute|--bestaetigt-durch=/.test(nachfolgerRumpf),
+    'der Nachfolger startet den Arbeiter statt diesen Dienst');
+  const argumenteRumpf = SERVER_NURCODE.slice(
+    SERVER_NURCODE.indexOf('function abloesungsArgumente('),
+    SERVER_NURCODE.indexOf('function weiterKnopfDa('));
+  assert.match(argumenteRumpf, /DIESES_SKRIPT,/);
+  assert.ok(!/--execute|--bestaetigt-durch=|--no-browser|--wurzel=/.test(argumenteRumpf),
+    'die Argumentliste des Nachfolgers traegt ein Argument, das dort nichts zu suchen hat');
 
   // DER STARTWEG DES DIENSTES bleibt frei von beidem: was beim Start des
   // Dienstes geschieht, ist der TROCKENLAUF und nichts sonst. Der scharfe Lauf

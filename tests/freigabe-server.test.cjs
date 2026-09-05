@@ -1020,7 +1020,30 @@ test('die Sperre wird mit wx angelegt -- das Anlegen ist die Pruefung', () => {
     // der Arbeiter nicht bis zum Verbrauchen gekommen, und dann hat er auch
     // nichts gesendet.
     'ermaechtigung_noch_da: fs.existsSync(pfad),',
+    // FA: der Blick des NACHFOLGERS auf die Sperre des Vorgaengers, waehrend
+    // er auf sie wartet. Er entscheidet ueber KEIN Anlegen -- er entscheidet
+    // nur, ob weiter gewartet wird. Angelegt wird danach durch nimmSperre(),
+    // und die oeffnet weiterhin mit 'wx'; scheitert sie, weil in der
+    // Zwischenzeit ein anderer zugegriffen hat, endet dieser Start mit
+    // meldeFremdeSperre. Das Loch, gegen das diese Zusage gebaut ist -- Blick,
+    // dann Anlegen --, entsteht hier also gerade nicht: zwischen diesem Blick
+    // und dem Anlegen liegt kein Vertrauen, sondern immer noch das 'wx'.
+    'if (!fs.existsSync(pfad)) {',
   ], 'neue existsSync-Stelle: gehoert sie zu einem Anlegen, ist sie ein Loch');
+
+  // FA, die Gegenprobe zur Zeile darueber: der Blick des Nachfolgers steht
+  // NICHT in nimmSperre, und zwischen ihm und dem Anlegen steht weiterhin das
+  // 'wx'. Beides einzeln nachgerechnet -- die Liste oben sagt nur, WO er
+  // steht, nicht, was danach kommt.
+  const rumpfWarten = NURCODE.slice(NURCODE.indexOf('function sperreFreiFuerNachfolger('),
+    NURCODE.indexOf('function warteAufVorgaengersSperre('));
+  assert.ok(/existsSync/.test(rumpfWarten),
+    'der Blick des Nachfolgers steht nicht in sperreFreiFuerNachfolger');
+  assert.ok(!/openSync/.test(rumpfWarten),
+    'sperreFreiFuerNachfolger legt selbst etwas an -- dann ist der Blick davor ein Loch');
+  assert.ok(!/openSync/.test(NURCODE.slice(NURCODE.indexOf('function warteAufVorgaengersSperre('),
+    NURCODE.indexOf('function meldeAbloesungWartenAbgelaufen('))),
+  'das Warten legt selbst etwas an, statt nimmSperre das Anlegen zu ueberlassen');
 });
 
 test('eine freie Sperre wird genommen und traegt PID, Port, Zeit und Aufnahme', () => {
@@ -1775,6 +1798,13 @@ test('DJb: kein Kindprozess entsteht als Folge eines Urteils', () => {
     'starteUploaderLauf',   // DR, Schritt 3: der scharfe Uploader
     'ruftLongformTrocken',  // EL: die EINGABE des Longform-Modus, beim Start
     'starteLongformLauf',   // EP: der scharfe Arbeiter, NUR aus dem Knopf
+    // FA: der NACHFOLGER dieses Dienstes -- der einzige Kindprozess dieser
+    // Datei, der kein anderes Programm ist, sondern sie selbst. Er haengt am
+    // Knopf "Weiter", den es nur nach dem ENDE eines Laufs gibt. Unten wird
+    // nachgerechnet, dass er GENAU EINEN Aufrufer hat und dass der die
+    // Knopfroute ist -- ein Kindprozess, der am blossen Laufende haengt, waere
+    // der, den Vertrag 2.13 als zu teuer verworfen hat.
+    'starteNachfolgerProzess',
   ];
   assert.equal(stellen.length, heimat.length,
     stellen.map((x) => x.zeile + ': ' + x.text).join(' | '));
@@ -1943,8 +1973,13 @@ test('unbekannte Argumente beenden den Aufruf, statt ignoriert zu werden', () =>
   // EI: --modus= steht hinten. Die Reihenfolge ist die Reihenfolge, in der die
   // Argumente entstanden sind, und der Shorts-Aufruf der Gegenseite kennt die
   // ersten vier -- diese vier stehen unveraendert vorn.
+  // FA: --abloesung-von= steht ganz hinten, aus demselben Grund wie --modus=
+  // davor: die Reihenfolge ist die, in der die Argumente entstanden sind, und
+  // die ersten vier -- die der Shorts-Aufruf der Gegenseite kennt -- bleiben
+  // unveraendert vorn. Es ist das erste Argument dieser Liste, das kein Mensch
+  // tippt: es entsteht in abloesungsArgumente() und sonst nirgends.
   assert.deepEqual(S.ERLAUBTE_ARGUMENTE,
-    ['--aufnahme=', '--wurzel=', '--port=', '--no-browser', '--modus=']);
+    ['--aufnahme=', '--wurzel=', '--port=', '--no-browser', '--modus=', '--abloesung-von=']);
   const { unbekannteArgumente } = require('../src/publish/cli-args');
   assert.deepEqual(
     unbekannteArgumente(['node', 'x', '--aufnahme=a', '--nur-pruefen'], S.ERLAUBTE_ARGUMENTE),

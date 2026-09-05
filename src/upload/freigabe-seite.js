@@ -1469,6 +1469,18 @@ const ZEITGRENZE_LAUF_MS = 15000;
 let laufAb = 0;
 let laufLaeuft = false;
 
+// FA: DER EINE SATZ, DER VOM STARTWEG ABHAENGT. Ein Nachfolger (Vertrag 11.7)
+// wird abgeloest gestartet und haengt damit an keiner Konsole mehr; "Strg+C im
+// Terminal" waere fuer ihn unwahr. Es gibt genau einen Satz, und er sagt, was
+// fuer DIESEN Start stimmt.
+setze(kel('beendenSatz'), D.abloesungVon === null
+  ? 'Beenden: Strg+C in dem Terminal, in dem der Dienst laeuft. Er gibt dabei seine Sperre frei.'
+  : 'Beenden: dieser Dienst ist ein NACHFOLGER (abgeloest von Prozess ' + D.abloesungVon +
+    '). Er haengt an keinem Terminal mehr — Strg+C dort erreicht ihn nicht. Beende ihn im ' +
+    'Task-Manager, Reiter Details, ueber die Prozessnummer, die beim Start ausgegeben wurde ' +
+    'und in der Sperrdatei steht. Die Sperre bleibt dann liegen und gilt beim naechsten ' +
+    'Start als verwaist; sie wird dort benannt und uebernommen.');
+
 setze(kel('knopfKopf'), D.knopf.da
   ? 'Hochladen — privat, mit dem Bild ' + D.knopf.bild
   : 'Es gibt hier keinen Knopf');
@@ -1771,9 +1783,138 @@ async function verfolgeLauf() {
           'Sie laeuft von selbst ab.'
         : 'Die Ermaechtigung ist verbraucht und geloescht.') + '\n\n' + schluss);
       kel('laufEnde').hidden = false;
+      // FA: UND ERST JETZT DER KNOPF, DER WEITERSCHALTET.
+      //
+      // DIES IST DIE EINZIGE STELLE, AN DER ER SICHTBAR WIRD -- derselbe
+      // Zweig, der den Ende-Kasten fuellt, und kein zweiter. Solange oben in
+      // der Schleife gewartet wird, ist dieser Zweig nicht erreicht, und der
+      // Kasten bleibt zu.
+      //
+      // OB ES IHN GIBT, SAGT DER DIENST (daten.weiter). Diese Seite bildet die
+      // Bedingung nicht selbst nach; sie zeigt, was er antwortet, und wenn er
+      // nein sagt, seinen Grund.
+      zeigeWeiter(daten.weiter);
       return;
     }
     await schlaf(2000);
+  }
+}
+
+// -------------------------------------------------------------------------
+// FA: WEITERSCHALTEN (Vertrag 11.7)
+// -------------------------------------------------------------------------
+//
+// EIN AUFRUF MEHR UND EIN ABFRAGEWEG MEHR, beide an diesen Dienst unter dieser
+// Adresse:
+//
+//   POST /weiter        einmal, beim Klick, OHNE Leib.
+//   GET  /abloesung?ab= solange die Umschaltung laeuft. SIE DARF SCHEITERN --
+//                       waehrend der Uebergabe ist der Port zu, und dann
+//                       antwortet niemand. Das ist der Normalfall dieses
+//                       Weges und wird als solcher angezeigt, nicht als
+//                       Fehler.
+let weiterAb = 0;
+let weiterLaeuft = false;
+
+function zeigeWeiter(w) {
+  if (!w) return;                       // ein Dienst ohne diese Auskunft zeigt keinen Knopf
+  if (!w.da) {
+    kel('weiterGesperrt').hidden = false;
+    setze(kel('weiterGrund'), w.grund);
+    return;
+  }
+  kel('weiterKasten').hidden = false;
+  setze(kel('weiterKopf'), 'Weiterschalten — den Dienst abloesen und die naechste Seite zeigen');
+  const knopf = kel('knopfWeiter');
+  setze(knopf, 'Weiter: diesen Dienst abloesen und die naechste Seite oeffnen');
+  knopf.addEventListener('click', async () => {
+    knopf.disabled = true;
+    setze(knopf, 'schaltet weiter …');
+    kel('weiterZeilen').hidden = false;
+    try {
+      const antwort = await fetch('/weiter', {
+        method: 'POST',
+        headers: { 'X-Freigabe-Token': D.token },
+        signal: AbortSignal.timeout(ZEITGRENZE_START_MS),
+      });
+      let leib = null;
+      try { leib = await antwort.json(); } catch (e) { leib = null; }
+      if (!antwort.ok) {
+        const grund = (leib && leib.meldung) ? leib.meldung : ('HTTP ' + antwort.status);
+        setze(kel('weiterFehler'), 'Der Dienst hat das Weiterschalten abgelehnt: ' + grund +
+          '\n\nEs wurde nichts abgegeben -- dieser Dienst laeuft weiter.').hidden = false;
+        setze(knopf, 'nicht weitergeschaltet');
+        return;
+      }
+    } catch (e) {
+      setze(kel('weiterFehler'), 'Der Dienst hat nicht geantwortet: ' +
+        (e && e.message ? e.message : e) +
+        '\n\nOB ETWAS GESTARTET WURDE, IST VON HIER AUS NICHT ZU SEHEN. Im Terminal ' +
+        'nachsehen, in dem der Dienst laeuft.').hidden = false;
+      setze(knopf, 'ungewiss');
+      verfolgeAbloesung();
+      return;
+    }
+    setze(knopf, 'schaltet weiter …');
+    verfolgeAbloesung();
+  });
+}
+
+let weiterText = '';
+
+async function verfolgeAbloesung() {
+  if (weiterLaeuft) return;
+  weiterLaeuft = true;
+  let dunkel = 0;
+  for (;;) {
+    let daten = null;
+    try {
+      daten = await fetch('/abloesung?ab=' + weiterAb, {
+        headers: { 'X-Freigabe-Token': D.token },
+        signal: AbortSignal.timeout(ZEITGRENZE_LAUF_MS),
+      }).then((r) => r.json());
+    } catch (e) {
+      // KEIN FEHLERTEXT. Dass hier niemand antwortet, ist der Weg selbst: der
+      // Port gehoert in diesem Augenblick niemandem oder schon dem
+      // Nachfolger. Wer hier "Fehler" schriebe, schriebe ihn im Normalfall.
+      dunkel += 1;
+      kel('weiterEnde').className = 'lf-ende-kasten';
+      setze(kel('weiterEnde'), 'DIESE SEITE IST DUNKEL. Der Port ist an den Nachfolger ' +
+        'uebergegangen; dieser Dienst antwortet hier nicht mehr (' + dunkel + ' Versuche).' +
+        '\n\nKommt der Nachfolger hoch, oeffnet er sein eigenes Fenster -- diese Seite ' +
+        'bleibt dann dunkel, und das ist der gute Ausgang. Kommt er nicht hoch, holt der ' +
+        'alte Dienst Sperre und Port zurueck, und dann steht hier wieder etwas.' +
+        '\n\nWas wirklich geschehen ist, steht im Terminal, in dem der Dienst gestartet ' +
+        'wurde -- der Nachfolger schreibt dorthin, wo auch er geschrieben hat.');
+      kel('weiterEnde').hidden = false;
+      await schlaf(2000);
+      continue;
+    }
+    for (const z of (daten.zeilen || [])) {
+      weiterText += (z.art === 'dienst' ? '[Abloesung] ' : '') + z.zeile + '\n';
+    }
+    if (daten.gesamt !== undefined) weiterAb = daten.gesamt;
+    setze(kel('weiterZeilen'), weiterText);
+    if (daten.ende) {
+      // Ein Ende, das diese Seite ueberhaupt zu sehen bekommt, ist IMMER ein
+      // gescheitertes: hat es geklappt, ist dieser Dienst weg, und dann
+      // antwortet hier niemand mehr. Der gute Ausgang wird an dieser Stelle
+      // trotzdem behandelt -- ein Zweig, den man fuer unerreichbar haelt, ist
+      // der, der eines Tages leer dasteht.
+      kel('weiterEnde').className = 'lf-ende-kasten ' + (daten.ende.gelungen ? 'ausgang' : 'weg');
+      setze(kel('weiterEnde'), daten.ende.gelungen
+        ? 'Weitergeschaltet. Der Nachfolger (PID ' + daten.ende.nachfolger_pid + ') haelt ' +
+          'Sperre und Port; dieser Dienst geht jetzt. Sein Fenster ist die naechste Seite.'
+        : 'DIE ABLOESUNG HAT NICHT GEKLAPPT, und dieser Dienst lebt noch.\n\n' +
+          (daten.ende.meldung || daten.ende.grund) +
+          '\n\nWeiterschalten geht auf diesem Weg nicht noch einmal. Beende den Dienst mit ' +
+          'Strg+C und starte ihn im Longform-Modus neu -- so, wie es vor diesem Knopf ' +
+          'ohnehin ging.');
+      kel('weiterEnde').hidden = false;
+      setze(kel('knopfWeiter'), daten.ende.gelungen ? 'weitergeschaltet' : 'nicht weitergeschaltet');
+      return;
+    }
+    await schlaf(1000);
   }
 }
 `;
@@ -1848,6 +1989,11 @@ function baueLongformSeite(sitzung) {
     // eine Adresse haengt (setzeQuelle) und eine, die es in eine Kopfzeile
     // schreibt (die beiden fetch unten).
     token: sitzung.token,
+
+    // FA: die Prozessnummer des Vorgaengers, wenn dieser Start eine Abloesung
+    // ist -- sonst null. Sie steht hier fuer GENAU EINEN Satz: wie dieser
+    // Dienst zu beenden ist.
+    abloesungVon: sitzung.abloesungVon === undefined ? null : sitzung.abloesungVon,
 
     // `da` und nicht das andere Wort: diese Ansicht sagt nicht, dass etwas in
     // Ordnung ist. Es gibt einen Knopf oder es gibt keinen -- und wenn keinen,
@@ -1933,8 +2079,13 @@ function baueLongformSeite(sitzung) {
       'zwei Sorten: entweder <b>Hochladen</b> (privat, nichts wird oeffentlich) oder &mdash; ' +
       'wenn schon ein privates Video mit Bild auf dem Kanal liegt &mdash; <b>Anhalten</b> ' +
       'und <b>Oeffentlich stellen</b>. Der letzte ist der einzige Knopf dieses Projekts, den ' +
-      'niemand zuruecknehmen kann. Beenden: <kbd>Strg</kbd>+<kbd>C</kbd> in dem Terminal, in ' +
-      'dem der Dienst laeuft. Er gibt dabei seine Sperre frei.</span>',
+      'niemand zuruecknehmen kann.</span>',
+    // FA: WIE DIESER DIENST ZU BEENDEN IST, HAENGT DARAN, WIE ER GESTARTET
+    // WURDE. Ein Nachfolger (Vertrag 11.7) haengt an keiner Konsole mehr;
+    // "Strg+C im Terminal" waere fuer ihn unwahr. Der Satz steht darum nicht
+    // fest im HTML, sondern kommt aus der Sitzung -- es gibt genau einen, und
+    // er sagt jeweils, was stimmt.
+    '<span class="kopfzeile" id="beendenSatz"></span>',
     '</div></header>',
     '<main class="lf">',
 
@@ -2169,6 +2320,43 @@ function baueLongformSeite(sitzung) {
       'mit <code>[Dienst]</code> stammen von diesem Dienst und nicht von ihm.</p>',
     '<pre class="lf-strom" id="laufZeilen"></pre>',
     '<div class="lf-ende-kasten" id="laufEnde" hidden></div>',
+
+    // 4e. FA: DER KNOPF, DER WEITERSCHALTET (Vertrag 11.7).
+    //
+    //     ER STEHT IM LAUFKASTEN UND NICHT DARUNTER, und das ist keine
+    //     Gestaltungsfrage: er gehoert zum ENDE eines Laufs und darf nur dann
+    //     dastehen. Im Skript unten wird er an GENAU EINER Stelle sichtbar
+    //     gemacht -- in dem Zweig, der auch den Ende-Kasten fuellt. Es gibt
+    //     keinen zweiten Weg dorthin; ein Knopf, der waehrend eines Uploads
+    //     erscheint, ist ein Knopf, den jemand drueckt.
+    //
+    //     WAS ER TUT UND WAS NICHT: er startet den Nachfolger dieses Dienstes
+    //     und beendet diesen. Er laedt nichts hoch, stellt nichts oeffentlich
+    //     und schreibt keine Ermaechtigung. Die naechste Seite steht danach
+    //     da, und dort ist wieder ein Mensch am Zug.
+    '<div class="lf-knopf" id="weiterKasten" hidden>',
+    '<h3 id="weiterKopf"></h3>',
+    '<p><b>Was dabei geschieht:</b> dieser Dienst startet sich selbst noch einmal &mdash; ' +
+      'dieselbe Aufnahme, derselbe Port &mdash;, wartet, bis der Nachfolger wirklich ' +
+      'lauscht, und beendet sich dann. Der Nachfolger laesst den Trockenlauf neu laufen und ' +
+      'zeigt die Lage <b>von jetzt</b>. Das ist genau der Neustart, den man sonst von Hand ' +
+      'tippt.</p>',
+    '<p><b>Was NICHT geschieht:</b> nichts wird hochgeladen und nichts oeffentlich gestellt. ' +
+      'Es entsteht keine Ermaechtigung. Der naechste Klick ist wieder einer, den ein Mensch ' +
+      'macht, auf einer Seite, die er gelesen hat.</p>',
+    '<p><b>Diese Seite geht dabei dunkel</b>, sobald der Port an den Nachfolger uebergeht ' +
+      '&mdash; das ist der Normalfall und kein Fehler. Kommt der Nachfolger hoch, oeffnet ' +
+      'er sein eigenes Fenster. Kommt er nicht hoch, <b>lebt dieser Dienst weiter</b>, ' +
+      'diese Seite antwortet wieder, und hier steht dann, was war.</p>',
+    '<button id="knopfWeiter" type="button"></button>',
+    '<div class="lf-fehler" id="weiterFehler" hidden></div>',
+    '<pre class="lf-strom" id="weiterZeilen" hidden></pre>',
+    '<div class="lf-ende-kasten" id="weiterEnde" hidden></div>',
+    '</div>',
+    '<div class="lf-gesperrt" id="weiterGesperrt" hidden>',
+    '<h3>Weiterschalten geht hier nicht</h3>',
+    '<p id="weiterGrund"></p>',
+    '</div>',
     '</div>',
     '</section>',
 

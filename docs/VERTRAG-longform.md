@@ -1,5 +1,59 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 13 (FB, 05.09.2026).** **Der Weg wird bedient.** **Genau eine Zusage
+der Abschnitte 1 bis 8 aendert sich: 2.13.** Zwischen den Klicks stehen keine
+getippten Neustarts mehr -- der Compositor startet die Kette (EZ), und ein
+Knopf auf der Seite schaltet weiter (FA). **Die Naht selbst bleibt**, und mit
+ihr alles, was auf dem Kanal ueberhaupt etwas erlaubt: die zwei
+Ermaechtigungen (2.12), die zwei Klicks, und dass die Seite nach dem Upload aus
+dem **neuen** Stand entsteht und nicht aus dem alten (2.13). Keine dieser drei
+wird durch diese Fassung weiter oder weicher. Was wegfaellt, ist das Tippen,
+nicht das Hinsehen.
+
+**Damit ist der offene Punkt 11.7 der Fassung 12 geschlossen** -- die Nummer
+vergibt diese Fassung neu, der Punkt selbst ist erledigt. Er hatte sich selbst
+eine Bedingung gestellt: eine Bedienung, die eine der drei Naehte glaettet,
+indem sie eine davon wegnimmt, loese die falsche Aufgabe. **Die Bedingung ist
+eingehalten, und das gehoert in die Schliessung und nicht in den Bericht:** der
+Nachfolger faehrt hoch, laesst den Trockenlauf laufen und zeigt seine Seite --
+dort hoert die Abloesung auf. Sie klickt nicht durch. Der frische Stand ist
+danach immer noch der Grund fuer die Naht, und nicht ein Mangel, den der Knopf
+behebt.
+
+**Was die Bedienung kostet, steht in derselben Fassung wie das, was sie
+bringt.** Unter Windows haengt libuv jeden nicht abgeloesten Kindprozess in ein
+Job-Objekt mit `KILL_ON_JOB_CLOSE`; endet der Vater, bringt Windows das Kind
+um. **Gemessen am 05.09.2026 (FA-N1), nicht angenommen** -- der erste Entwurf
+stand ohne `detached` und mit der gegenteiligen Begruendung. Der Nachfolger ist
+deshalb abgehaengt, und **Strg+C in dem Terminal, in dem der Vorgaenger lief,
+erreicht ihn nicht mehr.** Er sagt das selbst, im Terminal und auf seiner
+Seite. **Die Folge ist unbequem und steht darum daneben: verwaiste Sitzungen
+werden dadurch wahrscheinlicher, nicht seltener.** Auf Port 8791 lag seit dem
+03.09. eine Shorts-Sitzung, die niemand bemerkt hat, bis der erste echte Lauf
+ausweichen musste -- und das war vor dieser Fassung, mit einem Dienst, den
+Strg+C noch erreichte. Was fehlt, ist eine Anzeige, welche Sitzungen laufen und
+seit wann; sie steht als offener Punkt und **ausdruecklich nicht als Automatik,
+die fremde Prozesse beendet**.
+
+**Die Monetarisierung fehlte, und der Weg hat sie nicht verloren -- er hat sie
+ausgelassen.** Gemessen am 05.09.2026: ein ueber diesen Weg hochgeladenes Video
+kommt **ohne Monetarisierung** auf dem Kanal an; sie wurde von Hand
+eingeschaltet. **Das ist kein Rueckfall, sondern ein nie gesetzter Wert.** Die
+Monetarisierung sitzt nicht im `status`-Block, den dieser Weg liest und
+zurueckschickt; sie ist deshalb bei keinem Vergleich aufgefallen und **konnte
+es nicht** -- nicht, weil der Vergleich zu grob waere, sondern weil er ueber
+ein Feld gar nicht laeuft, das er nie zu sehen bekommt. Der Befund steht in
+2.5, wo die Zusage steht, die er prueft; ob der Weg sie setzen soll, ist offen.
+
+**Die offenen Punkte werden acht.** Der siebte der Fassung 12 faellt weg; zwei
+kommen hinzu -- die Anzeige der laufenden Sitzungen, und ob der Weg die
+Monetarisierung setzt.
+**Abschnitt 10 bleibt bei achtzehn.** Diese Fassung misst nichts, was dort
+steht; der eine Punkt, den sie streift ("ob der Arbeiter das Schliessen der
+Seite ueberlebt"), traegt jetzt die Messung von FA-N1 daneben und bleibt
+trotzdem offen, weil sie an der Nachbarstelle gefahren wurde und nicht an ihm.
+Wie diese Fassung entstanden ist, steht im Bericht FB.
+
 **Fassung 12 (EY, 05.09.2026).** **Der Weg ist gelaufen.** Am 05.09.2026 ist
 der Longform-Weg zum ersten Mal ueber ein echtes Video gegangen, und das Video
 liegt oeffentlich auf dem Kanal. Diese Fassung traegt ein, was dabei gemessen
@@ -39,8 +93,9 @@ worden; er steht deshalb in 2.12 und unter "Ungeprueft" als das, was er ist.
 **Ein Zweig, den man fuer erprobt haelt, weil er gebaut ist, ist genau die
 Sorte Annahme, die dieses Projekt sammelt.**
 
-**Die offenen Punkte werden sieben.** Dazu kommt die Bedienung (11.7): der Weg
-braucht heute drei Terminalstarts, was der gebaute Weg ist und kein Fehler,
+**Die offenen Punkte werden sieben.** Dazu kommt die Bedienung (11.7 dieser
+Fassung; in Fassung 13 geschlossen): der Weg braucht heute drei
+Terminalstarts, was der gebaute Weg ist und kein Fehler,
 aber kein Weg, den ein Mensch am Dienstagabend nach dem Render nimmt. Was
 daraus wird, ist nicht entschieden; was dabei nicht verhandelbar ist, steht
 dort. **Abschnitt 10 geht von zwanzig Punkten auf achtzehn**, und das ist
@@ -713,6 +768,31 @@ den es nicht gibt.
   beantwortet haetten, ist damit weiterhin nicht gemessen -- der Fall trat nie
   ein, weil er nicht eintreten kann.
 
+**Was dieser Vergleich nicht sehen kann, und es kostete Geld: die
+Monetarisierung.** Gemessen am 05.09.2026: das ueber diesen Weg hochgeladene
+Video kam **ohne Monetarisierung** auf dem Kanal an. Sie wurde von Hand
+eingeschaltet -- Studio, Einnahmen, "Aktiviert", mit gesetztem Haken bei
+"Mid-Roll-Anzeigen einblenden".
+
+**Was das ist, und was es nicht ist.** Es ist **kein Rueckfall**: kein Feld ist
+auf eine Vorgabe zurueckgefallen, weil der Koerper es ausliess. Es ist ein
+**nie gesetzter Wert**. Die Monetarisierung sitzt nicht im Teil `status` --
+weder in der Liste der setzbaren Felder oben noch im Block, den `videos.list`
+mit `part=status` liefert. Dieser Weg liest `status`, schickt `status` zurueck
+und vergleicht `status`; die Monetarisierung kam in keiner dieser drei Zeilen
+vor. **Sie ist deshalb bei keinem Vergleich aufgefallen und konnte es nicht** --
+nicht, weil der Vergleich zu grob waere, sondern weil er ueber ein Feld nicht
+laeuft, das er nie zu sehen bekommt. **Der Weg hat nichts verloren; er hat
+etwas ausgelassen.** Die enge Zusage dieses Abschnitts steht dabei unversehrt:
+sie sagt, dass am `status`-Block nichts kaputtgeht, und das hat sie gehalten.
+
+**Ob der Weg sie setzen soll, ist offen (11.8) und wird hier nicht
+entschieden.** Es waere ein **vierter schreibender Aufruf**, in einem anderen
+Teil der API als den drei, die dieser Vertrag kennt, und er beruehrt Geld. Ob
+der vorhandene Zugang ihn ueberhaupt darf, ist **ungemessen**. Bis das
+entschieden ist, gilt: der Weg setzt sie nicht, und wer ein Video ueber ihn
+hochlaedt, schaltet sie im Studio von Hand ein.
+
 ### 2.6 Ein geschlossenes Fenster laesst das Video privat; ein zweiter Lauf macht weiter
 
 Wird das Fenster geschlossen, der Prozess beendet oder der Rechner
@@ -1378,17 +1458,30 @@ Tages anders gebaut ist als die erste. Die Sicherungen des Freigabedienstes
 sind gemessen (DJ, DJa, DR); ein Modus erbt sie, ein Dienst muesste sie neu
 beweisen.
 
-**Zwischen den drei Klicks stehen zwei Neustarts des Dienstes, und das ist eine
-Rauheit und keine Eleganz.** Die Seite entsteht **einmal**, beim Start, aus dem
-Trockenlauf des Arbeiters; danach holt sie keinen Stand nach. Die Frage aus 2.4
-steht damit auf der Lage von **vor** dem Upload -- und eine Frage auf einer Lage
-von vorher ist eine Wiederholung und keine Frage. Wer den zweiten Klick sehen
-will, beendet den Dienst und startet ihn im Longform-Modus neu; dann liest der
-Trockenlauf das Gedaechtnis, das der Upload eben geschrieben hat, und stellt die
-Frage darauf. **Das wird dreimal angesagt** -- in der Abschlussanzeige des
-Arbeiters nach dem Upload, in der Meldung der Seite am Ende des Laufs und im
-Erklaerungsblock der Seite --, damit niemand den Bau fuer kaputt haelt, wenn
-nach dem Upload kein zweiter Knopf erscheint.
+**Zwischen den drei Klicks stehen zwei Neustarts des Dienstes, und seit Fassung
+13 macht die ein Knopf.** Die Naht bleibt, das Tippen faellt weg. Die Seite
+entsteht **einmal**, bei einem Start, aus dem Trockenlauf des Arbeiters; danach
+holt sie keinen Stand nach. Die Frage aus 2.4 stuende sonst auf der Lage von
+**vor** dem Upload -- und eine Frage auf einer Lage von vorher ist eine
+Wiederholung und keine Frage. Wer den zweiten Klick sehen will, braucht darum
+einen Dienst, der nach dem Upload angefangen hat: dann liest der Trockenlauf
+das Gedaechtnis, das der Upload eben geschrieben hat, und stellt die Frage
+darauf.
+
+**Der frische Stand ist der Grund fuer die Naht, nicht ein Mangel, den der
+Knopf behebt.** Bis Fassung 12 machte ein Mensch diesen Neustart von Hand;
+seit Fassung 13 macht ihn der Dienst selbst, indem er sich abloest (unten).
+Beides ist derselbe Neustart, und beide Male entsteht die naechste Seite auf
+demselben einen Weg. Was der Knopf abnimmt, ist der getippte Aufruf; was er
+**nicht** abnimmt, ist der zweite Klick, die zweite Ermaechtigung und der
+Blick auf die neue Frage. Eine Bedienung, die diese Naht wegnaehme, indem sie
+die Frage auf dem alten Stand stehen liesse, waere kein Fortschritt, sondern
+der Fehler, gegen den dieser Absatz gebaut ist.
+
+**Das wird dreimal angesagt** -- in der Abschlussanzeige des Arbeiters nach dem
+Upload, in der Meldung der Seite am Ende des Laufs und im Erklaerungsblock der
+Seite --, damit niemand den Bau fuer kaputt haelt, wenn nach dem Upload kein
+zweiter Knopf auf **derselben** Seite erscheint.
 
 **Der zweite Neustart steht hinter dem Haltepunkt.** Bis Fassung 10 zaehlte
 dieser Vertrag einen Neustart; der Weg braucht **zwei**, sobald der Haltepunkt
@@ -1398,8 +1491,10 @@ einem beendeten Lauf ist jeder Knopf dieser Sitzung gesperrt und wird nicht
 wieder frei. Der Haltepunkt ist ein beendeter Lauf; die Frage, die danach auf
 dem Schirm steht, ist die von vor ihm, und der Statusblock, den er gelesen hat,
 ist so verbraucht wie seine Ermaechtigung. Wer nach dem Haltepunkt wirklich
-veroeffentlichen will, beendet den Dienst ein zweites Mal, startet ihn neu und
-klickt dort den anderen Knopf; der Statusblock wird dann noch einmal gelesen.
+veroeffentlichen will, braucht einen zweiten neuen Dienst und klickt dort den
+anderen Knopf; der Statusblock wird dann noch einmal gelesen. Auch diesen
+zweiten Neustart nimmt der Knopf ab -- er haengt am **Ende eines Laufs**, und
+der Haltepunkt ist eines.
 
 **Ein zweiter Klick genuegt nicht, und zwar auf keinem Weg.** Nicht nach einem
 Haltepunkt, nicht nach einer abgelaufenen Ermaechtigung, nicht nach einem
@@ -1413,10 +1508,82 @@ bezeugte nichts.
 Rauheit. Erstens muesste der Arbeiter als Kindprozess am **Ende eines Laufs**
 haengen statt an einem Klick -- der Dienst wartet dann auf ein Ende, das 45
 Minuten entfernt sein kann, und ob ein solcher Kindprozess das Schliessen der
-Sitzung ueberlebt, ist nicht gemessen (10). Zweitens gaebe es einen **zweiten
+Sitzung ueberlebt, ist an ihm nicht gemessen (10). **An der Nachbarstelle ist es
+gemessen, und die Antwort faellt gegen ihn aus:** FA-N1 hat am 05.09.2026
+belegt, dass ein nicht abgeloester Kindprozess unter Windows im Job-Objekt
+seines Vaters haengt und mit ihm stirbt. Der Arbeiter laeuft heute genau so --
+gebunden, mit Ausgabepipes. Das macht den ersten Grund nicht kleiner, sondern
+groesser. Zweitens gaebe es einen **zweiten
 Weg, auf dem die Seite entsteht**: einen zum Start und einen nach dem Lauf. Zwei
 Wege zu derselben Seite sind zwei Fassungen derselben Regel, und die zweite ist
 die, die der Mensch vor Augen hat, wenn es darauf ankommt.
+
+**Der Knopf, der weiterschaltet, und was er kostet.** Seit Fassung 13 (FA)
+steht am Ende eines Laufs ein Knopf auf der Seite. Er nimmt die zwei Neustarts
+ab, die dieser Abschnitt bis dahin dem Menschen ueberliess: **der Dienst
+startet seinen eigenen Nachfolger und beendet sich dann.** Er haengt an genau
+diesem Klick -- kein Zeitgeber, kein Urteil und kein Laufende druecken ihn; ein
+Ende macht ihn nur sichtbar.
+
+**Was er ausdruecklich nicht ist.** Er klickt nicht durch. Der Nachfolger
+faehrt hoch, laesst den Trockenlauf laufen und zeigt seine Seite -- dort hoert
+die Abloesung auf. Die zwei Ermaechtigungen (2.12), die zwei Klicks und der
+frische Stand nach dem Upload sind unberuehrt.
+
+**Die Sperre ist der Staffelstab, und die Reihenfolge ist die Zusage:** erst
+faellt der Port, dann die Sperre, und **der Alte bleibt am Leben**, bis in der
+Sperrdatei die Prozessnummer **und** der Port des Nachfolgers stehen. Der Port
+kommt erst hinein, wenn ein Dienst wirklich lauscht; die Nummer allein hiesse
+nur "er hat die Sperre", und danach kaeme noch sein Trockenlauf. Bestaetigt der
+Nachfolger nicht, holt der Alte Sperre und Port zurueck -- erst die Sperre,
+dann den Port -- und sagt, was war. **Ein Zustand, in dem beide weg sind, darf
+nicht entstehen; ein Zustand, in dem der Alte noch laeuft und sagt, dass es
+nicht geklappt hat, ist ein guter Ausgang.** Abgeloest wird immer der eigene
+Prozess: an dieser Stelle steht kein `kill`, kein `taskkill` und keine
+Prozessliste, aus der jemand ausgewaehlt wuerde.
+
+**Zwei Zeitfenster bleiben dabei offen. Sie sind benannt und begrenzt, nicht
+wegdefiniert:**
+
+1. **Das Fenster, in dem die Sperre niemand haelt.** Zwischen dem Freigeben
+   durch den Alten und dem Zugriff des Nachfolgers gehoert sie keinem; ein
+   dritter Start in genau diesem Augenblick bekaeme sie. **Das ist nicht
+   wegzubauen** -- eine Sperre, die man weiterreicht, ohne sie loszulassen, ist
+   keine --, und es ist derselbe Spalt, den jeder geordnete Neustart von Hand
+   auch hat, nur kuerzer. Er ist nach oben begrenzt: der Nachfolger fragt im
+   festen Takt, also ist ein Takt plus ein `wx` die Obergrenze, und genau das
+   wird gemessen. Ein Fenster von Sekunden hiesse, dass er gar nicht wartet.
+2. **Das dunkle Fenster: der Nachfolger hat die Sperre, aber noch keine
+   Seite.** Zwischen seinem Zugriff und dem Eintrag des Ports liegt sein
+   Trockenlauf, und der darf bis zu 170 Sekunden dauern. In dieser Zeit
+   antwortet auf dem Port niemand: der Alte hat ihn schon abgegeben, der Neue
+   hat ihn noch nicht. **Der Alte wartet genau in dieser Zeit** und gibt
+   erst nach 200 Sekunden auf -- laenger, als der Trockenlauf dauern darf,
+   sonst gaebe er auf, waehrend der Neue noch rechnet. Wer waehrend dieses
+   Fensters in den Browser sieht, sieht eine tote Seite, und das ist der
+   erwartete Anblick und kein Befund.
+
+**Der Nachfolger haengt an keinem Terminal mehr, und das ist der Preis.** Unter
+Windows haengt libuv jeden nicht abgeloesten Kindprozess in ein Job-Objekt mit
+`KILL_ON_JOB_CLOSE`: endet der Vater, bringt Windows das Kind um. **Gemessen am
+05.09.2026 (FA-N1):** ohne `detached` ueberlebt der Nachfolger den Vorgaenger
+**nicht** -- also genau der Zustand, den die ganze Reihenfolge oben verhindern
+soll. Er wird deshalb abgeloest gestartet, und damit setzt Windows
+`DETACHED_PROCESS` und `CREATE_NEW_PROCESS_GROUP`: **Strg+C in dem Terminal, in
+dem der Vorgaenger lief, erreicht ihn nicht mehr.** Er sagt das selbst, im
+Terminal und auf seiner Seite, statt den Beenden-Satz des gewoehnlichen Starts
+weiterzutragen, der dann nicht mehr stimmte. Seine Ausgabe laeuft trotzdem
+dorthin, wo auch der Vorgaenger geschrieben hat; auch das ist mitgemessen.
+
+**Die Folge, und sie ist unbequem: verwaiste Sitzungen werden dadurch
+wahrscheinlicher, nicht seltener.** Ein Dienst, den Strg+C nicht mehr erreicht,
+wird eher vergessen als einer, der im Vordergrund eines Fensters steht. Der Weg
+faengt das an einer Stelle auf -- ein spaeterer Start uebernimmt eine verwaiste
+Sperre und benennt sie dabei --, aber das setzt voraus, dass jemand denselben
+Weg noch einmal geht. **Was fehlt, ist eine Anzeige, welche Sitzungen laufen
+und seit wann.** Sie steht als offener Punkt (11.7) und **ausdruecklich nicht
+als Automatik, die fremde Prozesse beendet**: dass diese Stelle nur den eigenen
+Prozess abloest, ist eine Zusage und keine Auslassung.
 
 **Die Sperre gilt je Aufnahme und Modus.** Entschieden am 03.09.; damit ist
 der offene Punkt 11.3 der Fassung 2 geschlossen. Eine Shorts-Sitzung und eine
@@ -2203,9 +2370,16 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
 - **Ob der Arbeiter das Schliessen der Seite ueberlebt.** Der Freigabedienst
   startet den Shorts-Uploader heute als gebundenen Kindprozess mit
   Ausgabepipes, nicht abgeloest. Ob ein Arbeiter, der 45 Minuten wartet, das
-  Ende der Sitzung uebersteht oder mit ihr endet, ist nicht gemessen. Beide
-  Ausgaenge stehen im Gedaechtnis (2.6); der Unterschied ist, ob der zweite
-  Anlauf bei `hochgeladen` oder bei `thumbnail_gesetzt` ansetzt.
+  Ende der Sitzung uebersteht oder mit ihr endet, ist **an ihm** nicht
+  gemessen. Beide Ausgaenge stehen im Gedaechtnis (2.6); der Unterschied ist, ob
+  der zweite Anlauf bei `hochgeladen` oder bei `thumbnail_gesetzt` ansetzt.
+  **Daneben steht seit dem 05.09.2026 eine Messung an der Nachbarstelle**
+  (FA-N1, 2.13): ein nicht abgeloester Kindprozess haengt unter Windows im
+  Job-Objekt seines Vaters und stirbt mit ihm. Der Arbeiter laeuft gebunden;
+  die Messung spricht also dafuer, dass er mit der Sitzung endet. **Der Punkt
+  bleibt trotzdem offen**, weil sie an einem anderen Prozess gefahren wurde und
+  nicht an ihm -- eine Ableitung ist keine Messung, und dieser Vertrag zaehlt
+  sie auch nicht als eine.
 - **Ob `notifySubscribers: true` beim Upload je etwas bewirkt.** Am
   05.09.2026 hat die Bibliothek den Parameter **angenommen** -- der Aufruf ist
   mit ihm durchgelaufen und hat nicht abgewiesen. Was er ausloest, ist an
@@ -2318,20 +2492,41 @@ er nennt sie als offen oder fragt.
    Seite die Wahl anbietet -- was 7 heute ausschliesst ("keine
    Auswahloberflaeche") --, oder ob es beim Aufraeumen bleibt, ist nicht
    entschieden. Ein Bau darf diese Stelle nicht stillschweigend fuellen.
-7. **Wie der Weg bedient wird.** Der erste echte Lauf am 05.09.2026 brauchte
-   **drei Terminalstarts**: die zwei Neustarts des Dienstes, die 2.13 und die
-   Fassung 11 nennen, plus den ersten. Das ist der gebaute Weg und kein
-   Fehler -- er entstand aus der Entscheidung, dass die Seite **einmal** beim
-   Start aus dem Trockenlauf entsteht (2.13), und diese Entscheidung ist
-   richtig. Aber ein Weg, der drei Terminalstarts braucht, ist kein Weg, den
-   ein Mensch am Dienstagabend nach dem Render nimmt; die Bedienung ist der
-   naechste Bau. **Nicht entschieden ist, was daraus wird:** ein Knopf, der
-   die Neustarts selbst macht, ein Dienst, der sich anders aufteilt, oder eine
-   ganz andere Form. Was dabei **nicht** verhandelbar ist, steht schon fest
-   und wird von diesem Punkt nicht beruehrt: die zwei Ermaechtigungen (2.12),
-   die zwei Klicks, und dass die Seite nach dem Upload aus dem neuen Stand
-   entsteht und nicht aus dem alten (2.13). Eine Bedienung, die diese Naehte
-   glaettet, indem sie eine davon wegnimmt, loest die falsche Aufgabe.
+7. **Welche Sitzungen laufen, und seit wann.** Es gibt heute keine Stelle, die
+   das beantwortet. Auf Port 8791 lag seit dem 03.09.2026 eine Shorts-Sitzung,
+   die niemand bemerkt hat, bis der erste echte Lauf am 05.09. auf einen
+   anderen Port ausweichen musste. Das war kein Vertragsbruch -- 2.13 sieht
+   genau das vor, jede Sitzung ein eigener Prozess mit eigenem Port --, aber es
+   war ein Betriebszustand, den zwei Tage lang niemand sah, und er hielt einen
+   Port, eine Sperre je Aufnahme und einen Kindprozess. **Seit Fassung 13 wird
+   das wahrscheinlicher, nicht seltener:** der Nachfolger einer Abloesung ist
+   abgehaengt, und Strg+C in dem Terminal, in dem der Vorgaenger lief, erreicht
+   ihn nicht mehr (2.13). Ein Dienst, der so endet, wird eher vergessen als
+   einer im Vordergrund. **Nicht entschieden ist, wo die Anzeige steht** -- die
+   Uebersicht waere der naheliegende Ort, aber ob sie den Longform-Stand fuehrt,
+   ist selbst offen (Punkt 3) -- **und woraus sie liest**: die Sperrdateien
+   tragen Aufnahme, Prozessnummer, Port, Startzeit und Modus, und das ist
+   alles, was eine Anzeige braucht, aber eine Sperrdatei ohne lebenden Prozess
+   ist eine verwaiste und keine laufende Sitzung. **Was ausdruecklich nicht
+   gemeint ist: eine Automatik, die fremde Prozesse beendet.** Der einzige
+   Prozess, den dieser Weg je beendet, ist er selbst (2.13); eine Anzeige, die
+   einen Knopf zum Abschiessen bekaeme, waere ein anderer Bau und braeuchte
+   eine eigene Entscheidung.
+8. **Ob der Weg die Monetarisierung setzt** (2.5). Gemessen am 05.09.2026: ein
+   ueber diesen Weg hochgeladenes Video kommt ohne Monetarisierung an, und sie
+   wurde von Hand eingeschaltet. Das ist kein Rueckfall, sondern ein nie
+   gesetzter Wert -- sie sitzt nicht im `status`-Block, den dieser Weg liest und
+   zurueckschickt. **Was dagegen spricht, sie zu setzen, und es ist mehr als
+   eine Bequemlichkeit:** es waere ein **vierter schreibender Aufruf**, in einem
+   anderen Teil der API als den drei, die dieser Vertrag kennt und einzeln
+   begruendet (`videos.insert`, `thumbnails.set`, `videos.update` auf
+   `part=status`), und **er beruehrt Geld**. Abschnitt 7 zaehlt heute auf, was
+   nicht geschieht; ein vierter Aufruf muesste dort hindurch. **Und es ist
+   ungemessen, ob der vorhandene Zugang ihn ueberhaupt darf:** die
+   Berechtigungen dieses Tokens sind fuer die drei Aufrufe belegt und fuer
+   keinen vierten. Beides -- die Frage und die ungemessene Berechtigung --
+   steht hier, damit ein Bau nicht das eine fuer das andere haelt. Bis dahin
+   gilt: der Weg setzt sie nicht, und der Mensch schaltet sie im Studio ein.
 
 ---
 

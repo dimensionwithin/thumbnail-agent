@@ -184,7 +184,11 @@ SERVICE_ID = "dimensionwithin-thumbnail-compositor"
 # gegen die Liste gehalten hat. Das waere unsichtbar, wenn die Fassung stehen
 # bliebe. Der Compositor merkt es zusaetzlich am fehlenden Feld in der Antwort
 # und sagt es fuer genau diesen Export.
-SERVICE_PROTOCOL_VERSION = 5
+# EZ: Fassung 6 -- die Route /api/freigabe/longform kam dazu. Der Compositor
+# ist auf sie nicht ANGEWIESEN (ohne sie fehlt ein Knopf, nicht der Export),
+# deshalb steigt REQUIRED_PROTOCOL_VERSION drueben nicht; er erkennt einen
+# aelteren Dienst am 404 und sagt es, statt still nichts zu tun.
+SERVICE_PROTOCOL_VERSION = 6
 STARTUP_SIGNAL_TIMEOUT_SECONDS = 5.0
 BROWSER_OPEN_DELAY_SECONDS = 0.35
 WINDOWS_ERROR_ALREADY_EXISTS = 183
@@ -1346,6 +1350,419 @@ def port_is_free(port: int, host: str = HOST) -> bool:
         probe.close()
 
 
+# ---------------------------------------------------------------------------
+# EZ: DER KNOPF -- DEN FREIGABEDIENST IM LONGFORM-MODUS STARTEN
+# ---------------------------------------------------------------------------
+#
+# Bis hierher hat dieser Dienst KEIN einziges Programm gestartet. Er las einen
+# Ordner, schrieb ein Bild und einen Zettel, und mehr nicht. Ab hier startet er
+# eines. Das ist die groesste Rechteerweiterung, die er je bekommen hat, und
+# der Aufnahmename, der in den Aufruf geht, kommt aus einem Eingabefeld.
+#
+# ZWEI REGELN, DIE NICHT VERHANDELBAR SIND.
+#
+# 1. KEINE SHELL. Das Programm wird mit einer ARGUMENTLISTE gestartet, nie
+#    ueber eine Zeichenkette, die irgendjemand als Befehl auswertet. Kein
+#    shell=True, kein os.system, keine zusammengesetzte Kommandozeile.
+#
+#    Auf Windows reicht shell=False dafuer NICHT aus. CreateProcess kann keine
+#    .bat/.cmd-Datei ausfuehren; Windows startet dafuer cmd.exe und uebergibt
+#    ihr die Kommandozeile ALS TEXT -- und dann wertet cmd.exe & | ; ^ aus,
+#    obwohl shell=False dasteht. Ein node.cmd im PATH (npm-Wrapper, Volta- und
+#    nvm-Shims schreiben genau solche Dateien) machte aus dem sicheren Weg
+#    unbemerkt den unsicheren. Deshalb wird die Endung des aufgeloesten
+#    Programms geprueft, und nur .exe wird genommen. Siehe
+#    FREIGABE_PROGRAMM_ENDUNGEN und finde_node_programm().
+#
+# 2. NUR DIESES EINE PROGRAMM. Der Endpunkt nimmt keinen Programmnamen, keinen
+#    Pfad und keine zusaetzlichen Argumente entgegen. Er kennt genau einen
+#    Aufruf, und der steht hier im Quelltext: node, das Freigabeskript dieses
+#    Repos, der feste Modus, der Aufnahmename, der gesuchte Port, --no-browser.
+#    Der Rumpf der Anfrage traegt GENAU EINEN Schluessel; jeder weitere wird
+#    abgewiesen und NICHT still uebergangen -- ein still ignoriertes Argument
+#    sieht im Fehlerfall aus wie im Erfolgsfall.
+#
+# WAS DER KNOPF NICHT TUT: er laedt nichts hoch, er beendet nichts, er raeumt
+# nichts ab. Laeuft schon eine Sitzung, wird sie GEMELDET.
+
+# Der Modus steht im PFAD der Route und nicht im Rumpf, und er steht hier als
+# fertiges Argument. Ein Modus, den der Aufrufer waehlen koennte, waere ein
+# Programmargument aus dem Netz -- genau das, was Regel 2 ausschliesst.
+# Der Modus steht im PFAD der Route: /api/freigabe/longform. Ein Modus im
+# Rumpf waere ein Wert, den der Aufrufer waehlt -- der Pfad ist die Route
+# selbst, und eine zweite gibt es nicht.
+FREIGABE_ROUTE = "/api/freigabe/longform"
+FREIGABE_ARGUMENT_MODUS = "--modus=longform"
+# --no-browser: die Seite oeffnet der KNOPF, nicht der Dienst. Sonst oeffnete
+# sie zweimal, und die zweite Adresse traegt dasselbe Token.
+FREIGABE_ARGUMENT_KEIN_BROWSER = "--no-browser"
+FREIGABE_SKRIPT_TEILE = ("src", "upload", "freigabe-server.js")
+
+# 8791 ist die Vorgabe des Freigabedienstes. Beim ersten echten Lauf war er
+# belegt -- von einer Shorts-Sitzung, die seit zwei Tagen offen stand. Gesucht
+# wird deshalb ab dort aufwaerts; der genommene Port steht in der Antwort.
+FREIGABE_PORT_ERSTER = 8791
+FREIGABE_PORT_LETZTER = 8810
+
+# Der Freigabedienst rechnet beim Start einen Trockenlauf mit sha256 ueber die
+# Videodatei -- bei 900 MB sind das Sekunden, nicht Millisekunden. Die Frist
+# ist grosszuegig, weil ein zu frueher Abbruch dem Menschen sagen wuerde, es
+# sei nichts passiert, waehrend der Dienst gleich hochkommt.
+FREIGABE_STARTFRIST_SEKUNDEN = 120.0
+FREIGABE_PROTOKOLL_ZEILEN = 24
+FREIGABE_RUMPF_MAX_BYTES = 512
+# GENAU EIN Schluessel. Die Menge steht hier, damit die Pruefung sie RECHNET
+# und nicht Feld fuer Feld vergleicht: was nicht drinsteht, wird abgewiesen.
+FREIGABE_RUMPF_SCHLUESSEL = frozenset({"aufnahme"})
+
+# Die Form der Adresszeile ist das einzige, worauf sich dieser Knopf am
+# Freigabedienst verlaesst -- Meldungstexte ausdruecklich nicht.
+FREIGABE_ADRESSE_MUSTER = re.compile(
+    r"http://127\.0\.0\.1:(\d{1,5})/\?t=([0-9a-fA-F]{32,128})"
+)
+
+# Siehe Regel 1: auf Windows ist die Endung die Grenze zwischen "Argumentliste"
+# und "cmd.exe wertet aus". Auf POSIX gibt es keinen solchen Umweg; dort traegt
+# das Programm ueblicherweise gar keine Endung.
+FREIGABE_PROGRAMM_ENDUNGEN = (
+    frozenset({".exe"}) if os.name == "nt" else frozenset({""})
+)
+
+# DIE LAGEN. Vier verlangt der Auftrag, acht gibt es -- die vier zusaetzlichen
+# sind Ausgaenge, die es wirklich gibt und die nicht in einer der vier
+# verschwinden duerfen.
+#
+# KEINE ZWEI SAETZE DUERFEN GLEICH SEIN, und das wird GERECHNET, nicht
+# verglichen (siehe die Tests): fielen zwei zusammen, suchte der Mensch den
+# Fehler an der falschen Stelle. Genau derselbe Grund wie bei MODUS_BEZEICHNUNG
+# im Freigabedienst.
+FREIGABE_LAGE_SATZ = {
+    # 1. Es steht keine Aufnahme im Feld.
+    "aufnahme_fehlt": (
+        "Im Feld „Aufnahme“ steht kein Name. Der Freigabedienst "
+        "braucht genau einen; geraten wird hier nichts."
+    ),
+    # Die Form wird geprueft, BEVOR der Name weitergereicht wird.
+    "aufnahme_form": (
+        "Der Name im Feld „Aufnahme“ hat nicht die Form "
+        "JJJJ-MM-TT HH-MM-SS. Er wird nicht weitergereicht."
+    ),
+    # 2. Es laeuft schon eine Longform-Sitzung auf diese Aufnahme.
+    "sitzung_laeuft": (
+        "Für diese Aufnahme läuft bereits eine "
+        "Longform-Freigabesitzung. Sie wird nicht abgeräumt — nimm "
+        "ihr Fenster."
+    ),
+    # 3. Kein Port frei.
+    "kein_port_frei": (
+        "Kein freier Port für den Freigabedienst gefunden. Es läuft "
+        "vermutlich noch etwas aus einer früheren Sitzung."
+    ),
+    # 4. Der Dienst ist gestartet, hier ist die Adresse.
+    "gestartet": (
+        "Der Freigabedienst läuft im Longform-Modus. Die Adresse "
+        "trägt sein Sitzungstoken."
+    ),
+    "programm_fehlt": (
+        "Node ist nicht ausführbar aufzufinden. Ohne node startet der "
+        "Freigabedienst nicht."
+    ),
+    "dienst_abgebrochen": (
+        "Der Freigabedienst hat den Start abgebrochen. Sein Protokoll steht "
+        "unten."
+    ),
+    "startfrist_abgelaufen": (
+        "Der Freigabedienst hat in der Startfrist keine Adresse genannt. Er "
+        "läuft weiter und wird nicht beendet."
+    ),
+}
+
+# Welcher HTTP-Status zu welcher Lage gehoert. Getrennt vom Satz, weil der Satz
+# den Menschen adressiert und der Status die Maschine.
+FREIGABE_LAGE_STATUS = {
+    "aufnahme_fehlt": HTTPStatus.BAD_REQUEST,
+    "aufnahme_form": HTTPStatus.BAD_REQUEST,
+    "sitzung_laeuft": HTTPStatus.CONFLICT,
+    "kein_port_frei": HTTPStatus.SERVICE_UNAVAILABLE,
+    "gestartet": HTTPStatus.OK,
+    "programm_fehlt": HTTPStatus.INTERNAL_SERVER_ERROR,
+    "dienst_abgebrochen": HTTPStatus.INTERNAL_SERVER_ERROR,
+    "startfrist_abgelaufen": HTTPStatus.GATEWAY_TIMEOUT,
+}
+
+
+def freigabe_server_skript() -> Path:
+    """Der EINE Aufruf, den dieser Endpunkt kennt (Regel 2).
+
+    Er wird aus dem Ort DIESER Datei gebaut und nicht aus einer Einstellung:
+    der Freigabedienst liegt im selben Repo, und ein Konfigurationswert koennte
+    auf ein anderes Programm zeigen.
+    """
+
+    return Path(__file__).resolve().parent.joinpath(*FREIGABE_SKRIPT_TEILE)
+
+
+def finde_node_programm() -> tuple[Path | None, str | None]:
+    """Loest node auf und weist alles zurueck, was ueber cmd.exe liefe.
+
+    Zurueck kommt (pfad, grund); genau eines der beiden ist None. Der Grund
+    wird GENANNT und nicht zu einem allgemeinen "node fehlt" zusammengezogen:
+    ein gefundenes node.cmd ist ein anderer Zustand als gar kein node, und wer
+    ihn sucht, soll ihn lesen koennen.
+    """
+
+    roh = shutil.which("node")
+    if not roh:
+        return None, "shutil.which('node') hat nichts gefunden (PATH)."
+    pfad = Path(roh)
+    endung = pfad.suffix.lower()
+    if endung not in FREIGABE_PROGRAMM_ENDUNGEN:
+        erlaubt = ", ".join(
+            sorted(e or "(ohne Endung)" for e in FREIGABE_PROGRAMM_ENDUNGEN)
+        )
+        return None, (
+            f"Gefunden wurde {pfad} — eine "
+            f"{endung or '(endungslose)'}-Datei. Gestartet wird nur {erlaubt}: "
+            "eine .cmd- oder .bat-Datei läuft auf Windows über "
+            "cmd.exe, und cmd.exe wertet die Kommandozeile aus. Das wäre "
+            "die Shell, die hier ausgeschlossen ist."
+        )
+    return pfad, None
+
+
+def baue_freigabe_aufruf(
+    node: Path, skript: Path, aufnahme: str, port: int
+) -> list[str]:
+    """DIE EINZIGE Stelle, an der der Aufruf entsteht -- als LISTE (Regel 1).
+
+    Aus dem Aufnahmenamen wird EIN Listenelement, ganz gleich was darin steht.
+    Es gibt keinen Zweig, der hier eine Zeichenkette baut, und keinen, der aus
+    dem Rumpf der Anfrage ein weiteres Element anhaengt.
+    """
+
+    return [
+        str(node),
+        str(skript),
+        FREIGABE_ARGUMENT_MODUS,
+        "--aufnahme=" + aufnahme,
+        "--port=" + str(port),
+        FREIGABE_ARGUMENT_KEIN_BROWSER,
+    ]
+
+
+def lies_freigabe_rumpf(roh: bytes) -> tuple[str | None, str | None]:
+    """Liest {"aufnahme": "..."} -- und NUR das.
+
+    Zurueck kommt (aufnahme, grund). Ein zweiter Schluessel ist ein Grund und
+    kein Nebengeraeusch: wer "programm" oder "argumente" mitschickt, bekommt
+    eine Abweisung, die den Schluessel nennt. Still ignorieren hiesse, dem
+    Aufrufer eine Wirkung zu bestaetigen, die es nicht gibt.
+    """
+
+    if len(roh) > FREIGABE_RUMPF_MAX_BYTES:
+        return None, "Der Anfragerumpf ist zu lang."
+    try:
+        geparst = json.loads(roh.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None, "Der Anfragerumpf ist kein gültiges JSON."
+    if not isinstance(geparst, dict):
+        return None, "Der Anfragerumpf muss ein JSON-Objekt sein."
+    fremd = sorted(set(geparst) - FREIGABE_RUMPF_SCHLUESSEL)
+    if fremd:
+        erlaubt = ", ".join(sorted(FREIGABE_RUMPF_SCHLUESSEL))
+        return None, (
+            "Unbekannte Felder im Anfragerumpf: "
+            + ", ".join(repr(f) for f in fremd)
+            + f". Dieser Endpunkt nimmt genau {erlaubt} entgegen — keinen "
+            "Programmnamen, keinen Pfad und kein zusätzliches Argument."
+        )
+    wert = geparst.get("aufnahme")
+    if wert is None:
+        return None, None
+    if not isinstance(wert, str):
+        return None, "Das Feld 'aufnahme' muss Text sein."
+    return wert, None
+
+
+def longform_sperre_dritter(aufnahme: str) -> dict | None:
+    """Liest die Longform-Sperrdatei -- ausschliesslich, um einen Abbruch zu
+    BESCHRIFTEN, nie um ihn zu ersetzen.
+
+    Die Sperre nimmt der Freigabedienst selbst, atomar, als erste Handlung.
+    Diese Funktion laeuft erst, wenn er schon geendet hat: dann ist eine noch
+    liegende Sperrdatei die eines anderen, denn seine eigene gibt er auf jedem
+    Ausgang wieder frei. Vorher zu schauen hiesse, dieselbe Frage zweimal zu
+    beantworten und dazwischen ein Rennen zu oeffnen.
+
+    Es wird nichts geraten: Modus und Aufnahmename im Inhalt muessen zu dem
+    passen, wonach gefragt wurde. Passt etwas nicht, kommt None zurueck und der
+    Abbruch bleibt ein Abbruch.
+    """
+
+    if AUFNAHME_PATTERN.match(aufnahme) is None:
+        return None
+    pfad = (
+        Path(__file__).resolve().parent
+        / "data"
+        / "freigaben"
+        / (aufnahme + ".longform.sperre.json")
+    )
+    try:
+        inhalt = json.loads(pfad.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(inhalt, dict):
+        return None
+    if inhalt.get("modus") != "longform" or inhalt.get("aufnahme") != aufnahme:
+        return None
+    return inhalt
+
+
+def finde_freien_freigabe_port() -> int | None:
+    for port in range(FREIGABE_PORT_ERSTER, FREIGABE_PORT_LETZTER + 1):
+        if port_is_free(port):
+            return port
+    return None
+
+
+def _freigabe_lage(code: str, **extra: object) -> dict[str, object]:
+    return {"code": code, "message": FREIGABE_LAGE_SATZ[code], **extra}
+
+
+def _letzte_protokollzeilen(pfad: Path) -> str:
+    try:
+        text = pfad.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    zeilen = [z for z in text.splitlines() if z.strip()]
+    return "\n".join(zeilen[-FREIGABE_PROTOKOLL_ZEILEN:])
+
+
+def _freigabe_adresse_lage(treffer: re.Match, prozess_pid: int, protokoll: Path) -> dict:
+    return _freigabe_lage(
+        "gestartet",
+        adresse=treffer.group(0),
+        port=int(treffer.group(1)),
+        pid=prozess_pid,
+        protokoll=str(protokoll),
+    )
+
+
+def starte_longform_freigabe(aufnahme: object) -> dict[str, object]:
+    """Startet hoechstens EIN Programm und gibt die Lage zurueck.
+
+    Reine Ablauffolge ohne HTTP; der Handler weiter unten ist nur ein Adapter.
+    """
+
+    name = aufnahme.strip() if isinstance(aufnahme, str) else ""
+    if not name:
+        return _freigabe_lage("aufnahme_fehlt")
+    # Die Formpruefung steht VOR jedem Aufloesen, jedem Port und jedem Start --
+    # aus demselben Grund, aus dem sie im Freigabedienst die erste Anweisung
+    # ist: aus diesem Namen wird ein Argument und ein Dateiname.
+    formfehler = pruefe_aufnahme(name)
+    if formfehler is not None:
+        return _freigabe_lage("aufnahme_form", detail=formfehler)
+
+    node, grund = finde_node_programm()
+    if node is None:
+        return _freigabe_lage("programm_fehlt", detail=grund)
+    skript = freigabe_server_skript()
+    if not skript.is_file():
+        return _freigabe_lage(
+            "programm_fehlt", detail=f"Das Freigabeskript fehlt: {skript}"
+        )
+
+    port = finde_freien_freigabe_port()
+    if port is None:
+        return _freigabe_lage(
+            "kein_port_frei",
+            detail=(
+                f"Geprüft wurden {FREIGABE_PORT_ERSTER} bis "
+                f"{FREIGABE_PORT_LETZTER}."
+            ),
+        )
+
+    aufruf = baue_freigabe_aufruf(node, skript, name, port)
+    protokoll = MARKER_DIRECTORY / f"freigabe-longform-{port}.log"
+    try:
+        MARKER_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+    # Die Ausgabe geht in eine DATEI, nicht in eine Pipe. Zwei Gruende: der
+    # gestartete Dienst soll diesen hier ueberleben -- eine tote Pipe braechte
+    # ihn um, sobald der Compositor-Dienst endet --, und wer den Start
+    # nachlesen will, findet ihn danach noch.
+    zusatz: dict[str, object] = {}
+    if os.name == "nt":
+        zusatz["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        zusatz["start_new_session"] = True
+    try:
+        with open(protokoll, "wb") as ziel:
+            prozess = subprocess.Popen(
+                aufruf,
+                cwd=str(Path(__file__).resolve().parent),
+                stdin=subprocess.DEVNULL,
+                stdout=ziel,
+                stderr=subprocess.STDOUT,
+                shell=False,
+                close_fds=True,
+                **zusatz,
+            )
+    except OSError as fehler:
+        return _freigabe_lage(
+            "programm_fehlt", detail=f"{node} liess sich nicht starten: {fehler}"
+        )
+
+    frist = time.monotonic() + FREIGABE_STARTFRIST_SEKUNDEN
+    while True:
+        try:
+            text = protokoll.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        treffer = FREIGABE_ADRESSE_MUSTER.search(text)
+        if treffer is not None:
+            return _freigabe_adresse_lage(treffer, prozess.pid, protokoll)
+        beendet = prozess.poll()
+        if beendet is not None:
+            # Noch EINMAL lesen: zwischen dem letzten Lesen und dem Ende kann
+            # die Adresse geschrieben worden sein.
+            try:
+                text = protokoll.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = ""
+            treffer = FREIGABE_ADRESSE_MUSTER.search(text)
+            if treffer is not None:
+                return _freigabe_adresse_lage(treffer, prozess.pid, protokoll)
+            fremde = longform_sperre_dritter(name)
+            if fremde is not None:
+                return _freigabe_lage(
+                    "sitzung_laeuft",
+                    fremd_pid=fremde.get("pid"),
+                    fremd_port=fremde.get("port"),
+                    fremd_gestartet_am=fremde.get("gestartet_am"),
+                    protokoll=str(protokoll),
+                )
+            return _freigabe_lage(
+                "dienst_abgebrochen",
+                exit_code=beendet,
+                ausgabe=_letzte_protokollzeilen(protokoll),
+                protokoll=str(protokoll),
+            )
+        if time.monotonic() >= frist:
+            # NICHT beenden. Er rechnet vielleicht gerade sha256 ueber 900 MB.
+            return _freigabe_lage(
+                "startfrist_abgelaufen",
+                pid=prozess.pid,
+                port=port,
+                ausgabe=_letzte_protokollzeilen(protokoll),
+                protokoll=str(protokoll),
+            )
+        time.sleep(0.05)
+
+
 class SourceSelectionError(Exception):
     """Kontrollierter Auswahlfehler mit HTTP-tauglichem Fehlercode."""
 
@@ -2394,6 +2811,19 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
                 return
             self._serve_aufnahmen()
             return
+        if request.path == FREIGABE_ROUTE:
+            if self._reject_invalid_api_token():
+                return
+            # EZ: NUR POST. Diese Route startet ein Programm; ein GET waere aus
+            # einem Bild, einem Link oder einer Adresszeile ausloesbar, und
+            # genau das soll sie nicht sein.
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                "method_not_allowed",
+                "Der Freigabestart läuft ausschließlich über POST. Diese Route "
+                "startet ein Programm und ist über GET nicht erreichbar.",
+            )
+            return
         self._send_json(HTTPStatus.NOT_FOUND, "not_found", "Endpunkt nicht gefunden.")
 
     def _serve_aufnahmen(self) -> None:
@@ -2615,6 +3045,11 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
             if self._reject_invalid_api_token():
                 return
             self._save_export()
+            return
+        if request.path == FREIGABE_ROUTE:
+            if self._reject_invalid_api_token():
+                return
+            self._start_longform_freigabe(request.query)
             return
         self._send_json(HTTPStatus.NOT_FOUND, "not_found", "Endpunkt nicht gefunden.")
 
@@ -2945,6 +3380,81 @@ class ThumbnailRequestHandler(BaseHTTPRequestHandler):
         payload = json.dumps(result, ensure_ascii=False).encode("utf-8")
         self._send_headers(
             HTTPStatus.OK, "application/json; charset=utf-8", len(payload)
+        )
+        self.wfile.write(payload)
+
+    def _start_longform_freigabe(self, query: str) -> None:
+        """EZ: duenner Adapter auf starte_longform_freigabe().
+
+        Hier steht die HTTP-Seite und sonst nichts: was gestartet wird und mit
+        welchen Argumenten, steht in baue_freigabe_aufruf() und nirgends sonst.
+        """
+
+        # Kein Parameter in der Adresse. Der Aufnahmename gehoert in den Rumpf,
+        # und ein zweiter Weg hinein waere ein zweiter Weg, ihn zu setzen.
+        if query:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "unexpected_parameters",
+                "Dieser Endpunkt akzeptiert keine Parameter in der Adresse.",
+            )
+            return
+        # application/json: ein HTML-Formular einer fremden Seite kann diesen
+        # Typ nicht senden. Zusammen mit dem Sitzungstoken ist das die zweite
+        # Linie gegen einen Start, den niemand angeklickt hat.
+        content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            self._send_json(
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                "invalid_content_type",
+                "Dieser Endpunkt nimmt ausschließlich application/json entgegen.",
+            )
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            length = -1
+        if length < 0 or length > FREIGABE_RUMPF_MAX_BYTES:
+            self._send_json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                "invalid_body_size",
+                "Die Rumpflänge fehlt oder überschreitet das Limit.",
+            )
+            return
+        roh = self.rfile.read(length) if length else b""
+        if len(roh) != length:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                "incomplete_body",
+                "Der Anfragerumpf wurde nicht vollständig übertragen.",
+            )
+            return
+        aufnahme, grund = lies_freigabe_rumpf(roh) if roh else (None, None)
+        if grund is not None:
+            self._send_json(HTTPStatus.BAD_REQUEST, "invalid_body", grund)
+            return
+
+        lage = starte_longform_freigabe(aufnahme)
+        code = str(lage["code"])
+        status = FREIGABE_LAGE_STATUS[code]
+        if code != "gestartet":
+            self._send_json(
+                status,
+                code,
+                str(lage["message"]),
+                **{k: v for k, v in lage.items() if k not in {"code", "message"}},
+            )
+            return
+        _console_print(
+            "Freigabedienst (Longform) gestartet: PID "
+            f"{lage.get('pid')}, Port {lage.get('port')}, Protokoll "
+            f"{lage.get('protokoll')}"
+        )
+        payload = json.dumps(
+            {"ok": True, **lage}, ensure_ascii=False
+        ).encode("utf-8")
+        self._send_headers(
+            status, "application/json; charset=utf-8", len(payload)
         )
         self.wfile.write(payload)
 

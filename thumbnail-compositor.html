@@ -182,6 +182,29 @@
   .export:active{transform:translateY(1px)}
   .export:disabled{background:var(--graphite);color:var(--bone-dim);cursor:not-allowed;filter:none}
 
+
+  /* EZ: Der Knopf, der den Freigabedienst startet. Er sitzt UNTER dem
+     Export-Knopf und sieht bewusst anders aus als er: der Export ist der
+     Messingknopf, weil er die Arbeit dieser Seite beendet. Dieser hier fuehrt
+     WEITER -- auf eine andere Seite, in einem anderen Programm. Ein zweiter
+     Messingknopf haette gesagt, hier gebe es zwei gleichrangige Ausgaenge, und
+     wer schnell klickt, haette den falschen getroffen. */
+  .weiterButton{
+    width:100%;margin-top:0;background:transparent;border:1px solid var(--brass);
+    color:var(--brass);border-radius:7px;padding:13px;cursor:pointer;
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;transition:all .15s;
+  }
+  .weiterButton:hover:not(:disabled){background:rgba(169,130,70,.14);color:var(--bone)}
+  .weiterButton:active{transform:translateY(1px)}
+  .weiterButton:disabled{cursor:progress;opacity:.55}
+  .freigabeBlock{margin-top:22px;padding-top:20px;border-top:1px solid var(--graphite)}
+  .freigabeStatus{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--bone-dim);line-height:1.6;margin-top:10px;overflow-wrap:anywhere}
+  .freigabeStatus.warnung{color:#d08a5a;opacity:1}
+  .freigabeStatus.fehler{color:#ff9a86;opacity:1}
+  .freigabeStatus.gut{color:var(--brass);opacity:1}
+  .freigabeStatus a{color:inherit}
+  .freigabeStatus pre{font-family:var(--mono);font-size:9px;white-space:pre-wrap;margin:7px 0 0;opacity:.72;line-height:1.5}
   .divider{height:1px;background:var(--graphite);margin:6px 0 26px}
   .meta{font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--bone-dim);opacity:.55;margin-top:14px;line-height:1.6}
 </style>
@@ -362,6 +385,21 @@
     <div class="divider"></div>
     <button class="export" id="export" disabled>PNG exportieren (2560×1440)</button>
     <div class="meta" id="meta">Lege ein Chart-Bild ab, um zu exportieren.</div>
+    <!-- EZ: WO DIESER KNOPF SITZT UND WARUM.
+         Unter dem Export-Knopf und unter dessen Meldezeile, hinter einer
+         eigenen Trennlinie. Die Reihenfolge auf dieser Seite ist die
+         Reihenfolge der Arbeit: Bild bauen, exportieren, freigeben. Was
+         darueber steht, gehoert zum Bild; was hier steht, fuehrt aus dem Bild
+         heraus. Ueber dem Export-Knopf haette er den Weg umgedreht -- der
+         Freigabedienst liest den Beipackzettel, den der Export erst schreibt.
+         Er sitzt AUSSERDEM in Sichtweite des Aufnahmefeldes, aus dem er seinen
+         einzigen Wert nimmt: der Mensch sieht beim Klicken, welchen Namen er
+         weitergibt. -->
+    <div class="freigabeBlock">
+      <button class="weiterButton" id="freigabeStart" type="button">Longform-Freigabe öffnen</button>
+      <div class="freigabeStatus" id="freigabeStatus"></div>
+      <div class="hint">Startet den Freigabedienst für die Aufnahme, die oben im Feld steht &mdash; im Longform-Modus, auf einem freien Port, und öffnet seine Seite. Dieser Knopf lädt nichts hoch und beendet nichts: läuft schon eine Sitzung auf dieselbe Aufnahme, wird sie gemeldet, nicht abgeräumt.</div>
+    </div>
   </section>
 
   <section class="stage">
@@ -2132,6 +2170,158 @@ function setzeAufnahme(name, quelle){
 aufnahmeEl.addEventListener('input', function(){ setzeAufnahme(aufnahmeEl.value, 'tippen'); });
 aufnahmeLeerenEl.addEventListener('click', function(){ setzeAufnahme('', 'tippen'); });
 aufnahmeNachlesenEl.addEventListener('click', function(){ void ladeAufnahmen('nachlesen'); });
+
+// ---------- EZ: der Knopf, der den Freigabedienst startet
+//
+// WAS ER SELBST ERLEDIGT, was beim ersten echten Lauf von Hand geschah:
+//   - den Aufnahmenamen -- aus dem Feld oben, nicht getippt und nicht geraten;
+//   - den Port -- 8791 war belegt, von einer Shorts-Sitzung, die seit zwei
+//     Tagen offen stand; welcher genommen wurde, sagt er;
+//   - die Adresse mit dem Sitzungstoken, damit die Seite aufgeht.
+//
+// WAS ER NICHT TUT: hochladen, beenden, aufraeumen. Und er nimmt keinem der
+// zwei Klicks drueben etwas ab -- die Ermaechtigung entsteht auf der
+// Freigabeseite und nirgends sonst.
+const freigabeStartEl = document.getElementById('freigabeStart');
+const freigabeStatusEl = document.getElementById('freigabeStatus');
+
+// Die Meldung fuer den Betrieb OHNE Dienst. Sie steht hier oben, weil sie an
+// ZWEI Stellen gebraucht wird: beim Laden der Seite und beim Klick. Ein Knopf,
+// der ueber file:// still nichts tut, waere schlimmer als einer, der fehlt.
+const FREIGABE_OHNE_DIENST =
+  'Das geht nur ueber den lokalen Dienst. Diese Seite laeuft gerade ohne ihn '
+  + '(file:// oder ohne Sitzungstoken) und kann kein Programm starten. '
+  + 'Starte den Compositor ueber START-THUMBNAIL-COMPOSITOR.cmd.';
+
+// Der Text wird als TEXT gesetzt, nie als HTML: der Name der Aufnahme und die
+// Ausgabe des Freigabedienstes stehen darin, und beide kommen nicht von hier.
+function zeigeFreigabeStatus(art, satz, zusatz, adresse){
+  freigabeStatusEl.className = 'freigabeStatus' + (art ? ' ' + art : '');
+  freigabeStatusEl.textContent = '';
+  const kopf = document.createElement('div');
+  kopf.textContent = satz;
+  freigabeStatusEl.appendChild(kopf);
+  if (adresse){
+    const zeile = document.createElement('div');
+    zeile.style.marginTop = '7px';
+    const link = document.createElement('a');
+    link.href = adresse;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = adresse;
+    zeile.appendChild(link);
+    freigabeStatusEl.appendChild(zeile);
+  }
+  if (zusatz){
+    const block = document.createElement('pre');
+    block.textContent = zusatz;
+    freigabeStatusEl.appendChild(block);
+  }
+}
+
+// Was der Dienst in seinen Antworten mitschickt, in einen Satz gebracht. Die
+// Meldung selbst kommt von dort -- sie wird hier NICHT ein zweites Mal
+// formuliert, sonst stuenden zwei Urteile unter einer Anzeige.
+function freigabeZusatz(daten){
+  const teile = [];
+  if (daten && typeof daten.detail === 'string' && daten.detail) teile.push(daten.detail);
+  if (daten && daten.fremd_pid != null){
+    teile.push('Die laufende Sitzung: PID ' + daten.fremd_pid
+      + (daten.fremd_port != null ? ', Port ' + daten.fremd_port : ', Port noch nicht vergeben')
+      + (daten.fremd_gestartet_am ? ', gestartet ' + daten.fremd_gestartet_am : '') + '.');
+  }
+  if (daten && daten.pid != null && daten.code === 'startfrist_abgelaufen'){
+    teile.push('Er laeuft als PID ' + daten.pid + ' weiter und wird nicht beendet.');
+  }
+  if (daten && typeof daten.exit_code === 'number'){
+    teile.push('Rueckgabewert ' + daten.exit_code + '.');
+  }
+  if (daten && typeof daten.ausgabe === 'string' && daten.ausgabe) teile.push(daten.ausgabe);
+  if (daten && typeof daten.protokoll === 'string' && daten.protokoll){
+    teile.push('Protokoll: ' + daten.protokoll);
+  }
+  return teile.join('\n');
+}
+
+async function starteLongformFreigabe(){
+  if (!localService.available){
+    zeigeFreigabeStatus('fehler', FREIGABE_OHNE_DIENST, null, null);
+    return;
+  }
+  freigabeStartEl.disabled = true;
+  const name = String(state.aufnahme || '').trim();
+  zeigeFreigabeStatus('', name
+    ? 'Starte den Freigabedienst fuer ' + name + ' — der Trockenlauf rechnet sha256 ueber die Videodatei, das dauert.'
+    : 'Frage den Dienst …', null, null);
+  try {
+    const antwort = await fetch('/api/freigabe/longform', {
+      method: 'POST',
+      headers: {
+        'X-Session-Token': localService.token,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      // GENAU EIN Feld. Kein Programmname, kein Pfad, kein Port, kein Modus --
+      // was gestartet wird, weiss der Dienst, und der Modus steht in der Route.
+      body: JSON.stringify({ aufnahme: name }),
+      cache: 'no-store',
+      credentials: 'same-origin',
+    });
+    if (antwort.status === 404){
+      zeigeFreigabeStatus('fehler',
+        'Der laufende Dienst kennt /api/freigabe/longform noch nicht (aeltere Fassung). '
+        + 'Beende ihn und starte ihn neu, dann ist der Knopf da.', null, null);
+      return;
+    }
+    let daten = null;
+    try { daten = await antwort.json(); } catch (e) { daten = null; }
+    if (!daten || typeof daten.message !== 'string'){
+      zeigeFreigabeStatus('fehler',
+        'Der Dienst hat auf den Startversuch nichts Lesbares geantwortet (HTTP '
+        + antwort.status + ').', null, null);
+      return;
+    }
+    if (daten.ok !== true){
+      // Eine Zurueckweisung ist kein Ausfall: die Lage steht in der Meldung
+      // des Dienstes, und die wird gezeigt statt uebersetzt.
+      const art = (daten.code === 'sitzung_laeuft' || daten.code === 'startfrist_abgelaufen')
+        ? 'warnung' : 'fehler';
+      zeigeFreigabeStatus(art, daten.message, freigabeZusatz(daten), null);
+      return;
+    }
+    const adresse = typeof daten.adresse === 'string' ? daten.adresse : '';
+    if (!adresse){
+      zeigeFreigabeStatus('warnung',
+        'Der Dienst meldet einen Start, nennt aber keine Adresse. Sieh im Protokoll nach.',
+        freigabeZusatz(daten), null);
+      return;
+    }
+    // Das Fenster wird geoeffnet, UND die Adresse bleibt stehen. Ein
+    // Popup-Blocker gibt null zurueck; dann ist der Link der Weg, und er ist
+    // ohnehin der Weg fuer jeden, der das Fenster versehentlich schliesst --
+    // das Token gibt es nur einmal, beim Start dieser Sitzung.
+    let fenster = null;
+    try { fenster = window.open(adresse, '_blank', 'noopener'); } catch (e) { fenster = null; }
+    const satz = daten.message
+      + ' Port ' + daten.port + ', PID ' + daten.pid + '.'
+      + (fenster ? ' Die Seite wird geoeffnet.'
+                 : ' Der Browser hat das Fenster nicht geoeffnet — nimm den Link.');
+    zeigeFreigabeStatus('gut', satz, 'Protokoll: ' + (daten.protokoll || '(keins)'), adresse);
+  } catch (fehler){
+    zeigeFreigabeStatus('fehler',
+      'Der Startversuch hat den Dienst nicht erreicht: '
+      + (fehler && fehler.message ? fehler.message : 'unbekannter Fehler') + '.', null, null);
+  } finally {
+    freigabeStartEl.disabled = false;
+  }
+}
+freigabeStartEl.addEventListener('click', function(){ void starteLongformFreigabe(); });
+// Der Grund steht schon da, bevor jemand klickt -- und der Klick sagt ihn
+// nochmal. Der Knopf bleibt bedienbar: ein grauer Knopf ohne Text waere "still
+// nichts tun" mit anderen Mitteln.
+if (!localService.available){
+  zeigeFreigabeStatus('warnung', FREIGABE_OHNE_DIENST, null, null);
+}
 
 // EQ: `absicht` ist 'nachlesen', wenn ein Mensch den Knopf gedrueckt hat, und
 // sonst 'start' (Seitenaufbau, Chartwechsel). Der Unterschied ist NUR die

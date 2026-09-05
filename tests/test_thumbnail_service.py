@@ -12,6 +12,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -89,6 +90,20 @@ from thumbnail_service import (
     series_for_preset,
     signal_running_instance,
     verify_only_series_touched,
+    FREIGABE_ARGUMENT_KEIN_BROWSER,
+    FREIGABE_ARGUMENT_MODUS,
+    FREIGABE_LAGE_SATZ,
+    FREIGABE_LAGE_STATUS,
+    FREIGABE_ROUTE,
+    FREIGABE_RUMPF_MAX_BYTES,
+    FREIGABE_RUMPF_SCHLUESSEL,
+    baue_freigabe_aufruf,
+    finde_freien_freigabe_port,
+    finde_node_programm,
+    freigabe_server_skript,
+    lies_freigabe_rumpf,
+    longform_sperre_dritter,
+    starte_longform_freigabe,
 )
 
 
@@ -4902,7 +4917,12 @@ class AufnahmeNamenspruefungTests(HttpEndpointTests):
             "Der Dienst hat nicht genannt, welche Aufnahme-Herkunft er geschrieben hat",
             self.html,
         )
-        self.assertEqual(SERVICE_PROTOCOL_VERSION, 5)
+        # EZ: Bis hierher stand hier "== 5". Die Aussage dieses Tests ist, dass
+        # die Fassung MIT ES gestiegen ist -- nicht, dass sie danach nie wieder
+        # steigt. Fassung 6 kam mit /api/freigabe/longform (EZ); ein "==" haette
+        # jede weitere Route hier rot gemacht, obwohl der Satz, um den es geht,
+        # unveraendert gilt.
+        self.assertGreaterEqual(SERVICE_PROTOCOL_VERSION, 5)
 
     # -- Nachweis 6: der Zettel ist sonst zeichengleich --------------------
 
@@ -5032,3 +5052,906 @@ class AufnahmeNamenspruefungTests(HttpEndpointTests):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ===========================================================================
+# EZ: DER KNOPF -- DEN FREIGABEDIENST IM LONGFORM-MODUS STARTEN
+# ===========================================================================
+
+
+def freigabe_logik_js(html: str) -> str:
+    """Der Freigabe-Knopf des Compositors, woertlich aus der Seite."""
+
+    return compositor_schnitt(
+        html,
+        "// ---------- EZ: der Knopf, der den Freigabedienst startet",
+        "// EQ: `absicht` ist 'nachlesen'",
+    )
+
+
+# Der Rahmen fuer die Seite. Alles darin ist Umgebung -- ein Mini-DOM, ein
+# gestelltes fetch, ein gestelltes window.open. Nichts davon ist Knopf-Logik;
+# die kommt woertlich aus der HTML.
+EZ_RAHMEN = """
+const [basis, token, szenario] = process.argv.slice(2);
+
+const echterFetch = globalThis.fetch;
+globalThis.fetch = (pfad, opt) => echterFetch(basis + pfad, opt);
+
+function Knoten(art){
+  return {
+    art: art, kinder: [], _text: '', className: '', disabled: false,
+    style: {}, href: '', target: '', rel: '',
+    get textContent(){ return this._text; },
+    set textContent(w){ this._text = String(w); this.kinder.length = 0; },
+    appendChild(k){ this.kinder.push(k); return k; },
+    addEventListener(){ },
+  };
+}
+function fladen(k){
+  const eigen = k._text;
+  const unten = k.kinder.map(fladen).join('\\n');
+  return [eigen, unten].filter(Boolean).join('\\n');
+}
+const knoten = { freigabeStart: Knoten('button'), freigabeStatus: Knoten('div') };
+const document = { getElementById: (id) => knoten[id], createElement: Knoten };
+
+let geoeffnet = [];
+const window = { open(adresse){ geoeffnet.push(adresse);
+  return szenario === 'popupblocker' ? null : { adresse: adresse }; } };
+
+const localService = { available: szenario !== 'ohne-dienst', token: token };
+const state = { aufnahme: process.env.EZ_AUFNAHME || '' };
+
+__FREIGABE_LOGIK__
+
+function bericht(){
+  const s = knoten.freigabeStatus;
+  return {
+    klasse: s.className,
+    text: fladen(s),
+    links: s.kinder.filter(k => k.art === 'a').map(k => k.href),
+    geoeffnet: geoeffnet.slice(),
+    knopfGesperrt: knoten.freigabeStart.disabled,
+  };
+}
+
+(async () => {
+  const beimLaden = bericht();
+  if (szenario === 'ohne-dienst'){
+    // Ueber file:// darf nichts ans Netz gehen. Der fetch wird zur Falle
+    // gemacht statt nur weggelassen.
+    globalThis.fetch = () => { throw new Error('EZ: ueber file:// darf nichts ans Netz'); };
+  }
+  await starteLongformFreigabe();
+  console.log(JSON.stringify({ beimLaden: beimLaden, nachKlick: bericht() }));
+})().catch(fehler => {
+  console.log(JSON.stringify({ absturz: String((fehler && fehler.message) || fehler) }));
+  process.exitCode = 1;
+});
+"""
+
+
+# Ein Stellvertreter fuer node: er schreibt seine Argumentliste, so wie er sie
+# WIRKLICH bekommen hat, in eine Datei -- und dann die Adresszeile, damit der
+# Erfolgsfall durchlaeuft. Damit ist nachweisbar, was an dem gestarteten
+# Programm ankommt, ohne den echten Freigabedienst zu brauchen.
+STELLVERTRETER = """
+import json, os, sys
+ziel = os.environ["EZ_ARGV_ZIEL"]
+with open(ziel, "w", encoding="utf-8") as f:
+    json.dump(sys.argv, f, ensure_ascii=False)
+if os.environ.get("EZ_STILL") == "1":
+    sys.exit(int(os.environ.get("EZ_CODE", "1")))
+print("http://127.0.0.1:%s/?t=%s" % (os.environ["EZ_PORT"], "a" * 64))
+sys.stdout.flush()
+import time
+time.sleep(float(os.environ.get("EZ_LEBEN", "6")))
+"""
+
+# Ein zweites Programm, das es NICHT geben darf: es legt eine Datei an. Taucht
+# sie auf, hat jemand eine Kommandozeile ausgewertet.
+ZWEITES_PROGRAMM = """
+import os, sys
+open(os.environ["EZ_MARKER"], "w").close()
+"""
+
+# Ein Aufnahmename, der alles enthaelt, womit man aus einem Argument einen
+# zweiten Befehl macht: Anfuehrungszeichen, Semikolon, kaufmaennisches Und, und
+# ein zweites Programm dahinter.
+BOESER_NAME = '2026-08-29 18-18-19" & marker.cmd & echo ; rem '
+
+
+def _loeschbar(pfad: Path) -> bool:
+    """Ob Windows die Datei schon wieder freigegeben hat."""
+    try:
+        with open(pfad, "ab"):
+            return True
+    except OSError:
+        return False
+
+
+class FreigabeAufrufTests(unittest.TestCase):
+    """NACHWEIS 1 UND 2, an der reinen Stelle: kein Befehl, nur Argumente --
+    und nur dieses eine Programm."""
+
+    def test_the_recording_name_stays_exactly_one_argument(self) -> None:
+        aufruf = baue_freigabe_aufruf(
+            Path("C:/nodejs/node.exe"), Path("P:/repo/src/upload/freigabe-server.js"),
+            BOESER_NAME, 8791,
+        )
+        self.assertEqual(len(aufruf), 6)
+        # Der ganze Name, unveraendert, in EINEM Element -- nicht zerlegt,
+        # nicht maskiert, nicht gekuerzt.
+        self.assertEqual(aufruf[3], "--aufnahme=" + BOESER_NAME)
+        self.assertEqual(
+            sum(1 for teil in aufruf if BOESER_NAME in teil), 1
+        )
+
+    def test_the_call_carries_nothing_the_caller_chose(self) -> None:
+        """Programm, Skript, Modus und --no-browser stehen im Quelltext; aus dem
+        Aufruf kommen nur Aufnahme und Port."""
+        aufruf = baue_freigabe_aufruf(
+            Path("N.exe"), Path("S.js"), "2026-08-29 18-18-19", 8795
+        )
+        self.assertEqual(
+            aufruf,
+            ["N.exe", "S.js", "--modus=longform",
+             "--aufnahme=2026-08-29 18-18-19", "--port=8795", "--no-browser"],
+        )
+        self.assertEqual(aufruf[2], FREIGABE_ARGUMENT_MODUS)
+        self.assertEqual(aufruf[5], FREIGABE_ARGUMENT_KEIN_BROWSER)
+
+    def test_a_shell_would_start_a_second_program_and_the_list_does_not(self) -> None:
+        """DER WICHTIGSTE NACHWEIS DIESES AUFTRAGS, gemessen statt behauptet.
+
+        Derselbe Name, zwei Wege. Ueber eine Shell startet er ein zweites
+        Programm; ueber eine Argumentliste kommt er als ein Argument an, und
+        das zweite Programm laeuft nicht.
+        """
+
+        with tempfile.TemporaryDirectory() as ordner:
+            wurzel = Path(ordner)
+            zweites = wurzel / "zweites.py"
+            zweites.write_text(ZWEITES_PROGRAMM, encoding="utf-8")
+            leser = wurzel / "leser.py"
+            leser.write_text(
+                "import json,os,sys\n"
+                "json.dump(sys.argv, open(os.environ['EZ_ARGV_ZIEL'],'w'))\n",
+                encoding="utf-8",
+            )
+
+            # -- Weg A: ueber die Shell. Der Name traegt "& <zweites Programm>".
+            marker_a = wurzel / "shell-marker"
+            argv_a = wurzel / "argv-a.json"
+            umgebung = dict(os.environ, EZ_MARKER=str(marker_a), EZ_ARGV_ZIEL=str(argv_a))
+            # Kein abschliessendes Leerzeichen -- siehe die Begruendung in
+            # test_regel_1_holds_even_if_the_shape_check_were_gone.
+            name_shell = (
+                f'2026-08-29 18-18-19" & "{sys.executable}" "{zweites}" & echo fertig'
+                if os.name == "nt"
+                else f'2026-08-29 18-18-19"; "{sys.executable}" "{zweites}"; echo fertig'
+            )
+            befehl = f'"{sys.executable}" "{leser}" "--aufnahme={name_shell}"'
+            subprocess.run(
+                befehl, shell=True, env=umgebung, capture_output=True, timeout=60,
+                check=False,
+            )
+            self.assertTrue(
+                marker_a.exists(),
+                "Der Shell-Weg haette hier ein zweites Programm starten muessen "
+                "-- sonst misst dieser Test nichts.",
+            )
+
+            # -- Weg B: der gebaute Weg. Derselbe Name, als Listenelement.
+            marker_b = wurzel / "liste-marker"
+            argv_b = wurzel / "argv-b.json"
+            umgebung = dict(os.environ, EZ_MARKER=str(marker_b), EZ_ARGV_ZIEL=str(argv_b))
+            aufruf = baue_freigabe_aufruf(
+                Path(sys.executable), leser, name_shell, 8791
+            )
+            # Der Modus- und Browserplatz sind hier ohne Bedeutung; gemessen
+            # wird, WAS ankommt.
+            subprocess.run(
+                aufruf, shell=False, env=umgebung, capture_output=True, timeout=60,
+                check=False,
+            )
+            self.assertFalse(
+                marker_b.exists(),
+                "Ueber die Argumentliste darf kein zweites Programm anlaufen.",
+            )
+            angekommen = json.loads(argv_b.read_text(encoding="utf-8"))
+            self.assertIn("--aufnahme=" + name_shell, angekommen)
+            self.assertEqual(
+                sum(1 for a in angekommen if name_shell in a), 1
+            )
+
+
+class FreigabeProgrammTests(unittest.TestCase):
+    """NACHWEIS 1, zweite Linie: was ueber cmd.exe liefe, wird nicht genommen."""
+
+    def test_a_cmd_wrapper_is_refused_and_the_reason_is_named(self) -> None:
+        with patch("thumbnail_service.shutil.which", return_value=r"C:\npm\node.cmd"):
+            pfad, grund = finde_node_programm()
+        self.assertIsNone(pfad)
+        self.assertIn("node.cmd", grund)
+        self.assertIn("cmd.exe", grund)
+
+    def test_a_bat_wrapper_is_refused(self) -> None:
+        with patch("thumbnail_service.shutil.which", return_value=r"C:\shims\node.bat"):
+            pfad, grund = finde_node_programm()
+        self.assertIsNone(pfad)
+        self.assertIn("node.bat", grund)
+
+    def test_missing_node_is_a_different_reason_than_a_wrapper(self) -> None:
+        """Zwei Zustaende, zwei Gruende. Wer sie zusammenzoege, schickte den
+        Menschen node installieren, das er schon hat."""
+        with patch("thumbnail_service.shutil.which", return_value=None):
+            _, ohne = finde_node_programm()
+        with patch("thumbnail_service.shutil.which", return_value=r"C:\npm\node.cmd"):
+            _, wrapper = finde_node_programm()
+        self.assertNotEqual(ohne, wrapper)
+
+    def test_the_real_executable_passes(self) -> None:
+        endung = ".exe" if os.name == "nt" else ""
+        with patch(
+            "thumbnail_service.shutil.which", return_value=f"/opt/node/node{endung}"
+        ):
+            pfad, grund = finde_node_programm()
+        self.assertIsNone(grund)
+        self.assertEqual(pfad, Path(f"/opt/node/node{endung}"))
+
+    def test_the_script_path_is_built_from_this_file_not_from_a_setting(self) -> None:
+        skript = freigabe_server_skript()
+        self.assertEqual(skript.name, "freigabe-server.js")
+        self.assertEqual(
+            skript, Path(thumbnail_service.__file__).resolve().parent
+            / "src" / "upload" / "freigabe-server.js"
+        )
+        self.assertTrue(skript.is_file(), skript)
+
+
+class FreigabeRumpfTests(unittest.TestCase):
+    """NACHWEIS 2: kein Programmname, kein Pfad, kein zusaetzliches Argument --
+    und keines davon wird still ignoriert."""
+
+    def test_the_only_accepted_key_is_the_recording(self) -> None:
+        name, grund = lies_freigabe_rumpf(b'{"aufnahme": "2026-08-29 18-18-19"}')
+        self.assertIsNone(grund)
+        self.assertEqual(name, "2026-08-29 18-18-19")
+
+    def test_a_program_name_is_refused_and_named(self) -> None:
+        name, grund = lies_freigabe_rumpf(
+            b'{"aufnahme": "2026-08-29 18-18-19", "programm": "calc.exe"}'
+        )
+        self.assertIsNone(name)
+        self.assertIn("'programm'", grund)
+
+    def test_a_path_is_refused_and_named(self) -> None:
+        _, grund = lies_freigabe_rumpf(
+            b'{"aufnahme": "2026-08-29 18-18-19", "pfad": "C:\\\\evil.js"}'
+        )
+        self.assertIn("'pfad'", grund)
+
+    def test_an_extra_argument_is_refused_and_named(self) -> None:
+        _, grund = lies_freigabe_rumpf(
+            b'{"aufnahme": "2026-08-29 18-18-19", "argumente": ["--execute"]}'
+        )
+        self.assertIn("'argumente'", grund)
+
+    def test_a_mode_of_ones_own_choosing_is_refused(self) -> None:
+        """Der Modus steht in der Route. Ein Modus im Rumpf waere ein Wert, den
+        der Aufrufer waehlt."""
+        _, grund = lies_freigabe_rumpf(
+            b'{"aufnahme": "2026-08-29 18-18-19", "modus": "shorts"}'
+        )
+        self.assertIn("'modus'", grund)
+
+    def test_every_foreign_key_is_named_not_only_the_first(self) -> None:
+        _, grund = lies_freigabe_rumpf(
+            b'{"programm": "x", "port": 1, "wurzel": "y"}'
+        )
+        for feld in ("'programm'", "'port'", "'wurzel'"):
+            self.assertIn(feld, grund)
+
+    def test_the_key_set_is_computed_not_compared(self) -> None:
+        """Die Pruefung rechnet mit der Menge. Kaeme ein Feld dazu, ohne dass
+        FREIGABE_RUMPF_SCHLUESSEL waechst, faellt es hier auf."""
+        self.assertEqual(FREIGABE_RUMPF_SCHLUESSEL, frozenset({"aufnahme"}))
+
+    def test_broken_json_is_refused(self) -> None:
+        _, grund = lies_freigabe_rumpf(b"{nope")
+        self.assertIn("JSON", grund)
+
+    def test_a_json_array_is_refused(self) -> None:
+        _, grund = lies_freigabe_rumpf(b'["2026-08-29 18-18-19"]')
+        self.assertIn("Objekt", grund)
+
+    def test_an_overlong_body_is_refused(self) -> None:
+        _, grund = lies_freigabe_rumpf(b"x" * (FREIGABE_RUMPF_MAX_BYTES + 1))
+        self.assertIn("zu lang", grund)
+
+
+class FreigabeLagenTests(unittest.TestCase):
+    """NACHWEIS 4: die Lagen sind verschieden, und das wird GERECHNET."""
+
+    def test_no_two_situations_share_a_sentence(self) -> None:
+        saetze = list(FREIGABE_LAGE_SATZ.values())
+        self.assertEqual(
+            len(set(saetze)), len(saetze),
+            "Zwei Lagen tragen denselben Satz -- dann sucht der Mensch den "
+            "Fehler an der falschen Stelle.",
+        )
+
+    def test_the_four_situations_the_order_asks_for_all_exist(self) -> None:
+        for code in ("aufnahme_fehlt", "sitzung_laeuft", "kein_port_frei", "gestartet"):
+            self.assertIn(code, FREIGABE_LAGE_SATZ)
+            self.assertIn(code, FREIGABE_LAGE_STATUS)
+
+    def test_every_situation_has_a_status_and_no_status_is_orphaned(self) -> None:
+        self.assertEqual(set(FREIGABE_LAGE_SATZ), set(FREIGABE_LAGE_STATUS))
+
+    def test_only_the_started_situation_is_a_success(self) -> None:
+        erfolge = {c for c, s in FREIGABE_LAGE_STATUS.items() if int(s) < 400}
+        self.assertEqual(erfolge, {"gestartet"})
+
+
+class FreigabeStartTests(unittest.TestCase):
+    """NACHWEIS 1, 3 und 4 am ganzen Weg: was gestartet wird, was ankommt, und
+    welche Lage herauskommt."""
+
+    def setUp(self) -> None:
+        # ignore_cleanup_errors: auf Windows haelt ein gerade beendeter
+        # Prozess seine Protokolldatei noch einen Wimpernschlag offen. Das ist
+        # ein Aufraeumproblem des Tests, kein Befund.
+        self.temporary = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.wurzel = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
+        self.stellvertreter = self.wurzel / "stellvertreter.py"
+        self.stellvertreter.write_text(STELLVERTRETER, encoding="utf-8")
+        self.argv_ziel = self.wurzel / "argv.json"
+        self.marker = self.wurzel / "zweites-programm-lief"
+        self.logs = self.wurzel / "logs"
+        self.logs.mkdir()
+        for ziel, wert in (
+            ("thumbnail_service.MARKER_DIRECTORY", self.logs),
+            ("thumbnail_service.FREIGABE_PORT_ERSTER", 18791),
+            ("thumbnail_service.FREIGABE_PORT_LETZTER", 18810),
+        ):
+            p = patch(ziel, wert)
+            p.start()
+            self.addCleanup(p.stop)
+        os.environ["EZ_ARGV_ZIEL"] = str(self.argv_ziel)
+        os.environ["EZ_MARKER"] = str(self.marker)
+        os.environ["EZ_PORT"] = "18791"
+        os.environ["EZ_LEBEN"] = "3"
+        self.addCleanup(
+            lambda: [
+                os.environ.pop(k, None)
+                for k in ("EZ_ARGV_ZIEL", "EZ_MARKER", "EZ_PORT", "EZ_LEBEN",
+                          "EZ_STILL", "EZ_CODE")
+            ]
+        )
+        self.gestartet: list[int] = []
+        self.addCleanup(self._raeume_auf)
+
+    def _raeume_auf(self) -> None:
+        """Nur die Prozesse, die DIESER Test selbst gestartet hat.
+
+        Fremde Prozesse fasst weder dieser Test noch der Dienst an.
+        """
+        for pid in self.gestartet:
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+        # Kurz warten, bis Windows die Protokolldatei wieder freigibt.
+        ende = time.monotonic() + 3.0
+        while time.monotonic() < ende:
+            if all(_loeschbar(p) for p in self.logs.glob("*.log")):
+                break
+            time.sleep(0.05)
+
+    def stelle_programm(self):
+        """node und Skript durch den Stellvertreter ersetzen."""
+        return (
+            patch(
+                "thumbnail_service.finde_node_programm",
+                return_value=(Path(sys.executable), None),
+            ),
+            patch(
+                "thumbnail_service.freigabe_server_skript",
+                return_value=self.stellvertreter,
+            ),
+        )
+
+    def starte(self, aufnahme: object) -> dict:
+        a, b = self.stelle_programm()
+        with a, b:
+            lage = starte_longform_freigabe(aufnahme)
+        if isinstance(lage.get("pid"), int):
+            self.gestartet.append(lage["pid"])
+        return lage
+
+    # -- Lage 1: keine Aufnahme im Feld ------------------------------------
+
+    def test_an_empty_field_starts_nothing(self) -> None:
+        lage = self.starte("")
+        self.assertEqual(lage["code"], "aufnahme_fehlt")
+        self.assertFalse(self.argv_ziel.exists(), "Es wurde etwas gestartet.")
+
+    def test_whitespace_is_not_a_recording(self) -> None:
+        self.assertEqual(self.starte("   ")["code"], "aufnahme_fehlt")
+        self.assertEqual(self.starte(None)["code"], "aufnahme_fehlt")
+
+    # -- NACHWEIS 3: die Form wird geprueft, bevor etwas weitergereicht wird
+
+    def test_a_malformed_name_is_refused_before_anything_starts(self) -> None:
+        lage = self.starte(BOESER_NAME)
+        self.assertEqual(lage["code"], "aufnahme_form")
+        self.assertFalse(
+            self.argv_ziel.exists(),
+            "Der Name wurde weitergereicht, obwohl er die Form nicht hat.",
+        )
+        self.assertFalse(self.marker.exists())
+
+    def test_a_name_with_the_right_shape_but_no_such_moment_is_refused(self) -> None:
+        lage = self.starte("2026-13-45 99-99-99")
+        self.assertEqual(lage["code"], "aufnahme_form")
+        self.assertFalse(self.argv_ziel.exists())
+
+    def test_a_well_formed_name_reaches_the_program_as_one_argument(self) -> None:
+        lage = self.starte("2026-08-29 18-18-19")
+        self.assertEqual(lage["code"], "gestartet", lage)
+        angekommen = json.loads(self.argv_ziel.read_text(encoding="utf-8"))
+        self.assertIn("--aufnahme=2026-08-29 18-18-19", angekommen)
+        self.assertIn("--modus=longform", angekommen)
+        self.assertIn("--no-browser", angekommen)
+        # Nichts sonst. Der gebaute Aufruf hat SECHS Glieder (Programm, Skript,
+        # vier Argumente); in sys.argv des gestarteten Programms steht das
+        # Programm selbst nicht, deshalb sind es dort fuenf.
+        self.assertEqual(len(angekommen), 5, angekommen)
+        self.assertEqual(
+            len(baue_freigabe_aufruf(Path("n"), Path("s"), "2026-08-29 18-18-19", 1)),
+            6,
+        )
+
+    def test_a_well_formed_name_that_does_not_exist_is_the_services_verdict(self) -> None:
+        """NACHWEIS 3, zweite Haelfte: die Form stimmt, die Aufnahme gibt es
+        nicht. Der Compositor kennt die Longform-Renderwurzel nicht -- er
+        REICHT WEITER, und der Freigabedienst urteilt. Hier steht der
+        Stellvertreter fuer einen Dienst, der abbricht."""
+        os.environ["EZ_STILL"] = "1"
+        os.environ["EZ_CODE"] = "1"
+        lage = self.starte("2019-01-01 00-00-00")
+        self.assertEqual(lage["code"], "dienst_abgebrochen", lage)
+        self.assertEqual(lage["exit_code"], 1)
+        # Weitergereicht wurde er trotzdem -- und zwar unveraendert.
+        angekommen = json.loads(self.argv_ziel.read_text(encoding="utf-8"))
+        self.assertIn("--aufnahme=2019-01-01 00-00-00", angekommen)
+
+    # -- REGEL 1, einzeln gemessen ----------------------------------------
+
+    def test_the_call_is_a_list_and_never_a_shell(self) -> None:
+        """Wie Popen gerufen wird -- unabhaengig davon, was im Namen steht.
+
+        shell=True waere hier kein Schoenheitsfehler: auf Windows uebergibt
+        Windows die Kommandozeile dann an cmd.exe, und cmd.exe wertet sie aus.
+        """
+        gesehen = {}
+        echtes_popen = subprocess.Popen
+
+        def merke(aufruf, *a, **kw):
+            gesehen["aufruf"] = aufruf
+            gesehen["shell"] = kw.get("shell", "nicht angegeben")
+            return echtes_popen(aufruf, *a, **kw)
+
+        a, b = self.stelle_programm()
+        with a, b, patch("thumbnail_service.subprocess.Popen", merke):
+            lage = starte_longform_freigabe("2026-08-29 18-18-19")
+        if isinstance(lage.get("pid"), int):
+            self.gestartet.append(lage["pid"])
+        self.assertIsInstance(gesehen["aufruf"], list, gesehen)
+        self.assertIs(gesehen["shell"], False, gesehen)
+
+    def test_regel_1_holds_even_if_the_shape_check_were_gone(self) -> None:
+        """DIE ZWEITE LINIE, ohne die erste gemessen.
+
+        Die Formpruefung laesst kein Anfuehrungszeichen und kein & durch --
+        deshalb faellt ein Fehler an Regel 1 im Normalbetrieb nicht auf. Hier
+        wird die Formpruefung ausgehaengt und derselbe boese Name durch den
+        Start geschickt: ueber eine Argumentliste laeuft nichts an; ueber eine
+        Shell liefe das zweite Programm.
+        """
+        zweites = self.wurzel / "zweites.py"
+        zweites.write_text(ZWEITES_PROGRAMM, encoding="utf-8")
+        # Der Name endet NICHT auf einem Leerzeichen: Windows gibt ein
+        # abschliessendes Leerzeichen im letzten Argument nicht zuverlaessig
+        # weiter (gemessen), und das ist ein Detail der Argumentuebergabe, das
+        # diesen Test nur verrauschen wuerde. Gemessen wird hier, ob ein
+        # ZWEITES PROGRAMM anlaeuft.
+        name = (
+            f'2026-08-29 18-18-19" & "{sys.executable}" "{zweites}" & echo fertig'
+            if os.name == "nt"
+            else f'2026-08-29 18-18-19"; "{sys.executable}" "{zweites}"; echo fertig'
+        )
+        a, b = self.stelle_programm()
+        with a, b, patch("thumbnail_service.pruefe_aufnahme", return_value=None):
+            lage = starte_longform_freigabe(name)
+        if isinstance(lage.get("pid"), int):
+            self.gestartet.append(lage["pid"])
+        self.assertFalse(
+            self.marker.exists(),
+            "Ein zweites Programm ist angelaufen -- der Aufruf wurde als "
+            "Kommandozeile ausgewertet.",
+        )
+        angekommen = json.loads(self.argv_ziel.read_text(encoding="utf-8"))
+        self.assertIn("--aufnahme=" + name, angekommen)
+        self.assertEqual(sum(1 for x in angekommen if name in x), 1, angekommen)
+
+    # -- Lage 3: kein Port frei --------------------------------------------
+
+    def test_no_free_port_is_its_own_situation(self) -> None:
+        with patch("thumbnail_service.finde_freien_freigabe_port", return_value=None):
+            lage = self.starte("2026-08-29 18-18-19")
+        self.assertEqual(lage["code"], "kein_port_frei")
+        self.assertFalse(self.argv_ziel.exists(), "Ohne Port darf nichts starten.")
+
+    def test_the_port_search_skips_what_is_taken(self) -> None:
+        """8791 war beim ersten echten Lauf belegt. Gesucht wird aufwaerts."""
+        belegt = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(belegt.close)
+        belegt.bind((HOST, 18791))
+        belegt.listen(1)
+        self.assertEqual(finde_freien_freigabe_port(), 18792)
+
+    def test_the_chosen_port_is_the_one_the_program_gets(self) -> None:
+        with patch("thumbnail_service.finde_freien_freigabe_port", return_value=18799):
+            os.environ["EZ_PORT"] = "18799"
+            lage = self.starte("2026-08-29 18-18-19")
+        self.assertEqual(lage["code"], "gestartet", lage)
+        angekommen = json.loads(self.argv_ziel.read_text(encoding="utf-8"))
+        self.assertIn("--port=18799", angekommen)
+        self.assertEqual(lage["port"], 18799)
+
+    # -- Lage 4: gestartet, hier ist die Adresse ---------------------------
+
+    def test_the_address_carries_the_session_token(self) -> None:
+        lage = self.starte("2026-08-29 18-18-19")
+        self.assertEqual(lage["code"], "gestartet", lage)
+        self.assertRegex(lage["adresse"], r"^http://127\.0\.0\.1:\d+/\?t=[0-9a-f]{64}$")
+        self.assertIsInstance(lage["pid"], int)
+        self.assertTrue(Path(str(lage["protokoll"])).is_file())
+
+    # -- Lage 2: es laeuft schon eine Sitzung ------------------------------
+
+    def test_a_running_session_is_reported_and_not_cleared_away(self) -> None:
+        aufnahme = "2026-08-29 18-18-19"
+        sperren = self.wurzel / "data" / "freigaben"
+        sperren.mkdir(parents=True)
+        sperre = sperren / (aufnahme + ".longform.sperre.json")
+        sperre.write_text(
+            json.dumps({
+                "artifact_type": "dw.freigabe.longform.sperre",
+                "modus": "longform", "aufnahme": aufnahme,
+                "pid": 4242, "port": 8791,
+                "gestartet_am": "2026-09-05T18:00:00+02:00",
+            }),
+            encoding="utf-8",
+        )
+        os.environ["EZ_STILL"] = "1"
+        with patch(
+            "thumbnail_service.longform_sperre_dritter",
+            side_effect=lambda name: json.loads(sperre.read_text(encoding="utf-8"))
+            if name == aufnahme else None,
+        ):
+            lage = self.starte(aufnahme)
+        self.assertEqual(lage["code"], "sitzung_laeuft", lage)
+        self.assertEqual(lage["fremd_pid"], 4242)
+        self.assertEqual(lage["fremd_port"], 8791)
+        # NICHT abgeraeumt.
+        self.assertTrue(sperre.is_file())
+
+    def test_the_lock_is_read_only_to_label_and_never_guessed(self) -> None:
+        """longform_sperre_dritter() glaubt nur, was zusammenpasst."""
+        aufnahme = "2026-08-29 18-18-19"
+        # Gelesen wird nur, was zusammenpasst: falscher Modus oder fremde
+        # Aufnahme sind KEINE laufende Sitzung.
+        with tempfile.TemporaryDirectory() as ordner:
+            wurzel = Path(ordner)
+            (wurzel / "data" / "freigaben").mkdir(parents=True)
+            ziel = wurzel / "data" / "freigaben" / (aufnahme + ".longform.sperre.json")
+            for inhalt, erwartet in (
+                ({"modus": "shorts", "aufnahme": aufnahme}, None),
+                ({"modus": "longform", "aufnahme": "2020-01-01 00-00-00"}, None),
+                ({"modus": "longform", "aufnahme": aufnahme, "pid": 7}, {"pid": 7}),
+            ):
+                ziel.write_text(json.dumps(inhalt), encoding="utf-8")
+                with patch.object(
+                    thumbnail_service, "__file__", str(wurzel / "thumbnail_service.py")
+                ):
+                    ergebnis = longform_sperre_dritter(aufnahme)
+                if erwartet is None:
+                    self.assertIsNone(ergebnis, inhalt)
+                else:
+                    self.assertIsNotNone(ergebnis, inhalt)
+                    self.assertEqual(ergebnis["pid"], 7)
+
+    # -- NACHWEIS 4: die vier Lagen fallen nicht zusammen -------------------
+
+    def test_the_four_situations_produce_four_different_messages(self) -> None:
+        lagen = []
+        lagen.append(self.starte(""))                                   # 1
+        aufnahme = "2026-08-29 18-18-19"
+        os.environ["EZ_STILL"] = "1"
+        with patch(
+            "thumbnail_service.longform_sperre_dritter",
+            return_value={"modus": "longform", "aufnahme": aufnahme, "pid": 9, "port": 8791},
+        ):
+            lagen.append(self.starte(aufnahme))                          # 2
+        os.environ.pop("EZ_STILL")
+        with patch("thumbnail_service.finde_freien_freigabe_port", return_value=None):
+            lagen.append(self.starte(aufnahme))                          # 3
+        lagen.append(self.starte(aufnahme))                              # 4
+        self.assertEqual(
+            [l["code"] for l in lagen],
+            ["aufnahme_fehlt", "sitzung_laeuft", "kein_port_frei", "gestartet"],
+        )
+        # GERECHNET, nicht paarweise verglichen: vier Lagen, vier Saetze.
+        saetze = [str(l["message"]) for l in lagen]
+        self.assertEqual(len(set(saetze)), 4, saetze)
+        codes = [str(l["code"]) for l in lagen]
+        self.assertEqual(len(set(codes)), 4, codes)
+
+
+class FreigabeRouteTests(HttpEndpointTests):
+    """NACHWEIS 2 an der Route: sie nimmt nichts entgegen als das eine Feld."""
+
+    def anfrage(self, rumpf: bytes, **kw) -> tuple[int, dict]:
+        kopf = {"Content-Type": "application/json"}
+        kopf.update(kw.pop("headers", {}))
+        status, _, daten = self.request(
+            "POST", "/api/freigabe/longform", body=rumpf, headers=kopf, **kw
+        )
+        try:
+            return status, json.loads(daten.decode("utf-8"))
+        except ValueError:
+            return status, {}
+
+    def test_get_is_refused_because_this_route_starts_a_program(self) -> None:
+        status, _, daten = self.request("GET", "/api/freigabe/longform")
+        self.assertEqual(status, 405)
+        self.assertIn("POST", json.loads(daten.decode("utf-8"))["message"])
+
+    def test_without_the_session_token_nothing_happens(self) -> None:
+        status, _, _ = self.request(
+            "POST", "/api/freigabe/longform", token=None,
+            body=b'{"aufnahme": "2026-08-29 18-18-19"}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 401)
+
+    def test_a_query_parameter_is_refused(self) -> None:
+        status, daten = self.anfrage(b"{}")
+        self.assertEqual(status, 400)
+        status, _, roh = self.request(
+            "POST", "/api/freigabe/longform?aufnahme=x", body=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            json.loads(roh.decode("utf-8"))["code"], "unexpected_parameters"
+        )
+
+    def test_a_form_content_type_is_refused(self) -> None:
+        """Ein HTML-Formular einer fremden Seite kann kein application/json
+        senden. Diese Pruefung ist die zweite Linie neben dem Token."""
+        status, _, roh = self.request(
+            "POST", "/api/freigabe/longform",
+            body=b"aufnahme=2026-08-29+18-18-19",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(
+            json.loads(roh.decode("utf-8"))["code"], "invalid_content_type"
+        )
+
+    def test_a_program_name_in_the_body_is_refused_not_ignored(self) -> None:
+        status, daten = self.anfrage(
+            b'{"aufnahme": "2026-08-29 18-18-19", "programm": "calc.exe"}'
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(daten["code"], "invalid_body")
+        self.assertIn("'programm'", daten["message"])
+
+    def test_an_empty_field_answers_with_the_first_situation(self) -> None:
+        status, daten = self.anfrage(b'{"aufnahme": ""}')
+        self.assertEqual(status, 400)
+        self.assertEqual(daten["code"], "aufnahme_fehlt")
+        self.assertEqual(daten["message"], FREIGABE_LAGE_SATZ["aufnahme_fehlt"])
+
+    def test_a_malformed_recording_answers_with_the_form_situation(self) -> None:
+        status, daten = self.anfrage(b'{"aufnahme": "gestern abend"}')
+        self.assertEqual(status, 400)
+        self.assertEqual(daten["code"], "aufnahme_form")
+        self.assertIn("JJJJ-MM-TT", daten["message"])
+
+    def test_an_overlong_body_never_reaches_the_parser(self) -> None:
+        status, _, _ = self.request(
+            "POST", "/api/freigabe/longform",
+            body=b'{"aufnahme": "' + b"9" * 4096 + b'"}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 413)
+
+    def test_the_service_announces_the_new_route_by_version(self) -> None:
+        status, _, roh = self.request("GET", "/api/health", token=None)
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(
+            json.loads(roh.decode("utf-8"))["protocol_version"], 6
+        )
+
+
+class FreigabeKnopfClientTests(HttpEndpointTests):
+    """NACHWEIS 5 und die Seite: der Knopf, woertlich aus der HTML, in Node."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def fahre(self, szenario: str, aufnahme: str = "") -> dict:
+        quelle = EZ_RAHMEN.replace("__FREIGABE_LOGIK__", freigabe_logik_js(self.html))
+        skript = Path(self.temporary.name) / f"ez-{szenario}.cjs"
+        skript.write_text(quelle, encoding="utf-8")
+        fertig = subprocess.run(
+            ["node", str(skript),
+             f"http://{HOST}:{self.server.server_port}", self.token, szenario],
+            capture_output=True, text=True, timeout=120, check=False,
+            env=dict(os.environ, EZ_AUFNAHME=aufnahme),
+        )
+        self.assertTrue(fertig.stdout.strip(), fertig.stdout + fertig.stderr)
+        ergebnis = json.loads(fertig.stdout.strip().splitlines()[-1])
+        self.assertNotIn("absturz", ergebnis, ergebnis)
+        return ergebnis
+
+    def test_without_the_service_the_button_says_so_instead_of_doing_nothing(self) -> None:
+        """NACHWEIS 5: ueber file:// geladen. Der Knopf sagt, dass er das nicht
+        kann -- beim Laden UND beim Klick -- und geht nicht ans Netz."""
+        ergebnis = self.fahre("ohne-dienst", "2026-08-29 18-18-19")
+        self.assertIn("nur ueber den lokalen Dienst", ergebnis["beimLaden"]["text"])
+        self.assertIn("warnung", ergebnis["beimLaden"]["klasse"])
+        self.assertIn("nur ueber den lokalen Dienst", ergebnis["nachKlick"]["text"])
+        self.assertIn("fehler", ergebnis["nachKlick"]["klasse"])
+        self.assertEqual(ergebnis["nachKlick"]["geoeffnet"], [])
+
+    def test_the_button_is_not_disabled_when_there_is_no_service(self) -> None:
+        """Ein grauer Knopf ohne Text waere 'still nichts tun' mit anderen
+        Mitteln."""
+        ergebnis = self.fahre("ohne-dienst")
+        self.assertFalse(ergebnis["beimLaden"]["knopfGesperrt"])
+        self.assertFalse(ergebnis["nachKlick"]["knopfGesperrt"])
+
+    def test_an_empty_field_shows_the_services_first_situation(self) -> None:
+        ergebnis = self.fahre("leer", "")
+        self.assertIn(
+            "steht kein Name", ergebnis["nachKlick"]["text"]
+        )
+        self.assertEqual(ergebnis["nachKlick"]["geoeffnet"], [])
+        self.assertIn("fehler", ergebnis["nachKlick"]["klasse"])
+
+    def test_the_page_sends_exactly_one_field(self) -> None:
+        """Was die Seite schickt, steht woertlich in ihrem Quelltext: ein
+        Objekt mit einem Feld. Kein Programm, kein Pfad, kein Port, kein
+        Modus."""
+        logik = freigabe_logik_js(self.html)
+        self.assertIn("body: JSON.stringify({ aufnahme: name }),", logik)
+        self.assertIn("method: 'POST',", logik)
+        for verboten in ("programm", "pfad:", "modus:", "argumente"):
+            self.assertNotIn(verboten + ":", logik.replace("aufnahme: name", ""))
+
+    def test_the_status_line_is_written_as_text_never_as_html(self) -> None:
+        """Der Aufnahmename und die Ausgabe des Freigabedienstes stehen darin,
+        und beide kommen nicht von dieser Seite."""
+        logik = freigabe_logik_js(self.html)
+        self.assertNotIn("innerHTML", logik)
+        self.assertIn("textContent", logik)
+
+
+class FreigabeKnopfOrtTests(unittest.TestCase):
+    """Wo der Knopf sitzt -- und was er nicht angefasst hat."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.html = (
+            Path(__file__).resolve().parents[1] / "thumbnail-compositor.html"
+        ).read_text(encoding="utf-8")
+
+    def test_the_button_sits_below_the_export_button(self) -> None:
+        self.assertLess(
+            self.html.index('id="export"'), self.html.index('id="freigabeStart"')
+        )
+        self.assertLess(
+            self.html.index('id="meta"'), self.html.index('id="freigabeStart"')
+        )
+
+    def test_the_button_sits_in_the_same_panel_as_the_recording_field(self) -> None:
+        """Der Mensch soll beim Klicken sehen, welchen Namen er weitergibt."""
+        self.assertLess(
+            self.html.index('id="aufnahme"'), self.html.index('id="freigabeStart"')
+        )
+        panel_ende = self.html.index("<section class=\"stage\">")
+        self.assertLess(self.html.index('id="freigabeStart"'), panel_ende)
+
+    def test_the_button_does_not_look_like_the_export_button(self) -> None:
+        """Zwei Messingknoepfe haetten gesagt, hier gebe es zwei
+        gleichrangige Ausgaenge."""
+        block = compositor_schnitt(
+            self.html, '<div class="freigabeBlock">', "</div>\n    </div>"
+        )
+        self.assertIn('class="weiterButton"', block)
+        self.assertNotIn('class="export"', block)
+
+    def test_the_hint_says_what_the_button_does_not_do(self) -> None:
+        block = compositor_schnitt(
+            self.html, '<div class="freigabeBlock">', "</div>\n    </div>"
+        )
+        self.assertIn("lädt nichts hoch", block)
+        self.assertIn("nicht abgeräumt", block)
+
+
+class FreigabeExportUnberuehrtTests(unittest.TestCase):
+    """NACHWEIS 6: der Export ist unberuehrt -- gemessen an der Datei, nicht
+    behauptet."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.wurzel = Path(__file__).resolve().parents[1]
+        cls.html = (cls.wurzel / "thumbnail-compositor.html").read_text(encoding="utf-8")
+
+    def alte_fassung(self) -> str:
+        fertig = subprocess.run(
+            ["git", "show", "HEAD:thumbnail-compositor.html"],
+            cwd=self.wurzel, capture_output=True, timeout=120, check=False,
+        )
+        if fertig.returncode != 0:
+            self.skipTest("git nicht verfuegbar")
+        return fertig.stdout.decode("utf-8")
+
+    def test_the_render_entry_point_is_byte_identical(self) -> None:
+        alt = self.alte_fassung()
+        marke = "window.adwRender"
+        self.assertIn(marke, self.html)
+        ende = "// Ein Neuladen erzeugt eine neue Kennung"
+        stueck_neu = compositor_schnitt(
+            self.html, "window.adwRender = async function", ende
+        )
+        stueck_alt = compositor_schnitt(
+            alt, "window.adwRender = async function", ende
+        )
+        self.assertEqual(
+            stueck_neu.encode("utf-8"), stueck_alt.encode("utf-8"),
+            "window.adwRender wurde angefasst.",
+        )
+
+    def test_the_export_call_is_byte_identical(self) -> None:
+        alt = self.alte_fassung()
+        for von, bis in (
+            ("async function writeExportToLocalService(",
+             "exportBtn.addEventListener"),
+            ("function beipackzettelDaten()", "async function beipackzettelInhalt("),
+            ("function exportFilename(extension)", "function beipackzettelDaten()"),
+            ("function downloadExportBlob(", "async function writeExportToLocalService("),
+        ):
+            self.assertEqual(
+                compositor_schnitt(self.html, von, bis).encode("utf-8"),
+                compositor_schnitt(alt, von, bis).encode("utf-8"),
+                von,
+            )
+
+    def test_the_new_button_touches_no_export_state(self) -> None:
+        logik = freigabe_logik_js(self.html)
+        for verboten in ("state.preset", "state.meta", "exportBtn", "render()",
+                         "/api/export", "state.aufnahme ="):
+            self.assertNotIn(verboten, logik)

@@ -1,5 +1,64 @@
 # Vertrag: der Longform-Weg
 
+**Fassung 14 (FE und FF, 05.09.2026).** **Eine offene Frage wird hinfaellig,
+zwei Stellen werden berichtigt. Keine Zusage der Abschnitte 1 bis 8 wird
+dadurch weiter oder weicher** -- nichts, was dieser Weg tun darf, kommt hinzu,
+und nichts, was er zusagt, wird lockerer.
+
+**Der offene Punkt 11.8 der Fassung 13 -- ob der Weg die Monetarisierung
+setzen soll -- ist geschlossen, und nicht durch eine Entscheidung, sondern
+durch eine Messung: die Frage stellt sich nicht.** Gemessen am 05.09.2026 (FC,
+FCa), mit dem Zugang dieses Projekts. Fuer die Einstellung, die im Studio
+"Mid-Roll-Anzeigen einblenden" heisst, fuehrt die Ressource `videos` **kein
+Feld**; der einzige verwandte Mechanismus der ganzen Data API v3 gehoert zu
+`liveBroadcasts` und gilt nur fuer Live-Uebertragungen. Das einzige
+monetarisierungsnahe Feld, `monetizationDetails`, traegt genau ein Unterfeld,
+`access`, und `access` sagt, ob ein Video monetarisiert werden **darf** --
+eine Auskunft, keine Einstellung. Ein lesender Aufruf darauf endete mit 403,
+waehrend die Kontrolle im selben Zeitfenster, mit demselben Token, auf
+derselben videoId, mit `part=status` mit 200 und vollstaendigem Statusblock
+zurueckkam: der 403 haengt am Teil, nicht am Zugang. **Es ist damit kein "soll
+nicht", sondern ein "kann nicht"** -- ein "soll nicht" laedt dazu ein, spaeter
+anders zu entscheiden; ein "kann nicht" braucht eine neue Messung, und welche
+das waere (eine Aenderung der API, oder ein Zugang mit anderem Scope), steht
+in 2.5 daneben. **Abschnitt 7 bekommt dafuer keine Zeile:** er zaehlt auf, was
+dieser Weg nicht tut, obwohl er koennte, und eine Unmoeglichkeit dort wuerde
+dem Vertrag eine Sicherung zuschreiben, die er nicht gebaut hat. Der Mensch
+schaltet die Monetarisierung weiterhin im Studio ein.
+
+**Bestaetigt ist ausserdem der Scope, und nur der.** Am 05.09.2026 hat Googles
+Tokeninfo-Endpunkt lesend genau einen Scope fuer diesen Zugang gemeldet --
+`youtube.force-ssl` --, identisch mit dem, was lokal gespeichert ist; bis
+dahin war das aus der eigenen Token-Datei uebernommen und nicht von der
+Gegenseite bestaetigt (2.5). **Ueber den Modus der OAuth-App sagt das
+nichts.** Der bleibt ungemessen in 10, mit seinen zwei einander
+widersprechenden Belegen.
+
+**Dazu zwei Berichtigungen (FE, aus FD).** Erstens das Datum der
+Shorts-Sitzung auf Port 8791: 04.09., nicht 03.09., und 33 Stunden 56 Minuten,
+nicht zwei Tage. Zwei Messungen tragen das Datum -- der von EZ abgelesene
+Prozessstart und die Sperrdatei, die FD am 05.09. gelesen hat; das "03.09."
+stammte aus einer Formulierung in EY und meinte die Aufnahme, nicht den
+Prozess, und die Zahl war schon einmal in diese falsche Richtung korrigiert
+worden. Die Grenze dessen, was die Sperrdatei hergibt, steht in 11.7.
+Zweitens Abschnitt 4, Schritt 17: der Longform-Dienst endet nach dem dritten
+Aufruf **nicht** von selbst, und die Sperre bleibt liegen, bis ein naechster
+Start sie als verwaist uebernimmt -- in diesem Modus gibt es nur SIGINT und
+die Abloesung als Ausgaenge. Der Vertrag hatte das Gegenteil behauptet; **der
+Bau ist die Wahrheit, und der Vertrag folgt ihm.** Was das fuer den Menschen
+heisst, steht bei Schritt 17; dass es dieselbe Sache ist wie die fehlende
+Anzeige der laufenden Sitzungen, steht in 11.7 -- es ist kein neuer offener
+Punkt.
+
+**Die offenen Punkte werden sieben.** 11.8 faellt weg, keiner kommt hinzu, und
+die Nummern 11.1 bis 11.7 bleiben, wie sie waren. **Abschnitt 10 geht von
+achtzehn auf neunzehn:** was am 403 ungemessen bleibt -- sein Grund, ob ein
+anderer Zugang das Feld anders saehe, und ob es ausserhalb der Data API v3
+ueberhaupt eine Stelle dafuer gibt -- steht dort, und **ausdruecklich nicht
+als Vorbehalt gegen die Schliessung von 11.8**: die traegt der Schema-Befund,
+nicht der 403. Wie diese Fassung entstanden ist, steht in den Berichten FE
+(Punkte 7 und 8) und FF (der Rest).
+
 **Fassung 13 (FB, 05.09.2026).** **Der Weg wird bedient.** **Genau eine Zusage
 der Abschnitte 1 bis 8 aendert sich: 2.13.** Zwischen den Klicks stehen keine
 getippten Neustarts mehr -- der Compositor startet die Kette (EZ), und ein
@@ -29,7 +88,8 @@ deshalb abgehaengt, und **Strg+C in dem Terminal, in dem der Vorgaenger lief,
 erreicht ihn nicht mehr.** Er sagt das selbst, im Terminal und auf seiner
 Seite. **Die Folge ist unbequem und steht darum daneben: verwaiste Sitzungen
 werden dadurch wahrscheinlicher, nicht seltener.** Auf Port 8791 lag seit dem
-03.09. eine Shorts-Sitzung, die niemand bemerkt hat, bis der erste echte Lauf
+04.09. (bis Fassung 13 stand hier 03.09.; berichtigt in Fassung 14, siehe
+11.7) eine Shorts-Sitzung, die niemand bemerkt hat, bis der erste echte Lauf
 ausweichen musste -- und das war vor dieser Fassung, mit einem Dienst, den
 Strg+C noch erreichte. Was fehlt, ist eine Anzeige, welche Sitzungen laufen und
 seit wann; sie steht als offener Punkt und **ausdruecklich nicht als Automatik,
@@ -43,7 +103,9 @@ Monetarisierung sitzt nicht im `status`-Block, den dieser Weg liest und
 zurueckschickt; sie ist deshalb bei keinem Vergleich aufgefallen und **konnte
 es nicht** -- nicht, weil der Vergleich zu grob waere, sondern weil er ueber
 ein Feld gar nicht laeuft, das er nie zu sehen bekommt. Der Befund steht in
-2.5, wo die Zusage steht, die er prueft; ob der Weg sie setzen soll, ist offen.
+2.5, wo die Zusage steht, die er prueft; ob der Weg sie setzen soll, war
+offen (11.8 dieser Fassung; in Fassung 14 geschlossen, weil die API die Stelle
+nicht hat).
 
 **Die offenen Punkte werden acht.** Der siebte der Fassung 12 faellt weg; zwei
 kommen hinzu -- die Anzeige der laufenden Sitzungen, und ob der Weg die
@@ -740,6 +802,19 @@ umgangen.
 Projekts wird mit `youtube.force-ssl` geholt. **Am 05.09.2026 gemessen: der
 Aufruf laeuft mit diesem Token** und antwortet mit `privacyStatus: public`.
 
+**Ebenfalls am 05.09.2026 gemessen, und diesmal bei Google selbst:** ein
+lesender Aufruf gegen Googles Tokeninfo-Endpunkt (HTTP 200, FCa) gibt fuer
+diesen Zugang genau einen Scope zurueck -- `youtube.force-ssl` --, identisch
+mit dem Wert, den `.youtube-token.json` fuehrt und den `src/youtube/auth.js`
+anfordert. Bis dahin war dieser Wert aus der eigenen Token-Datei uebernommen;
+jetzt hat ihn die Gegenseite bestaetigt, und es ist damit kein zweiter,
+engerer oder abweichender Scope am Werk als der bekannte. **Was das nicht
+sagt: irgendetwas ueber den Modus der OAuth-App.** Ob sie im Testmodus oder in
+Produktion steht -- und damit, ob ein Refresh-Token nach sieben Tagen ablaeuft
+--, bleibt ungemessen in 10. Ein Scope ist kein Veroeffentlichungsstatus, und
+dass **ein** Access-Token zu einem Zeitpunkt gueltig war, sagt ueber die
+Lebensdauer des Refresh-Tokens nichts.
+
 **Gemessen am 05.09.2026: die Falle ist eingetreten und war harmlos.** Der
 erste echte Lauf hat genau das gezeigt, wovor dieser Abschnitt warnt -- und
 das Ergebnis wird hier festgehalten, damit niemand spaeter einen Fehler sucht,
@@ -786,12 +861,50 @@ laeuft, das er nie zu sehen bekommt. **Der Weg hat nichts verloren; er hat
 etwas ausgelassen.** Die enge Zusage dieses Abschnitts steht dabei unversehrt:
 sie sagt, dass am `status`-Block nichts kaputtgeht, und das hat sie gehalten.
 
-**Ob der Weg sie setzen soll, ist offen (11.8) und wird hier nicht
-entschieden.** Es waere ein **vierter schreibender Aufruf**, in einem anderen
-Teil der API als den drei, die dieser Vertrag kennt, und er beruehrt Geld. Ob
-der vorhandene Zugang ihn ueberhaupt darf, ist **ungemessen**. Bis das
-entschieden ist, gilt: der Weg setzt sie nicht, und wer ein Video ueber ihn
-hochlaedt, schaltet sie im Studio von Hand ein.
+**Ob der Weg sie setzen soll, war offen (11.8 der Fassung 13). Die Frage
+stellt sich nicht mehr: die API hat die Stelle nicht.** Gemessen am 05.09.2026
+(FC, FCa), mit dem Zugang dieses Projekts, drei Ablesungen:
+
+1. **Fuer die Einstellung, die im Studio "Mid-Roll-Anzeigen einblenden"
+   heisst, fuehrt die Ressource `videos` kein Feld.** Die vollstaendige
+   Feldliste der Ressource -- neunzehn Eigenschaften der obersten Ebene, aus
+   dem Discovery-Dokument der API (Revision 20260902) ausgegeben -- traegt
+   nichts zu Werbe-Platzierung, Ad-Breaks oder Mid-Roll. Der einzige
+   verwandte Mechanismus der **ganzen** Data API v3 ist
+   `liveBroadcasts.insertCuepoint`; er gehoert zu einer anderen Ressource und
+   gilt nur fuer Live-Uebertragungen, nicht fuer ein Video auf Abruf.
+2. **Das einzige monetarisierungsnahe Feld ist `monetizationDetails`, und es
+   traegt genau ein Unterfeld: `access`.** `access` sagt, ob ein Video
+   monetarisiert werden **darf** (`allowed`, dazu `exception` je Region).
+   Das ist eine **Auskunft, keine Einstellung** -- dort steht nichts, was ein
+   Aufruf auf "an" stellen koennte.
+3. **Ein lesender Aufruf auf `part=monetizationDetails` endete mit 403**
+   (`reason: forbidden`, ohne feldspezifische Diagnose). **Die Kontrolle im
+   selben Zeitfenster kam durch:** derselbe Token, dieselbe videoId,
+   `part=status`, HTTP 200, vollstaendiger Statusblock. Der 403 haengt damit
+   am Teil -- nicht am Zugang, nicht am Scope, nicht am Video, nicht am
+   Kanal.
+
+**Das ist ein "kann nicht" und kein "soll nicht", und der Unterschied ist
+nicht rhetorisch.** Ein "soll nicht" laedt dazu ein, spaeter anders zu
+entscheiden; es setzt voraus, dass die Stelle da ist und nur nicht benutzt
+wird. Die Stelle ist nicht da: ein vierter schreibender Aufruf haette kein
+Ziel -- kein Feld fuer den Haken, und das eine vorhandene Feld ist eine
+Auskunft. Deshalb steht hier auch **keine Zusage, die Monetarisierung zu
+unterlassen**, und deshalb bekommt Abschnitt 7 keine Zeile: der zaehlt auf,
+was dieser Weg nicht tut, obwohl er koennte, und dies ist keins davon. Eine
+Unmoeglichkeit dort wuerde diesem Vertrag eine Sicherung zuschreiben, die er
+nicht gebaut hat.
+
+**Was es wieder oeffnen wuerde, damit dieser Satz nicht laenger gilt, als er
+darf:** eine **Aenderung der API** -- ein Feld fuer die Werbe-Einstellung in
+`videos`, oder eine Methode ausserhalb der `liveBroadcasts` --, oder ein
+**Zugang mit einem anderen Scope**, dem die API zeigt, was diesem hier nicht
+gezeigt wird. Beides waere eine neue Messung und keine neue Ueberlegung; was
+daran heute ungemessen ist, steht in 10 und traegt diese Schliessung nicht.
+
+**Bis dahin gilt unveraendert:** der Weg setzt die Monetarisierung nicht, und
+wer ein Video ueber ihn hochlaedt, schaltet sie im Studio von Hand ein.
 
 ### 2.6 Ein geschlossenes Fenster laesst das Video privat; ein zweiter Lauf macht weiter
 
@@ -1978,7 +2091,20 @@ das Longform-Modul.
     `videos.list` mit `part=status`, dann **Aufruf 3**, `videos.update`
     (2.5). Antwort pruefen. Gedaechtnis schreiben. Ende mit 0.
 17. Seite: Abschluss mit videoId, "oeffentlich seit", Bilddatei, Pfad des
-    Gedaechtnisses. Sitzung endet, Sperre wird freigegeben.
+    Gedaechtnisses. **Die Sitzung endet nicht von selbst, und die Sperre
+    bleibt liegen.** Bis Fassung 13 stand hier "Sitzung endet, Sperre wird
+    freigegeben"; der Bau tut das nicht, und der Vertrag folgt dem Bau. Am
+    Quelltext nachgelesen (FE, 05.09.2026): der Longform-Modus hat genau zwei
+    Ausgaenge -- Strg+C und die Abloesung ueber den Knopf "Weiter" (2.13). Es
+    gibt in ihm keinen Knopf zum Beenden und keine Route, die ein Beenden
+    ausloest; das Ende des Arbeiters setzt nur den Stand des Laufs und sperrt
+    die Knoepfe. **Fuer den Menschen heisst das:** wer nach dem dritten Aufruf
+    das Fenster schliesst, laesst einen Dienst stehen, der Port und Sperre
+    haelt. Beendet er ihn ueber die Prozessnummer, bleibt die Sperre liegen und
+    wird beim naechsten Start als verwaist benannt und uebernommen (2.13). Das
+    ist kein Mangel der Sperre, sondern der Grund, warum ein vergessener Dienst
+    nichts blockiert. Dass es keine Stelle gibt, an der ein solcher Dienst
+    auffiele, steht unter 11.7.
 
 **Zwei Neustarts des Dienstes stehen in dieser Liste, und sie stehen nicht als
 eigene Schritte darin, weil sie kein Schritt des Programms sind.** Zwischen
@@ -2367,6 +2493,30 @@ Nichts davon ist gemessen. Es steht hier, damit es niemand fuer gemessen haelt.
   verwirft (`uploadStatus`, `madeForKids`) und dass der Aufruf damit
   durchgeht; was geschaehe, schickte man ein nur lesbares Feld doch mit, ist
   nicht gemessen, weil dieser Weg es nicht tut.
+- **Warum die API `part=monetizationDetails` mit 403 beantwortet, und ob ein
+  anderer Zugang das Feld anders saehe.** Gemessen ist (2.5, 05.09.2026, FC
+  und FCa), **dass** der lesende Aufruf mit 403 endet, und dass der Grund am
+  Teil liegt und nicht am Zugang -- die Kontrolle mit `part=status` kam im
+  selben Zeitfenster mit 200 zurueck. **Nicht gemessen ist das Warum.** Die
+  Antwort traegt den generischen Code `forbidden` und keine feldspezifische
+  Diagnose. Dazu steht ein Widerspruch in Googles eigener Dokumentation offen:
+  das Discovery-Dokument fuehrt `monetizationDetails` als regulaeres Feld der
+  Ressource `videos`, ohne `deprecated`-Marke und ohne Werteliste am Parameter
+  `part`, waehrend die Referenzseiten zu `videos/list` und `videos/update`
+  diesen Wert in ihrer Tabelle gueltiger `part`-Werte **nicht** fuehren; ob
+  der 403 diese Luecke bestaetigt oder einen anderen Grund hat, unterscheidet
+  keine der beiden Ablesungen. Ebenfalls ungemessen: ob derselbe 403 auch fuer
+  andere Video-Ids dieses Kanals kaeme; ob ein Zugang mit einem anderen Scope
+  -- `youtubepartner` etwa -- das Feld anders behandelt, was ohne einen
+  solchen Zugang nicht pruefbar ist; und ob es **ausserhalb** der Data API v3
+  (Analytics API, partner-eigene Schnittstellen) ueberhaupt eine Stelle fuer
+  die Mid-Roll-Einstellung gibt -- geprueft wurde nur die Data API v3, weil
+  nur deren Scope hier vorliegt. **Was das nicht ist: ein Vorbehalt gegen die
+  Schliessung von 11.8 in Fassung 14.** Die haengt daran, dass die Ressource
+  `videos` kein Feld fuer die Einstellung fuehrt und `monetizationDetails` nur
+  eine Auskunft traegt -- zwei Befunde am Schema, die vom Grund des 403 nicht
+  abhaengen. Was hier steht, ist, was ein anderer Zugang oder eine geaenderte
+  API neu zu messen haette (2.5).
 - **Ob der Arbeiter das Schliessen der Seite ueberlebt.** Der Freigabedienst
   startet den Shorts-Uploader heute als gebundenen Kindprozess mit
   Ausgabepipes, nicht abgeloest. Ob ein Arbeiter, der 45 Minuten wartet, das
@@ -2493,12 +2643,32 @@ er nennt sie als offen oder fragt.
    Auswahloberflaeche") --, oder ob es beim Aufraeumen bleibt, ist nicht
    entschieden. Ein Bau darf diese Stelle nicht stillschweigend fuellen.
 7. **Welche Sitzungen laufen, und seit wann.** Es gibt heute keine Stelle, die
-   das beantwortet. Auf Port 8791 lag seit dem 03.09.2026 eine Shorts-Sitzung,
+   das beantwortet. Auf Port 8791 lag seit dem 04.09.2026 eine Shorts-Sitzung,
    die niemand bemerkt hat, bis der erste echte Lauf am 05.09. auf einen
    anderen Port ausweichen musste. Das war kein Vertragsbruch -- 2.13 sieht
    genau das vor, jede Sitzung ein eigener Prozess mit eigenem Port --, aber es
-   war ein Betriebszustand, den zwei Tage lang niemand sah, und er hielt einen
-   Port, eine Sperre je Aufnahme und einen Kindprozess. **Seit Fassung 13 wird
+   war ein Betriebszustand, den rund 34 Stunden lang niemand sah, und er hielt
+   einen Port, eine Sperre je Aufnahme und einen Kindprozess.
+
+   **Worauf Datum und Dauer beruhen, damit es niemand noch einmal umdreht.**
+   Gemessen ist der Start des Prozesses, dessen Sperre auf dem Port lag:
+   `gestartet_am 2026-09-04T01:33Z` in der Sperrdatei (gelesen am 05.09., FD)
+   und derselbe Start, den EZ am 05.09. an dem Prozess gemessen hat (03:33
+   Ortszeit). Bis zum Anlegen des ersten echten Laufs am 05.09. um 11:29Z sind
+   das 33 Stunden 56 Minuten, rund 34 Stunden. Bis Fassung 13 stand hier
+   "03.09." und "zwei Tage": das Datum stammte aus einer Formulierung in EY und
+   meinte die **Aufnahme**, deren Name das Datum 03.09. traegt, nicht den
+   Prozess -- die Zahl ist also schon einmal in die falsche Richtung
+   korrigiert worden. **Grenze der Messung:** die Sperrdatei belegt den Start
+   dieses einen Prozesses. Ob vor ihm eine andere Sitzung denselben Port
+   hielt, sagt sie nicht, und dieser Vertrag behauptet es nicht.
+
+   **Dazu, seit Fassung 14: der Dienst endet nach dem dritten Aufruf nicht von
+   selbst** (4, Schritt 17). Nach dem letzten Lauf steht darum immer ein
+   Dienst, den ein Mensch beenden muss, und seine Sperre bleibt dabei liegen,
+   bis ein naechster Start sie als verwaist uebernimmt (2.13). Die Anzeige, die
+   hier fehlt, ist damit auch die Stelle, an der ein solcher Dienst ueberhaupt
+   auffiele. **Seit Fassung 13 wird
    das wahrscheinlicher, nicht seltener:** der Nachfolger einer Abloesung ist
    abgehaengt, und Strg+C in dem Terminal, in dem der Vorgaenger lief, erreicht
    ihn nicht mehr (2.13). Ein Dienst, der so endet, wird eher vergessen als
@@ -2512,21 +2682,6 @@ er nennt sie als offen oder fragt.
    Prozess, den dieser Weg je beendet, ist er selbst (2.13); eine Anzeige, die
    einen Knopf zum Abschiessen bekaeme, waere ein anderer Bau und braeuchte
    eine eigene Entscheidung.
-8. **Ob der Weg die Monetarisierung setzt** (2.5). Gemessen am 05.09.2026: ein
-   ueber diesen Weg hochgeladenes Video kommt ohne Monetarisierung an, und sie
-   wurde von Hand eingeschaltet. Das ist kein Rueckfall, sondern ein nie
-   gesetzter Wert -- sie sitzt nicht im `status`-Block, den dieser Weg liest und
-   zurueckschickt. **Was dagegen spricht, sie zu setzen, und es ist mehr als
-   eine Bequemlichkeit:** es waere ein **vierter schreibender Aufruf**, in einem
-   anderen Teil der API als den drei, die dieser Vertrag kennt und einzeln
-   begruendet (`videos.insert`, `thumbnails.set`, `videos.update` auf
-   `part=status`), und **er beruehrt Geld**. Abschnitt 7 zaehlt heute auf, was
-   nicht geschieht; ein vierter Aufruf muesste dort hindurch. **Und es ist
-   ungemessen, ob der vorhandene Zugang ihn ueberhaupt darf:** die
-   Berechtigungen dieses Tokens sind fuer die drei Aufrufe belegt und fuer
-   keinen vierten. Beides -- die Frage und die ungemessene Berechtigung --
-   steht hier, damit ein Bau nicht das eine fuer das andere haelt. Bis dahin
-   gilt: der Weg setzt sie nicht, und der Mensch schaltet sie im Studio ein.
 
 ---
 
